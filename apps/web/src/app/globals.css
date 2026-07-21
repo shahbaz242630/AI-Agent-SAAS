@@ -1,0 +1,12 @@
+@import "tailwindcss";
+@import "@eva/design-system/tokens.css";
+
+@theme inline {
+  --font-sans: var(--font-geist-sans), var(--font-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+body {
+  background: var(--color-background);
+  color: var(--color-foreground);
+}
