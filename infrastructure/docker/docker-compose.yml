@@ -1,0 +1,51 @@
+# Local development environment (BRD 9.10: dev = local Docker Compose).
+# Usage: pnpm build && docker compose -f infrastructure/docker/docker-compose.yml up
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: eva
+      POSTGRES_PASSWORD: eva
+      POSTGRES_DB: eva
+    ports:
+      - "5432:5432"
+    volumes:
+      - eva-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U eva"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    build:
+      context: ../..
+      dockerfile: infrastructure/docker/Dockerfile.api
+    environment:
+      NODE_ENV: production
+      PORT: 3001
+      LOG_LEVEL: info
+      WEB_ORIGIN: http://localhost:3000
+      DATABASE_URL: postgresql://eva:eva@postgres:5432/eva
+    ports:
+      - "3001:3001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  worker:
+    build:
+      context: ../..
+      dockerfile: infrastructure/docker/Dockerfile.worker
+    environment:
+      NODE_ENV: production
+      WORKER_PORT: 3002
+      LOG_LEVEL: info
+    ports:
+      - "3002:3002"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  eva-pgdata:

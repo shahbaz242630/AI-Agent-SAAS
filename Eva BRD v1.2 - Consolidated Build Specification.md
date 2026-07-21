@@ -16,20 +16,20 @@
 
 ## Change Log
 
-| Version | Change |
-|---|---|
-| 1.0 | Initial build specification (Phases 0–4). |
-| 1.1 | Approved amendment: cloud-first delivery model, PWA (Phase 5), optional Tauri desktop client (Phase 6). |
-| 1.2 | Consolidated v1.0 + v1.1 into one authoritative document. Pinned all open technology decisions. Added UK regulatory section (PECR, TPS/CTPS, calling hours, suppression lists, data residency). Added deployment/environments, timezone model, reply detection, concrete provider limits, transactional email, expanded data model, expanded Phase 0, pre-build checklist. Defined "the Builder" and repaired blank agent-name placeholders. Removed outdated options (Auth.js, Clerk, FastAPI alternative, Celery/Python workers, Temporal). |
-| 1.2.1 | Lead intake expanded: WhatsApp Business and email inquiries added as approved lead sources with defined intake mechanics and per-channel consent evidence (Section 4.3). Added messaging-provider interface (Section 11), Phase 3 intake slices, WhatsApp non-goals, and Meta Business prerequisites (Appendix A). Reaffirmed web-first delivery: no downloadable client before Phase 5/6. |
+| Version | Change                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| ------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1.0     | Initial build specification (Phases 0–4).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| 1.1     | Approved amendment: cloud-first delivery model, PWA (Phase 5), optional Tauri desktop client (Phase 6).                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| 1.2     | Consolidated v1.0 + v1.1 into one authoritative document. Pinned all open technology decisions. Added UK regulatory section (PECR, TPS/CTPS, calling hours, suppression lists, data residency). Added deployment/environments, timezone model, reply detection, concrete provider limits, transactional email, expanded data model, expanded Phase 0, pre-build checklist. Defined "the Builder" and repaired blank agent-name placeholders. Removed outdated options (Auth.js, Clerk, FastAPI alternative, Celery/Python workers, Temporal). |
+| 1.2.1   | Lead intake expanded: WhatsApp Business and email inquiries added as approved lead sources with defined intake mechanics and per-channel consent evidence (Section 4.3). Added messaging-provider interface (Section 11), Phase 3 intake slices, WhatsApp non-goals, and Meta Business prerequisites (Appendix A). Reaffirmed web-first delivery: no downloadable client before Phase 5/6.                                                                                                                                                    |
 
 ## Terminology
 
-* **Eva** — the product and its AI persona.
-* **Organisation** — a subscribed business (tenant).
-* **The Builder** — the AI coding agent (e.g. Kimi Code) implementing this specification. Every rule addressed to "the Builder" is binding.
-* **Module** — one of the four product capabilities defined in Section 4.
-* **Provider** — an external service (Microsoft, Paddle, voice, calendar, AI) integrated behind an internal adapter.
+- **Eva** — the product and its AI persona.
+- **Organisation** — a subscribed business (tenant).
+- **The Builder** — the AI coding agent (e.g. Kimi Code) implementing this specification. Every rule addressed to "the Builder" is binding.
+- **Module** — one of the four product capabilities defined in Section 4.
+- **Provider** — an external service (Microsoft, Paddle, voice, calendar, AI) integrated behind an internal adapter.
 
 > **Precedence rule:** This v1.2 document is the single source of truth. Where v1.0 or the v1.1 amendment conflict with it, v1.2 wins. No earlier document may be handed to the Builder.
 
@@ -64,14 +64,14 @@ Eva is not intended to replace all human communication. It should automate repet
 
 The platform should deliver measurable business outcomes:
 
-* Faster payment collection
-* Fewer overdue invoices
-* Faster response to new enquiries
-* Reduced missed business opportunities
-* Improved call coverage
-* Reduced administrative workload
-* Consistent customer communication
-* Better visibility of follow-up activities
+- Faster payment collection
+- Fewer overdue invoices
+- Faster response to new enquiries
+- Reduced missed business opportunities
+- Improved call coverage
+- Reduced administrative workload
+- Consistent customer communication
+- Better visibility of follow-up activities
 
 ---
 
@@ -113,14 +113,14 @@ AI may help with natural conversation, message tone adaptation, reply classifica
 
 AI must not independently control high-risk actions such as:
 
-* Threatening legal proceedings
-* Applying late fees
-* Negotiating discounts
-* Cancelling invoices
-* Changing payment amounts
-* Disclosing financial information to an unverified person
-* Calling leads without valid permission
-* Making commitments on behalf of the business
+- Threatening legal proceedings
+- Applying late fees
+- Negotiating discounts
+- Cancelling invoices
+- Changing payment amounts
+- Disclosing financial information to an unverified person
+- Calling leads without valid permission
+- Making commitments on behalf of the business
 
 ## 3.4 Human control
 
@@ -173,27 +173,27 @@ The Voice Credit Controller must not be built until the invoice and customer wor
 
 ### Primary capabilities
 
-* Manual invoice entry
-* CSV and Excel invoice import
-* PDF invoice upload and data extraction
-* Human review before activation
-* Customer record creation
-* Invoice status tracking
-* Due-date calculation
-* Overdue-invoice identification
-* Configurable reminder sequences
-* Outlook email sending via Microsoft Graph
-* Email templates with business tone settings
-* Invoice attachment
-* Pause and resume controls
-* Mark-as-paid control
-* Promise-to-pay, dispute and wrong-contact statuses
-* Reply detection with assisted outcome classification
-* Bounce (NDR) detection
-* Email delivery and failure logs
-* Activity timeline
-* Audit log
-* Dashboard reporting
+- Manual invoice entry
+- CSV and Excel invoice import
+- PDF invoice upload and data extraction
+- Human review before activation
+- Customer record creation
+- Invoice status tracking
+- Due-date calculation
+- Overdue-invoice identification
+- Configurable reminder sequences
+- Outlook email sending via Microsoft Graph
+- Email templates with business tone settings
+- Invoice attachment
+- Pause and resume controls
+- Mark-as-paid control
+- Promise-to-pay, dispute and wrong-contact statuses
+- Reply detection with assisted outcome classification
+- Bounce (NDR) detection
+- Email delivery and failure logs
+- Activity timeline
+- Audit log
+- Dashboard reporting
 
 ### Invoice statuses
 
@@ -205,12 +205,12 @@ Status transitions must be implemented as a single, explicit state machine insid
 
 Default reminder stages (all configurable; a business can enable, disable or edit each stage):
 
-* Three days before due date
-* On due date
-* Seven days overdue
-* Fourteen days overdue
-* Thirty days overdue
-* Final internal escalation
+- Three days before due date
+- On due date
+- Seven days overdue
+- Fourteen days overdue
+- Thirty days overdue
+- Final internal escalation
 
 ### Email generation
 
@@ -220,10 +220,10 @@ The default approach uses approved templates rather than generating every email 
 
 Emails are sent through the customer's connected Microsoft 365 mailbox using Microsoft Graph.
 
-* Authentication uses OAuth (multi-tenant app registration, minimal scopes: `Mail.Send`, `Mail.Read`, `offline_access`, `User.Read`).
-* The platform must never store the customer's Microsoft password.
-* Emails must be sent from the business's real mailbox, appear in Sent Items where supported, use the business signature, include invoice number, amount due, due date and payment instructions, attach or link the invoice where appropriate, and provide a valid reply path.
-* OAuth tokens must be encrypted at rest; refresh is automatic with health-status surfacing.
+- Authentication uses OAuth (multi-tenant app registration, minimal scopes: `Mail.Send`, `Mail.Read`, `offline_access`, `User.Read`).
+- The platform must never store the customer's Microsoft password.
+- Emails must be sent from the business's real mailbox, appear in Sent Items where supported, use the business signature, include invoice number, amount due, due date and payment instructions, attach or link the invoice where appropriate, and provide a valid reply path.
+- OAuth tokens must be encrypted at rest; refresh is automatic with health-status surfacing.
 
 ### Provider limits and safe sending defaults
 
@@ -231,12 +231,12 @@ Microsoft Graph enforces approximately 10,000 requests per 10 minutes per applic
 
 Safe defaults (organisation-configurable within platform caps):
 
-* Daily sending limit: 200 emails per connected mailbox
-* Hourly sending limit: 50 per mailbox
-* Minimum spacing between sends from one mailbox: 60 seconds
-* Minimum interval between reminders to the same contact: 3 days
-* All 429 responses honoured via `Retry-After` with exponential backoff and jitter
-* Hard retry limit per send job: 5 attempts, then failed-job state with alert
+- Daily sending limit: 200 emails per connected mailbox
+- Hourly sending limit: 50 per mailbox
+- Minimum spacing between sends from one mailbox: 60 seconds
+- Minimum interval between reminders to the same contact: 3 days
+- All 429 responses honoured via `Retry-After` with exponential backoff and jitter
+- Hard retry limit per send job: 5 attempts, then failed-job state with alert
 
 ### Sending safety controls
 
@@ -296,12 +296,12 @@ Depending on outcome, the platform may record a promise-to-pay date, pause email
 
 ### Calling rules
 
-* Calls only within permitted hours (default 08:00–21:00 UK time, organisation-configurable within that envelope; see Section 17).
-* Numbers on the suppression list are never called.
-* Disputed, paused or paid invoices are never called.
-* A valid, owned UK caller ID (CLI) must be presented on every outbound call; withheld numbers are prohibited.
-* Maximum attempts per invoice per week: 2 (configurable within platform cap of 3).
-* Voicemail: leave at most one short scripted message per invoice per week, disclosing no financial detail beyond the business name and a callback number.
+- Calls only within permitted hours (default 08:00–21:00 UK time, organisation-configurable within that envelope; see Section 17).
+- Numbers on the suppression list are never called.
+- Disputed, paused or paid invoices are never called.
+- A valid, owned UK caller ID (CLI) must be presented on every outbound call; withheld numbers are prohibited.
+- Maximum attempts per invoice per week: 2 (configurable within platform cap of 3).
+- Voicemail: leave at most one short scripted message per invoice per week, disclosing no financial detail beyond the business name and a callback number.
 
 ### Voice-agent restrictions
 
@@ -347,11 +347,11 @@ This module reuses the voice infrastructure created in Module Two but requires s
 
 Because lead follow-up is marketing-adjacent under PECR:
 
-* Every lead must carry channel-appropriate consent evidence before any call is queued (see Consent evidence).
-* Every number must be screened against the organisation's suppression list before dialling.
-* The platform must provide a TPS/CTPS screening hook (manual attestation in v1; automated screening-service integration may follow). Note: a person who has directly enquired with the business (website form, WhatsApp message, email, missed call) has given the business a direct basis to respond to that enquiry; TPS/CTPS registration does not block responding to a genuine inbound enquiry, but the evidence must be stored and any subsequent "do not contact" request overrides everything, immediately and permanently.
-* Calling hours default 08:00–21:00 UK time.
-* Any "do not contact" request — made on a call, by email, or by WhatsApp message — is actioned immediately and permanently (suppression list), and applies across all channels.
+- Every lead must carry channel-appropriate consent evidence before any call is queued (see Consent evidence).
+- Every number must be screened against the organisation's suppression list before dialling.
+- The platform must provide a TPS/CTPS screening hook (manual attestation in v1; automated screening-service integration may follow). Note: a person who has directly enquired with the business (website form, WhatsApp message, email, missed call) has given the business a direct basis to respond to that enquiry; TPS/CTPS registration does not block responding to a genuine inbound enquiry, but the evidence must be stored and any subsequent "do not contact" request overrides everything, immediately and permanently.
+- Calling hours default 08:00–21:00 UK time.
+- Any "do not contact" request — made on a call, by email, or by WhatsApp message — is actioned immediately and permanently (suppression list), and applies across all channels.
 
 ### Example opening
 
@@ -375,9 +375,9 @@ The system must store sufficient evidence showing why each lead is eligible to b
 
 For non-form channels, the equivalent evidence is:
 
-* **WhatsApp enquiries** — Meta message ID, sender WhatsApp number, business number, message timestamp and a copy of the initiating message content. An inbound message to the business constitutes the person initiating contact; the callback is a direct response to that enquiry.
-* **Email enquiries** — Graph message ID, sender address, recipient address, subject, timestamp and thread reference, with the classification result that created the lead.
-* **Missed inbound calls** — inbound call record (number, timestamp, call ID).
+- **WhatsApp enquiries** — Meta message ID, sender WhatsApp number, business number, message timestamp and a copy of the initiating message content. An inbound message to the business constitutes the person initiating contact; the callback is a direct response to that enquiry.
+- **Email enquiries** — Graph message ID, sender address, recipient address, subject, timestamp and thread reference, with the classification result that created the lead.
+- **Missed inbound calls** — inbound call record (number, timestamp, call ID).
 
 A lead without complete channel-appropriate evidence must never enter the call queue.
 
@@ -423,14 +423,14 @@ Businesses must be able to define business hours, after-hours rules, staff membe
 
 Businesses activate one or more modules. Standard packages:
 
-| Package | Modules included |
-|---|---|
-| Email Credit Controller | Module One only |
-| Credit Controller Plus | Modules One + Two |
-| Lead Assistant | Lead Follow-Up Agent only (voice platform included) |
-| AI Receptionist | Module Four only |
-| Sales Desk | Lead Follow-Up Agent + AI Receptionist |
-| Complete Eva Suite | All four modules |
+| Package                 | Modules included                                    |
+| ----------------------- | --------------------------------------------------- |
+| Email Credit Controller | Module One only                                     |
+| Credit Controller Plus  | Modules One + Two                                   |
+| Lead Assistant          | Lead Follow-Up Agent only (voice platform included) |
+| AI Receptionist         | Module Four only                                    |
+| Sales Desk              | Lead Follow-Up Agent + AI Receptionist              |
+| Complete Eva Suite      | All four modules                                    |
 
 ## Entitlement model
 
@@ -550,31 +550,31 @@ The `apps/desktop` directory must not be created before Phase 6. No placeholder 
 
 Each module must:
 
-* Own its business logic
-* Expose clear service interfaces
-* Avoid direct access to another module's internal implementation (cross-module access only via exported service contracts)
-* Use shared contracts from `packages/types`
-* Emit domain events where appropriate
-* Have independent tests
-* Have clear failure boundaries
-* Avoid circular dependencies
+- Own its business logic
+- Expose clear service interfaces
+- Avoid direct access to another module's internal implementation (cross-module access only via exported service contracts)
+- Use shared contracts from `packages/types`
+- Emit domain events where appropriate
+- Have independent tests
+- Have clear failure boundaries
+- Avoid circular dependencies
 
 ## Prohibited architecture patterns
 
 The Builder must not create:
 
-* One oversized service file
-* One universal controller or route handler
-* One shared function containing unrelated business rules
-* Duplicate payment-status logic
-* Duplicate consent logic
-* Duplicate scheduling logic
-* Direct provider calls scattered throughout the codebase (all provider access via adapters in `modules/integrations`)
-* Hidden cross-module state changes
-* Business logic inside UI components
-* Business logic inside database models
-* Unvalidated provider payloads
-* Unstructured error handling
+- One oversized service file
+- One universal controller or route handler
+- One shared function containing unrelated business rules
+- Duplicate payment-status logic
+- Duplicate consent logic
+- Duplicate scheduling logic
+- Direct provider calls scattered throughout the codebase (all provider access via adapters in `modules/integrations`)
+- Hidden cross-module state changes
+- Business logic inside UI components
+- Business logic inside database models
+- Unvalidated provider payloads
+- Unstructured error handling
 
 ---
 
@@ -584,103 +584,103 @@ The Builder must not create:
 
 ## 9.1 Frontend
 
-| Concern | Decision |
-|---|---|
-| Framework | Next.js 16 (App Router) |
-| Language | TypeScript 5 (strict mode) |
-| UI library | React 19 |
-| Styling | Tailwind CSS v4 |
-| Components | shadcn/ui (accessible, Radix-based) |
-| Forms/validation | react-hook-form + zod |
-| Data fetching | Typed API client from `packages/api-client` |
-| Accessibility | WCAG 2.2 AA target |
+| Concern          | Decision                                    |
+| ---------------- | ------------------------------------------- |
+| Framework        | Next.js 16 (App Router)                     |
+| Language         | TypeScript 5 (strict mode)                  |
+| UI library       | React 19                                    |
+| Styling          | Tailwind CSS v4                             |
+| Components       | shadcn/ui (accessible, Radix-based)         |
+| Forms/validation | react-hook-form + zod                       |
+| Data fetching    | Typed API client from `packages/api-client` |
+| Accessibility    | WCAG 2.2 AA target                          |
 
 ## 9.2 Backend API
 
-| Concern | Decision |
-|---|---|
-| Framework | NestJS 11 (Express 5 adapter) |
-| Language | TypeScript 5 (strict mode) |
-| API style | REST with OpenAPI (Swagger) spec generated from code; `packages/api-client` generated from that spec |
-| Validation | class-validator/zod at the boundary; every payload validated |
-| Runtime | Node.js 22 LTS |
+| Concern    | Decision                                                                                             |
+| ---------- | ---------------------------------------------------------------------------------------------------- |
+| Framework  | NestJS 11 (Express 5 adapter)                                                                        |
+| Language   | TypeScript 5 (strict mode)                                                                           |
+| API style  | REST with OpenAPI (Swagger) spec generated from code; `packages/api-client` generated from that spec |
+| Validation | class-validator/zod at the boundary; every payload validated                                         |
+| Runtime    | Node.js 22 LTS                                                                                       |
 
 ## 9.3 Background processing
 
-| Concern | Decision |
-|---|---|
-| Platform | Inngest (durable functions, scheduling, retries, event-driven) — self-hostable; Trigger.dev is the pre-approved fallback if Inngest proves unfit during Phase 0 |
-| Scope | Reminder scheduling, send queues, retry processing, webhook processing, PDF extraction orchestration, notification fan-out |
-| Prohibited | Celery, Python workers, Temporal, hand-rolled cron loops |
+| Concern    | Decision                                                                                                                                                        |
+| ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Platform   | Inngest (durable functions, scheduling, retries, event-driven) — self-hostable; Trigger.dev is the pre-approved fallback if Inngest proves unfit during Phase 0 |
+| Scope      | Reminder scheduling, send queues, retry processing, webhook processing, PDF extraction orchestration, notification fan-out                                      |
+| Prohibited | Celery, Python workers, Temporal, hand-rolled cron loops                                                                                                        |
 
 ## 9.4 Database and storage
 
-| Concern | Decision |
-|---|---|
-| Database | PostgreSQL 16+ on Supabase, **London region (eu-west-2)** |
-| ORM | Prisma 7 |
+| Concern          | Decision                                                                                                             |
+| ---------------- | -------------------------------------------------------------------------------------------------------------------- |
+| Database         | PostgreSQL 16+ on Supabase, **London region (eu-west-2)**                                                            |
+| ORM              | Prisma 7                                                                                                             |
 | Tenant isolation | Application-layer scoping on every query **plus** Postgres Row Level Security policies as a second enforcement layer |
-| Migrations | Prisma Migrate, forward-only with documented rollback notes per migration |
-| Object storage | Supabase Storage (encrypted), invoices and documents only |
+| Migrations       | Prisma Migrate, forward-only with documented rollback notes per migration                                            |
+| Object storage   | Supabase Storage (encrypted), invoices and documents only                                                            |
 
 ## 9.5 Authentication
 
-| Concern | Decision |
-|---|---|
-| Provider | Supabase Auth (email/password + MFA support; organisation model implemented in application tables) |
-| Session | HTTP-only secure cookies; short-lived access tokens; refresh rotation |
-| Backend verification | NestJS guard validating Supabase JWT on every request |
-| Removed options | Auth.js (maintenance mode), Clerk (US-only data residency) |
+| Concern              | Decision                                                                                           |
+| -------------------- | -------------------------------------------------------------------------------------------------- |
+| Provider             | Supabase Auth (email/password + MFA support; organisation model implemented in application tables) |
+| Session              | HTTP-only secure cookies; short-lived access tokens; refresh rotation                              |
+| Backend verification | NestJS guard validating Supabase JWT on every request                                              |
+| Removed options      | Auth.js (maintenance mode), Clerk (US-only data residency)                                         |
 
 ## 9.6 Email
 
-| Concern | Decision |
-|---|---|
-| Customer mailbox sending | Microsoft Graph (multi-tenant app registration, OAuth, minimal scopes) |
+| Concern                                                               | Decision                                                                       |
+| --------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
+| Customer mailbox sending                                              | Microsoft Graph (multi-tenant app registration, OAuth, minimal scopes)         |
 | Platform transactional email (invites, alerts, auth-adjacent notices) | Resend behind the notifications module (Postmark is the pre-approved fallback) |
 
 ## 9.7 Voice
 
-| Concern | Decision |
-|---|---|
+| Concern           | Decision                                                                                                                                                     |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | Voice AI platform | **Vapi** (primary) — configured for recording/transcript retention disabled and UK data processing where offered; **Retell AI** is the pre-approved fallback |
-| Telephony | Twilio UK geographic numbers |
-| Integration | Behind the internal voice-provider interface (Section 11); selection confirmed by the Slice 2.1 spike |
+| Telephony         | Twilio UK geographic numbers                                                                                                                                 |
+| Integration       | Behind the internal voice-provider interface (Section 11); selection confirmed by the Slice 2.1 spike                                                        |
 
 ## 9.8 Payments
 
-| Concern | Decision |
-|---|---|
-| Provider | Paddle (Merchant of Record) — subscriptions, trials, upgrades/downgrades |
+| Concern      | Decision                                                                               |
+| ------------ | -------------------------------------------------------------------------------------- |
+| Provider     | Paddle (Merchant of Record) — subscriptions, trials, upgrades/downgrades               |
 | Entitlements | Platform-internal entitlement engine is the source of truth; Paddle webhooks update it |
-| Note | Paddle account approval must be obtained before launch (see Appendix A) |
+| Note         | Paddle account approval must be obtained before launch (see Appendix A)                |
 
 ## 9.9 AI
 
-| Concern | Decision |
-|---|---|
-| Provider | OpenAI API (structured outputs) behind an internal AI adapter |
-| Rules | Versioned prompts, deterministic validation of outputs, restricted tool access, cost and token monitoring, no training on customer data (API data-processing terms), organisation-level cost caps |
+| Concern  | Decision                                                                                                                                                                                          |
+| -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Provider | OpenAI API (structured outputs) behind an internal AI adapter                                                                                                                                     |
+| Rules    | Versioned prompts, deterministic validation of outputs, restricted tool access, cost and token monitoring, no training on customer data (API data-processing terms), organisation-level cost caps |
 
 ## 9.10 Monitoring and operations
 
-| Concern | Decision |
-|---|---|
-| Error tracking | Sentry (API, worker, web) |
-| Logs | Structured JSON logs with correlation IDs |
-| Metrics/alerts | Platform metrics (Section 14) with alert rules; uptime monitoring on health endpoints |
-| CI/CD | GitHub Actions: lint, typecheck, unit tests, build on every PR; staging deploy on merge; production deploy manual |
-| Environments | dev (local, Docker Compose) · staging · production |
-| Secrets | Platform environment-variable management (host/Supabase/GitHub Environments); `.env.example` committed; no secrets in source control |
+| Concern        | Decision                                                                                                                             |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| Error tracking | Sentry (API, worker, web)                                                                                                            |
+| Logs           | Structured JSON logs with correlation IDs                                                                                            |
+| Metrics/alerts | Platform metrics (Section 14) with alert rules; uptime monitoring on health endpoints                                                |
+| CI/CD          | GitHub Actions: lint, typecheck, unit tests, build on every PR; staging deploy on merge; production deploy manual                    |
+| Environments   | dev (local, Docker Compose) · staging · production                                                                                   |
+| Secrets        | Platform environment-variable management (host/Supabase/GitHub Environments); `.env.example` committed; no secrets in source control |
 
 ## 9.11 Deployment
 
-| Concern | Decision |
-|---|---|
-| Packaging | Docker containers for `api` and `worker`; local dev via Docker Compose |
-| Hosting | Single PaaS host for api + worker (Railway, Render or Fly.io — select one in Phase 0 and record the choice); web on Vercel or the same host |
-| Database | Supabase (managed), London region |
-| Rollback | Every deployment and migration must have documented rollback guidance |
+| Concern   | Decision                                                                                                                                    |
+| --------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| Packaging | Docker containers for `api` and `worker`; local dev via Docker Compose                                                                      |
+| Hosting   | Single PaaS host for api + worker (Railway, Render or Fly.io — select one in Phase 0 and record the choice); web on Vercel or the same host |
+| Database  | Supabase (managed), London region                                                                                                           |
+| Rollback  | Every deployment and migration must have documented rollback guidance                                                                       |
 
 ## 9.12 Desktop (Phase 6 only)
 
@@ -806,23 +806,23 @@ High email failure rate · voice provider failure · queue backlog · database e
 
 The platform must implement:
 
-* Encryption in transit (TLS everywhere) and at rest (database, storage, token stores)
-* Secure secret management (Section 9.10); no production secrets in source control
-* OAuth instead of mailbox-password storage; provider tokens encrypted at rest
-* Multi-factor authentication support for users
-* Role-based access control enforced in the backend on every request
-* Tenant isolation in application code and Postgres RLS
-* Input validation on every boundary; output encoding
-* Rate limiting on public endpoints and webhook receivers
-* Audit logging of all state-changing operations
-* Signed webhook verification (Paddle, Graph, voice provider, lead intake)
-* Secure file validation (type sniffing, size limits, malware-scanning hook) for uploads
-* Dependency scanning in CI
-* Security headers and controlled CORS
-* Least-privilege provider permissions (minimal OAuth scopes)
-* Safe token refresh with rotation
-* Session expiration and account lockout protections
-* Automated backups with tested recovery procedures (RPO ≤ 24h, RTO ≤ 8h for launch; tightened as the product matures)
+- Encryption in transit (TLS everywhere) and at rest (database, storage, token stores)
+- Secure secret management (Section 9.10); no production secrets in source control
+- OAuth instead of mailbox-password storage; provider tokens encrypted at rest
+- Multi-factor authentication support for users
+- Role-based access control enforced in the backend on every request
+- Tenant isolation in application code and Postgres RLS
+- Input validation on every boundary; output encoding
+- Rate limiting on public endpoints and webhook receivers
+- Audit logging of all state-changing operations
+- Signed webhook verification (Paddle, Graph, voice provider, lead intake)
+- Secure file validation (type sniffing, size limits, malware-scanning hook) for uploads
+- Dependency scanning in CI
+- Security headers and controlled CORS
+- Least-privilege provider permissions (minimal OAuth scopes)
+- Safe token refresh with rotation
+- Session expiration and account lockout protections
+- Automated backups with tested recovery procedures (RPO ≤ 24h, RTO ≤ 8h for launch; tightened as the product matures)
 
 ---
 
@@ -844,11 +844,11 @@ Eva (the platform operator) is **data processor** for customer business data (in
 
 ## 17.2 PECR and AI calling
 
-* Fully automated/pre-recorded marketing calls require prior consent and are prohibited on this platform.
-* Eva's calls are interactive and must always offer a human-handoff path.
-* Lead follow-up calls require stored consent evidence (Section 4.3) — no consent, no call.
-* Invoice-chasing calls to existing customers are service calls; lawful basis is contract/legitimate interest. Transparency duties still apply: Eva discloses she is an AI at the start of every call.
-* Marketing-adjacent numbers must be screened against TPS/CTPS per Section 4.3.
+- Fully automated/pre-recorded marketing calls require prior consent and are prohibited on this platform.
+- Eva's calls are interactive and must always offer a human-handoff path.
+- Lead follow-up calls require stored consent evidence (Section 4.3) — no consent, no call.
+- Invoice-chasing calls to existing customers are service calls; lawful basis is contract/legitimate interest. Transparency duties still apply: Eva discloses she is an AI at the start of every call.
+- Marketing-adjacent numbers must be screened against TPS/CTPS per Section 4.3.
 
 ## 17.3 Calling hours and frequency
 
@@ -876,12 +876,12 @@ Every AI call begins with an explicit AI disclosure naming the calling business.
 
 ## 18.1 Timezone and locale (mandatory model)
 
-* All timestamps stored in UTC.
-* All business logic (due dates, "due today", reminder windows, business hours, calling hours) computed in the organisation's configured timezone; default `Europe/London`.
-* Server-local time must never be used in business logic.
-* BST/GMT transitions covered by unit tests.
-* Locale: en-GB; currency: GBP by default (£ formatting, minor-unit storage); date format DD/MM/YYYY in UI.
-* English only at launch; no i18n framework required, but user-facing strings centralised to allow later localisation.
+- All timestamps stored in UTC.
+- All business logic (due dates, "due today", reminder windows, business hours, calling hours) computed in the organisation's configured timezone; default `Europe/London`.
+- Server-local time must never be used in business logic.
+- BST/GMT transitions covered by unit tests.
+- Locale: en-GB; currency: GBP by default (£ formatting, minor-unit storage); date format DD/MM/YYYY in UI.
+- English only at launch; no i18n framework required, but user-facing strings centralised to allow later localisation.
 
 ## 18.2 Environments
 
@@ -889,7 +889,7 @@ dev (local Docker Compose with seed data) · staging (mirror of production confi
 
 ## 18.3 Performance targets (launch)
 
-* Dashboard p95 load < 2s · API p95 < 500ms · reminder send pipeline processes due reminders within 5 minutes of schedule · lead "immediate" calls initiated within 60 seconds of receipt during permitted hours.
+- Dashboard p95 load < 2s · API p95 < 500ms · reminder send pipeline processes due reminders within 5 minutes of schedule · lead "immediate" calls initiated within 60 seconds of receipt during permitted hours.
 
 ## 18.4 Availability and recovery
 
@@ -951,19 +951,19 @@ Confirmed before or during Phase 0 (see Appendix A): GitHub organisation/repo ·
 
 ### Scope
 
-* Repository structure per Section 8 (no `apps/desktop`)
-* Environment configuration (dev/staging/prod) and secrets handling
-* TypeScript strict configuration, formatting, linting
-* Testing framework (unit + e2e scaffolding)
-* Docker Compose local environment
-* Database connection, Prisma 7, migration system, seed data
-* Supabase Auth integration, organisation model, memberships, basic role model
-* RLS tenant-isolation policies and tests
-* Logging, error handling, correlation IDs, Sentry
-* Health endpoint
-* CI checks (lint, typecheck, test, build) and branch protection
-* Base design system (`packages/design-system`, `packages/ui` shell)
-* Inngest integration skeleton with one example durable function
+- Repository structure per Section 8 (no `apps/desktop`)
+- Environment configuration (dev/staging/prod) and secrets handling
+- TypeScript strict configuration, formatting, linting
+- Testing framework (unit + e2e scaffolding)
+- Docker Compose local environment
+- Database connection, Prisma 7, migration system, seed data
+- Supabase Auth integration, organisation model, memberships, basic role model
+- RLS tenant-isolation policies and tests
+- Logging, error handling, correlation IDs, Sentry
+- Health endpoint
+- CI checks (lint, typecheck, test, build) and branch protection
+- Base design system (`packages/design-system`, `packages/ui` shell)
+- Inngest integration skeleton with one example durable function
 
 ### Approval gate
 
@@ -975,16 +975,16 @@ Do not continue until: build passes · lint passes · type checking passes · te
 
 Divided into smaller approved slices:
 
-* **Slice 1.1: Customers and contacts** — records, organisation ownership, CRUD, validation, permissions, audit logging, suppression-list data structure.
-* **Slice 1.2: Invoice records** — manual entry, statuses and state machine, due dates (timezone-aware), amounts (minor units), currency, customer relationship, validation, audit trail.
-* **Slice 1.3: CSV and Excel import** — upload, column mapping, validation, duplicate detection, preview, confirmation, import report, suppression re-check.
-* **Slice 1.4: PDF extraction** — secure upload, extraction adapter, draft result, confidence indicators, review screen, confirmation, failure handling.
-* **Slice 1.5: Reminder sequence** — stages, eligibility rules, scheduling (org timezone), pause/resume, paid/disputed/suppressed exclusions, duplicate prevention with idempotency mechanism.
-* **Slice 1.6: Outlook connection** — Microsoft OAuth, minimal permissions, encrypted token storage, refresh handling, disconnect, health status, test email.
-* **Slice 1.7: Email sending** — approved templates, invoice variables, attachments, send queue with 429/backoff handling, retry rules, audit history, failure handling, safe sending defaults (Section 4.1).
-* **Slice 1.8: Manual reply and status workflow** — manual outcome entry: promise to pay, dispute, invoice copy request, wrong contact, paid claim, human escalation.
-* **Slice 1.9: Reply detection** — Graph change notifications, thread matching, AI classification with confidence, human confirmation for state changes, NDR/bounce detection, failing-address pause.
-* **Slice 1.10: Dashboard and monitoring** — outstanding total, overdue total, reminder status, failed sends, promises to pay, disputes, activity timeline.
+- **Slice 1.1: Customers and contacts** — records, organisation ownership, CRUD, validation, permissions, audit logging, suppression-list data structure.
+- **Slice 1.2: Invoice records** — manual entry, statuses and state machine, due dates (timezone-aware), amounts (minor units), currency, customer relationship, validation, audit trail.
+- **Slice 1.3: CSV and Excel import** — upload, column mapping, validation, duplicate detection, preview, confirmation, import report, suppression re-check.
+- **Slice 1.4: PDF extraction** — secure upload, extraction adapter, draft result, confidence indicators, review screen, confirmation, failure handling.
+- **Slice 1.5: Reminder sequence** — stages, eligibility rules, scheduling (org timezone), pause/resume, paid/disputed/suppressed exclusions, duplicate prevention with idempotency mechanism.
+- **Slice 1.6: Outlook connection** — Microsoft OAuth, minimal permissions, encrypted token storage, refresh handling, disconnect, health status, test email.
+- **Slice 1.7: Email sending** — approved templates, invoice variables, attachments, send queue with 429/backoff handling, retry rules, audit history, failure handling, safe sending defaults (Section 4.1).
+- **Slice 1.8: Manual reply and status workflow** — manual outcome entry: promise to pay, dispute, invoice copy request, wrong contact, paid claim, human escalation.
+- **Slice 1.9: Reply detection** — Graph change notifications, thread matching, AI classification with confidence, human confirmation for state changes, NDR/bounce detection, failing-address pause.
+- **Slice 1.10: Dashboard and monitoring** — outstanding total, overdue total, reminder status, failed sends, promises to pay, disputes, activity timeline.
 
 ### Phase 1 approval criteria
 
@@ -994,14 +994,14 @@ No duplicate sends · paid invoices are not chased · disputed invoices are paus
 
 ## Phase 2: Voice Credit Controller
 
-* **Slice 2.1: Voice-provider spike and abstraction** — verify against Vapi: UK latency, recording/transcript retention disabled, UK data-processing configuration, structured outcome webhooks, Twilio UK number provisioning; document findings; build provider adapter; fall back to Retell AI if spike fails criteria.
-* **Slice 2.2: Call eligibility and scheduling** — calling-hours guardrails, frequency caps, suppression checks, CLI presentation.
-* **Slice 2.3: AI disclosure and contact verification**.
-* **Slice 2.4: Controlled conversation workflow**.
-* **Slice 2.5: Structured call outcome**.
-* **Slice 2.6: Promise-to-pay actions** (with human verification for paid claims).
-* **Slice 2.7: Dispute and human escalation**.
-* **Slice 2.8: Voice usage, monitoring and cost controls** (per-organisation caps).
+- **Slice 2.1: Voice-provider spike and abstraction** — verify against Vapi: UK latency, recording/transcript retention disabled, UK data-processing configuration, structured outcome webhooks, Twilio UK number provisioning; document findings; build provider adapter; fall back to Retell AI if spike fails criteria.
+- **Slice 2.2: Call eligibility and scheduling** — calling-hours guardrails, frequency caps, suppression checks, CLI presentation.
+- **Slice 2.3: AI disclosure and contact verification**.
+- **Slice 2.4: Controlled conversation workflow**.
+- **Slice 2.5: Structured call outcome**.
+- **Slice 2.6: Promise-to-pay actions** (with human verification for paid claims).
+- **Slice 2.7: Dispute and human escalation**.
+- **Slice 2.8: Voice usage, monitoring and cost controls** (per-organisation caps).
 
 ### Phase 2 approval criteria
 
@@ -1011,16 +1011,16 @@ Eva identifies herself as AI · invoice information is protected · audio is not
 
 ## Phase 3: Lead Follow-Up Agent
 
-* **Slice 3.1: Lead data model** (including consent evidence and consent text versions for all intake channels).
-* **Slice 3.2: Website webhook intake** (signed endpoints, `webhook_endpoints`).
-* **Slice 3.2b: Email enquiry intake** — designated leads address, Graph change-notification detection, AI enquiry classification, human review queue for uncertain messages.
-* **Slice 3.2c: WhatsApp Business intake** — Meta Cloud API webhook, signature verification, message-to-lead normalisation, health monitoring.
-* **Slice 3.3: Consent evidence and TPS/CTPS screening hook** (manual attestation v1; per-channel evidence validation — no evidence, no call).
-* **Slice 3.4: Rapid call scheduling** (respecting permitted hours).
-* **Slice 3.5: Qualification scripts**.
-* **Slice 3.6: Appointment booking** (calendar-provider interface; conflict-safe).
-* **Slice 3.7: Human transfer and callback**.
-* **Slice 3.8: Lead dashboard and reporting**.
+- **Slice 3.1: Lead data model** (including consent evidence and consent text versions for all intake channels).
+- **Slice 3.2: Website webhook intake** (signed endpoints, `webhook_endpoints`).
+- **Slice 3.2b: Email enquiry intake** — designated leads address, Graph change-notification detection, AI enquiry classification, human review queue for uncertain messages.
+- **Slice 3.2c: WhatsApp Business intake** — Meta Cloud API webhook, signature verification, message-to-lead normalisation, health monitoring.
+- **Slice 3.3: Consent evidence and TPS/CTPS screening hook** (manual attestation v1; per-channel evidence validation — no evidence, no call).
+- **Slice 3.4: Rapid call scheduling** (respecting permitted hours).
+- **Slice 3.5: Qualification scripts**.
+- **Slice 3.6: Appointment booking** (calendar-provider interface; conflict-safe).
+- **Slice 3.7: Human transfer and callback**.
+- **Slice 3.8: Lead dashboard and reporting**.
 
 ### Phase 3 approval criteria
 
@@ -1030,16 +1030,16 @@ Only eligible leads are contacted · every lead traces to stored channel-appropr
 
 ## Phase 4: AI Receptionist
 
-* **Slice 4.1: Inbound phone number** (Twilio, organisation-owned).
-* **Slice 4.2: Business-hours routing**.
-* **Slice 4.3: Caller-intent classification**.
-* **Slice 4.4: Approved business knowledge** (versioned, approval-gated).
-* **Slice 4.5: Message capture**.
-* **Slice 4.6: New-enquiry creation**.
-* **Slice 4.7: Appointment booking**.
-* **Slice 4.8: Human transfer** (with guaranteed fallback).
-* **Slice 4.9: After-hours and emergency rules**.
-* **Slice 4.10: Receptionist dashboard**.
+- **Slice 4.1: Inbound phone number** (Twilio, organisation-owned).
+- **Slice 4.2: Business-hours routing**.
+- **Slice 4.3: Caller-intent classification**.
+- **Slice 4.4: Approved business knowledge** (versioned, approval-gated).
+- **Slice 4.5: Message capture**.
+- **Slice 4.6: New-enquiry creation**.
+- **Slice 4.7: Appointment booking**.
+- **Slice 4.8: Human transfer** (with guaranteed fallback).
+- **Slice 4.9: After-hours and emergency rules**.
+- **Slice 4.10: Receptionist dashboard**.
 
 ### Phase 4 approval criteria
 
@@ -1053,8 +1053,8 @@ After all required web workflows are stable: add installability · supported pus
 
 ### Known platform constraints (must be documented in-product)
 
-* iOS: push notifications work only when the PWA is installed via Safari → Share → Add to Home Screen (iOS 16.4+); no automatic install prompt exists, so the UI must show install instructions; push delivery on iOS is less reliable than Android.
-* No critical operation may depend on the service worker; automation continues in the cloud regardless.
+- iOS: push notifications work only when the PWA is installed via Safari → Share → Add to Home Screen (iOS 16.4+); no automatic install prompt exists, so the UI must show install instructions; push delivery on iOS is less reliable than Android.
+- No critical operation may depend on the service worker; automation continues in the cloud regardless.
 
 ### Phase 5 approval criteria
 
@@ -1096,13 +1096,13 @@ The cloud voice service owns call execution and routing. The desktop client may 
 
 ### Build slices
 
-* **6.1 Desktop shell** — Tauri app, shared UI integration, dev environment, secure configuration, API connectivity, basic signed test build.
-* **6.2 Desktop authentication** — system-browser login, deep-link callback, secure token storage, logout, session expiry, token refresh.
-* **6.3 System tray** — open dashboard, connection status, pause local notifications, sign out, quit. Quitting must not stop cloud automation.
-* **6.4 Native notifications** — permissions, safe content, preferences, deep links.
-* **6.5 File handling** — drag-and-drop invoices, validation, secure upload, progress, failure handling. Local files not retained longer than required.
-* **6.6 Human handoff** — transfer alert, accept/decline, callback request, fallback behaviour, minimum caller context.
-* **6.7 Automatic updates** — signed update packages, verification, safe rollout, failed-update recovery, version reporting.
+- **6.1 Desktop shell** — Tauri app, shared UI integration, dev environment, secure configuration, API connectivity, basic signed test build.
+- **6.2 Desktop authentication** — system-browser login, deep-link callback, secure token storage, logout, session expiry, token refresh.
+- **6.3 System tray** — open dashboard, connection status, pause local notifications, sign out, quit. Quitting must not stop cloud automation.
+- **6.4 Native notifications** — permissions, safe content, preferences, deep links.
+- **6.5 File handling** — drag-and-drop invoices, validation, secure upload, progress, failure handling. Local files not retained longer than required.
+- **6.6 Human handoff** — transfer alert, accept/decline, callback request, fallback behaviour, minimum caller context.
+- **6.7 Automatic updates** — signed update packages, verification, safe rollout, failed-update recovery, version reporting.
 
 ### Desktop testing requirements
 
@@ -1116,14 +1116,14 @@ Limited operational diagnostics only: app version, OS, connection state, update 
 
 # 21. Additional Delivery-Channel Rules
 
-* **Do not build local-first architecture.** The application remains cloud-first.
-* **Do not duplicate backend logic.** Web, PWA and Tauri clients use the same backend APIs.
-* **Do not make desktop mandatory.** Customers can use Eva fully through the web platform.
-* **Do not let client closure interrupt automation.** Email, voice, lead and receptionist operations continue without an active client.
-* **Share reusable frontend code deliberately.** UI components, types, validation and API clients may be shared; do not force sharing where platform-specific behaviour requires separation.
-* **Secure native capabilities.** Every Tauri capability uses an explicit allowlist and least-privilege permissions.
-* **Treat updates as a security feature.** Desktop update packages must be signed and verified.
-* **Test platform differences.** Do not assume behaviour that works on Windows automatically works on macOS or Linux.
+- **Do not build local-first architecture.** The application remains cloud-first.
+- **Do not duplicate backend logic.** Web, PWA and Tauri clients use the same backend APIs.
+- **Do not make desktop mandatory.** Customers can use Eva fully through the web platform.
+- **Do not let client closure interrupt automation.** Email, voice, lead and receptionist operations continue without an active client.
+- **Share reusable frontend code deliberately.** UI components, types, validation and API clients may be shared; do not force sharing where platform-specific behaviour requires separation.
+- **Secure native capabilities.** Every Tauri capability uses an explicit allowlist and least-privilege permissions.
+- **Treat updates as a security feature.** Desktop update packages must be signed and verified.
+- **Test platform differences.** Do not assume behaviour that works on Windows automatically works on macOS or Linux.
 
 ---
 
@@ -1151,18 +1151,18 @@ The client should own its domain, its Microsoft tenant, its mailbox, its telepho
 
 The first product is not intended to provide:
 
-* Full accounting, VAT returns, bookkeeping or bank reconciliation
-* Legal debt collection or court-action automation
-* Card-payment collection by voice
-* Cold-call prospecting or purchased-list dialling
-* Mass marketing email
-* WhatsApp marketing broadcasts, bulk messaging or outbound template campaigns (WhatsApp is an inbound enquiry channel only)
-* Free-form AI-drafted customer emails (approved templates only)
-* Full CRM replacement
-* Payroll or employee monitoring
-* Call recording or permanent transcript storage
-* A native mobile application
-* Multi-currency invoicing (GBP-first) or multi-language UI (en-GB first)
+- Full accounting, VAT returns, bookkeeping or bank reconciliation
+- Legal debt collection or court-action automation
+- Card-payment collection by voice
+- Cold-call prospecting or purchased-list dialling
+- Mass marketing email
+- WhatsApp marketing broadcasts, bulk messaging or outbound template campaigns (WhatsApp is an inbound enquiry channel only)
+- Free-form AI-drafted customer emails (approved templates only)
+- Full CRM replacement
+- Payroll or employee monitoring
+- Call recording or permanent transcript storage
+- A native mobile application
+- Multi-currency invoicing (GBP-first) or multi-language UI (en-GB first)
 
 ---
 
@@ -1190,23 +1190,23 @@ Calls answered · missed-call reduction · successful routing · messages captur
 
 A feature is not complete merely because it works once. A feature is complete only when:
 
-* Code is implemented
-* Architecture boundaries are respected
-* Validation exists
-* Permissions are enforced (app layer and RLS)
-* Unit tests pass
-* Integration tests pass where applicable
-* End-to-end flow is tested where applicable
-* Error states are handled
-* Logs are present
-* Metrics are present
-* Documentation is updated
-* Migration is documented
-* Rollback is documented
-* Security has been reviewed
-* Manual test instructions are supplied
-* Known limitations are reported
-* Approval has been received
+- Code is implemented
+- Architecture boundaries are respected
+- Validation exists
+- Permissions are enforced (app layer and RLS)
+- Unit tests pass
+- Integration tests pass where applicable
+- End-to-end flow is tested where applicable
+- Error states are handled
+- Logs are present
+- Metrics are present
+- Documentation is updated
+- Migration is documented
+- Rollback is documented
+- Security has been reviewed
+- Manual test instructions are supplied
+- Known limitations are reported
+- Approval has been received
 
 ---
 
@@ -1236,38 +1236,38 @@ The Builder must not begin Phase 1 until Phase 0 has been reviewed and approved.
 
 External accounts and approvals with lead times. None of these block Phase 0 coding, but several block specific slices and launch; start them early.
 
-| Item | Needed by | Notes |
-|---|---|---|
-| GitHub organisation and repository | Phase 0 | Branch protection on from day one |
-| Supabase project — London (eu-west-2) region | Phase 0 | Database, Auth, Storage in one project |
-| Hosting account (Railway / Render / Fly.io — pick one) | Phase 0 | Docker deploys for api + worker |
-| Sentry project | Phase 0 | DSNs for web, api, worker |
-| Microsoft 365 developer tenant + app registration | Slice 1.6 | Multi-tenant app, minimal Graph scopes; sandbox mailboxes for testing |
-| Paddle account application | Submit during Phase 0 | Approval takes days; AI-category products may face extra review. Required before any real billing |
-| Paddle sandbox | Slice 1.6–1.7 era (billing slice) | Webhook signature testing |
-| Resend (or Postmark) account | Slice 1.7 | Platform transactional email |
-| OpenAI API account (business/API terms, no-training) | Slice 1.4 | Structured extraction and classification |
-| Twilio account with UK number capability | Phase 2 | Identity verification required; UK geographic numbers |
-| Vapi account (+ Retell AI evaluation account) | Phase 2, Slice 2.1 | Verify recording-disabled configuration and UK data processing |
-| Meta Business account + WhatsApp Business Platform (Cloud API) app | Phase 3, Slice 3.2c | Organisation owns its number and Meta Business account; business verification can take days–weeks, start early |
-| Domain + DNS access (eva product domain) | Phase 1 | Transactional email authentication (SPF/DKIM/DMARC) |
-| DPA + subprocessor register templates | Before first paying customer | UK GDPR processor obligations |
-| TPS/CTPS attestation process (manual v1) | Phase 3 | Screening-service integration may follow |
-| Apple Developer account + Windows code-signing certificate | Phase 6 only | Required for signed desktop builds and auto-updates |
+| Item                                                               | Needed by                         | Notes                                                                                                          |
+| ------------------------------------------------------------------ | --------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| GitHub organisation and repository                                 | Phase 0                           | Branch protection on from day one                                                                              |
+| Supabase project — London (eu-west-2) region                       | Phase 0                           | Database, Auth, Storage in one project                                                                         |
+| Hosting account (Railway / Render / Fly.io — pick one)             | Phase 0                           | Docker deploys for api + worker                                                                                |
+| Sentry project                                                     | Phase 0                           | DSNs for web, api, worker                                                                                      |
+| Microsoft 365 developer tenant + app registration                  | Slice 1.6                         | Multi-tenant app, minimal Graph scopes; sandbox mailboxes for testing                                          |
+| Paddle account application                                         | Submit during Phase 0             | Approval takes days; AI-category products may face extra review. Required before any real billing              |
+| Paddle sandbox                                                     | Slice 1.6–1.7 era (billing slice) | Webhook signature testing                                                                                      |
+| Resend (or Postmark) account                                       | Slice 1.7                         | Platform transactional email                                                                                   |
+| OpenAI API account (business/API terms, no-training)               | Slice 1.4                         | Structured extraction and classification                                                                       |
+| Twilio account with UK number capability                           | Phase 2                           | Identity verification required; UK geographic numbers                                                          |
+| Vapi account (+ Retell AI evaluation account)                      | Phase 2, Slice 2.1                | Verify recording-disabled configuration and UK data processing                                                 |
+| Meta Business account + WhatsApp Business Platform (Cloud API) app | Phase 3, Slice 3.2c               | Organisation owns its number and Meta Business account; business verification can take days–weeks, start early |
+| Domain + DNS access (eva product domain)                           | Phase 1                           | Transactional email authentication (SPF/DKIM/DMARC)                                                            |
+| DPA + subprocessor register templates                              | Before first paying customer      | UK GDPR processor obligations                                                                                  |
+| TPS/CTPS attestation process (manual v1)                           | Phase 3                           | Screening-service integration may follow                                                                       |
+| Apple Developer account + Windows code-signing certificate         | Phase 6 only                      | Required for signed desktop builds and auto-updates                                                            |
 
 ---
 
 # Appendix B — Glossary
 
-* **NDR** — Non-Delivery Report; a bounce message received by the sending mailbox.
-* **CLI** — Calling Line Identity; the caller ID presented on outbound calls.
-* **TPS / CTPS** — (Corporate) Telephone Preference Service; UK opt-out registers for unsolicited marketing calls.
-* **PECR** — Privacy and Electronic Communications Regulations; UK rules for electronic marketing, calls and cookies.
-* **RLS** — Postgres Row Level Security; database-enforced tenant isolation.
-* **MoR** — Merchant of Record; Paddle's role as the legal seller handling VAT and payment compliance.
-* **DPA** — Data Processing Agreement.
-* **DST** — Daylight Saving Time (BST/GMT transitions in the UK).
+- **NDR** — Non-Delivery Report; a bounce message received by the sending mailbox.
+- **CLI** — Calling Line Identity; the caller ID presented on outbound calls.
+- **TPS / CTPS** — (Corporate) Telephone Preference Service; UK opt-out registers for unsolicited marketing calls.
+- **PECR** — Privacy and Electronic Communications Regulations; UK rules for electronic marketing, calls and cookies.
+- **RLS** — Postgres Row Level Security; database-enforced tenant isolation.
+- **MoR** — Merchant of Record; Paddle's role as the legal seller handling VAT and payment compliance.
+- **DPA** — Data Processing Agreement.
+- **DST** — Daylight Saving Time (BST/GMT transitions in the UK).
 
 ---
 
-*End of consolidated specification v1.2.*
+_End of consolidated specification v1.2._

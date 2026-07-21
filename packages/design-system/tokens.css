@@ -1,0 +1,24 @@
+/**
+ * Eva design tokens — Tailwind v4 theme (BRD 9.1).
+ * Imported by apps/web globals.css; reused by the desktop client in Phase 6.
+ * Colour palette: calm, trustworthy fintech-adjacent tones (en-GB product).
+ */
+@theme {
+  --color-background: #ffffff;
+  --color-foreground: #0f172a;
+
+  --color-primary: #1e40af;
+  --color-primary-foreground: #ffffff;
+
+  --color-muted: #f1f5f9;
+  --color-muted-foreground: #475569;
+
+  --color-success: #15803d;
+  --color-warning: #b45309;
+  --color-danger: #b91c1c;
+
+  --radius-card: 0.75rem;
+
+  --font-sans:
+    ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}

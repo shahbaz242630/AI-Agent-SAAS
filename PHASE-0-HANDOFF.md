@@ -10,7 +10,7 @@
 
 **Current status — 21 July 2026:**
 
-Phase 0 (Project Foundation) is in environment setup — no code written yet. The BRD v1.2 has been reviewed and approved as the governing specification. This handoff document has been created and the working directory is linked to the GitHub repo (`https://github.com/shahbaz242630/AI-Agent-SAAS.git`, branch `main`). **Decisions made 2026-07-21:** hosting = **Railway** (usage-based, best DX for two Docker services, cheapest at our scale); Docker retained per BRD 9.11 (user confirmed after reviewing alternatives — no deviation); package manager = **pnpm**; Node = **22 LTS installed via fnm** (v22.23.1, default). Environment setup is COMPLETE (git linked, toolchain verified). Next action: commit BRD + handoff doc to GitHub (user approved), then produce the Section 27 Phase 0 plan (11-point pre-code deliverable) for user approval. No slices are complete. Nothing may be built beyond the currently approved slice.
+Phase 0 (Project Foundation) is underway. Environment setup is complete (Node 22.23.1 via fnm, pnpm 10.15.0, Docker 28.5.2, repo linked to `https://github.com/shahbaz242630/AI-Agent-SAAS.git`, branch `main`). Decisions: hosting = Railway · Docker per BRD 9.11 · pnpm · Node 22 LTS · Vitest · Inngest Cloud. The Section 27 Phase 0 plan (`docs/PHASE-0-PLAN.md`) is APPROVED. **Slice 0.1 (repo scaffold, tooling, health endpoint, Docker, CI, Vitest) is COMPLETE and verified** — build/lint/typecheck/6 unit tests/format all green; API boots and serves `/health` with correlation IDs; both Docker images build and the api container serves `/health`. Awaiting user approval of the Slice 0.1 report, then commit, then Slice 0.2 (Prisma + schema + migrations + seed). Nothing may be built beyond the currently approved slice.
 
 ---
 
@@ -18,12 +18,12 @@ Phase 0 (Project Foundation) is in environment setup — no code written yet. Th
 
 **Eva** — a modular, cloud-first AI business communications SaaS for UK micro/small businesses (launch market: Slough, UK). Commercial model: modular SaaS via Paddle (Merchant of Record). Four modules, each independently enabled, billed, tested and deployed:
 
-| # | Module | Phase | Summary |
-|---|---|---|---|
-| 1 | Email Credit Controller | 1 | Overdue-invoice email reminders via customer's Microsoft 365 mailbox (Microsoft Graph) |
-| 2 | Voice Credit Controller | 2 | AI voice follow-up calls on genuine outstanding invoices (Vapi + Twilio UK) |
-| 3 | Lead Follow-Up Agent | 3 | Rapid callback of inbound leads (web forms, email enquiries, WhatsApp Business, missed calls) |
-| 4 | AI Receptionist | 4 | Inbound call answering, routing, message capture |
+| #   | Module                  | Phase | Summary                                                                                       |
+| --- | ----------------------- | ----- | --------------------------------------------------------------------------------------------- |
+| 1   | Email Credit Controller | 1     | Overdue-invoice email reminders via customer's Microsoft 365 mailbox (Microsoft Graph)        |
+| 2   | Voice Credit Controller | 2     | AI voice follow-up calls on genuine outstanding invoices (Vapi + Twilio UK)                   |
+| 3   | Lead Follow-Up Agent    | 3     | Rapid callback of inbound leads (web forms, email enquiries, WhatsApp Business, missed calls) |
+| 4   | AI Receptionist         | 4     | Inbound call answering, routing, message capture                                              |
 
 Phase 5 = installable PWA. Phase 6 = optional Tauri desktop client (demand-gated only). Web-first: no downloadable client before Phase 5/6.
 
@@ -33,26 +33,26 @@ Delivery order: responsive web app (primary) → PWA → optional desktop. Cloud
 
 ## 3. Decided Technology Stack (binding — BRD Section 9)
 
-| Concern | Decision |
-|---|---|
-| Frontend | Next.js 16 (App Router), React 19, TypeScript 5 strict, Tailwind CSS v4, shadcn/ui, react-hook-form + zod |
-| Backend API | NestJS 11 (Express 5 adapter), REST + OpenAPI spec → typed `packages/api-client` |
-| Runtime | Node.js 22 LTS |
-| Background processing | Inngest (durable functions). Fallback: Trigger.dev. **Prohibited:** Celery, Python workers, Temporal, hand-rolled cron |
-| Database | PostgreSQL 16+ on Supabase, **London region (eu-west-2)**; Prisma 7 ORM; forward-only migrations with rollback notes |
-| Tenant isolation | Application-layer scoping on EVERY query **plus** Postgres Row Level Security (both tested) |
-| Auth | Supabase Auth (email/password + MFA); HTTP-only secure cookies; short-lived tokens + refresh rotation; NestJS guard validating Supabase JWT on every request |
-| Customer email | Microsoft Graph (multi-tenant app, OAuth, minimal scopes: `Mail.Send`, `Mail.Read`, `offline_access`, `User.Read`) |
-| Transactional email | Resend (fallback: Postmark) behind notifications module |
-| Voice | Vapi (primary; recording/transcript retention disabled) + Twilio UK geographic numbers. Fallback: Retell AI |
-| Payments | Paddle (Merchant of Record); platform entitlement engine is source of truth |
-| AI | OpenAI API structured outputs behind internal adapter; versioned prompts; no training on customer data |
-| Monitoring | Sentry (web/api/worker); structured JSON logs with correlation IDs |
-| CI/CD | GitHub Actions — lint, typecheck, unit tests, build on every PR; staging on merge; production manual |
-| Environments | dev (local Docker Compose) · staging · production |
-| Packaging | Docker containers for `api` and `worker`; Docker Compose for local dev |
-| Hosting | **Railway** (decided 2026-07-21) — Docker deploys for `api` + `worker`; web on Vercel or Railway |
-| Desktop (Phase 6 only) | Tauri v2 reusing shared packages |
+| Concern                | Decision                                                                                                                                                     |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Frontend               | Next.js 16 (App Router), React 19, TypeScript 5 strict, Tailwind CSS v4, shadcn/ui, react-hook-form + zod                                                    |
+| Backend API            | NestJS 11 (Express 5 adapter), REST + OpenAPI spec → typed `packages/api-client`                                                                             |
+| Runtime                | Node.js 22 LTS                                                                                                                                               |
+| Background processing  | Inngest (durable functions). Fallback: Trigger.dev. **Prohibited:** Celery, Python workers, Temporal, hand-rolled cron                                       |
+| Database               | PostgreSQL 16+ on Supabase, **London region (eu-west-2)**; Prisma 7 ORM; forward-only migrations with rollback notes                                         |
+| Tenant isolation       | Application-layer scoping on EVERY query **plus** Postgres Row Level Security (both tested)                                                                  |
+| Auth                   | Supabase Auth (email/password + MFA); HTTP-only secure cookies; short-lived tokens + refresh rotation; NestJS guard validating Supabase JWT on every request |
+| Customer email         | Microsoft Graph (multi-tenant app, OAuth, minimal scopes: `Mail.Send`, `Mail.Read`, `offline_access`, `User.Read`)                                           |
+| Transactional email    | Resend (fallback: Postmark) behind notifications module                                                                                                      |
+| Voice                  | Vapi (primary; recording/transcript retention disabled) + Twilio UK geographic numbers. Fallback: Retell AI                                                  |
+| Payments               | Paddle (Merchant of Record); platform entitlement engine is source of truth                                                                                  |
+| AI                     | OpenAI API structured outputs behind internal adapter; versioned prompts; no training on customer data                                                       |
+| Monitoring             | Sentry (web/api/worker); structured JSON logs with correlation IDs                                                                                           |
+| CI/CD                  | GitHub Actions — lint, typecheck, unit tests, build on every PR; staging on merge; production manual                                                         |
+| Environments           | dev (local Docker Compose) · staging · production                                                                                                            |
+| Packaging              | Docker containers for `api` and `worker`; Docker Compose for local dev                                                                                       |
+| Hosting                | **Railway** (decided 2026-07-21) — Docker deploys for `api` + `worker`; web on Vercel or Railway                                                             |
+| Desktop (Phase 6 only) | Tauri v2 reusing shared packages                                                                                                                             |
 
 **Stack substitutions are prohibited** without an approved architectural-change report (BRD 3.8, Rule 9).
 
@@ -120,20 +120,13 @@ infrastructure/
 ## 6. Phase Roadmap & Progress Tracker
 
 - [ ] **Phase 0 — Project Foundation** ← CURRENT
-  - [ ] Environment setup (git link, toolchain, hosting decision)
-  - [ ] Section 27 pre-code plan produced and approved
-  - [ ] Repo structure per Section 8
-  - [ ] TypeScript strict, linting, formatting
-  - [ ] Testing framework (unit + e2e scaffolding)
-  - [ ] Docker Compose local environment
-  - [ ] Prisma 7 + Supabase connection, migration system, seed data
-  - [ ] Supabase Auth + organisation model + memberships + roles
-  - [ ] RLS tenant-isolation policies + tests
-  - [ ] Logging, error handling, correlation IDs, Sentry
-  - [ ] Health endpoint
-  - [ ] CI checks + branch protection
-  - [ ] Base design system (`design-system`, `ui` shell)
-  - [ ] Inngest skeleton + one example durable function
+  - [x] Environment setup (git link, toolchain, hosting decision)
+  - [x] Section 27 pre-code plan produced and approved (`docs/PHASE-0-PLAN.md`)
+  - [x] **Slice 0.1** — repo structure per Section 8 · TypeScript strict, linting, formatting · testing framework (Vitest) · Docker Compose + Dockerfiles · health endpoint · CI workflow · Inngest skeleton + example function · base design system + ui shell
+  - [ ] **Slice 0.2** — Prisma 7 + Postgres + Phase 0 schema + migrations + seed data
+  - [ ] **Slice 0.3** — Supabase Auth + organisations/memberships/roles + JWT guard + RLS policies + isolation tests
+  - [ ] **Slice 0.4** — Sentry + logging hardening + health/ready + staging deploy to Railway
+  - [ ] **Slice 0.5** — Playwright e2e scaffold + Phase 0 approval-gate evidence pack
   - [ ] **Approval gate:** build/lint/typecheck/tests pass · tenant isolation demonstrated (app + RLS) · secrets excluded · health endpoint works · seed loads · staging deploys
 - [ ] **Phase 1 — Email Credit Controller** (Slices 1.1–1.10, see BRD Section 20)
 - [ ] **Phase 2 — Voice Credit Controller** (Slices 2.1–2.8; starts with Vapi spike)
@@ -146,14 +139,14 @@ infrastructure/
 
 ## 7. Environment Status
 
-| Tool | Required | Installed | Status |
-|---|---|---|---|
-| Git | any | 2.53.0 | ✅ |
-| Node.js | 22 LTS | **v22.23.1 via fnm** (default; v24 also present) | ✅ pinned |
-| Package manager | **pnpm** (decided 2026-07-21) | 10.15.0 | ✅ |
-| fnm | — | installed via scoop; hook added to `~/.bashrc` | ✅ |
-| Docker | any | 28.5.2 | ✅ |
-| GitHub repo | — | linked to working dir, branch `main` | ✅ |
+| Tool            | Required                      | Installed                                        | Status    |
+| --------------- | ----------------------------- | ------------------------------------------------ | --------- |
+| Git             | any                           | 2.53.0                                           | ✅        |
+| Node.js         | 22 LTS                        | **v22.23.1 via fnm** (default; v24 also present) | ✅ pinned |
+| Package manager | **pnpm** (decided 2026-07-21) | 10.15.0                                          | ✅        |
+| fnm             | —                             | installed via scoop; hook added to `~/.bashrc`   | ✅        |
+| Docker          | any                           | 28.5.2                                           | ✅        |
+| GitHub repo     | —                             | linked to working dir, branch `main`             | ✅        |
 
 **Business-side prerequisites (Appendix A, user's responsibility):** GitHub org/repo ✅ · Supabase project (London) ⏳ · Microsoft 365 dev tenant (by Slice 1.6) · Paddle application (submit early) · Sentry project ⏳ · hosting account ⏳ · OpenAI API (by Slice 1.4) · Twilio + Vapi (Phase 2) · Meta Business (Phase 3).
 
@@ -161,12 +154,19 @@ infrastructure/
 
 ## 8. Key Files
 
-| File | Purpose |
-|---|---|
-| `Eva BRD v1.2 - Consolidated Build Specification.md` | Full governing specification (source of truth for detail) |
-| `PHASE-0-HANDOFF.md` | This document — session onboarding + progress tracking |
+| File                                                 | Purpose                                                                      |
+| ---------------------------------------------------- | ---------------------------------------------------------------------------- |
+| `Eva BRD v1.2 - Consolidated Build Specification.md` | Full governing specification (source of truth for detail)                    |
+| `PHASE-0-HANDOFF.md`                                 | This document — session onboarding + progress tracking                       |
+| `docs/PHASE-0-PLAN.md`                               | Section 27 pre-code plan — **approved 2026-07-21**                           |
+| `package.json` / `pnpm-workspace.yaml`               | Workspace root (Node 22 + pnpm pinned)                                       |
+| `apps/api/src/main.ts`                               | API bootstrap (NestJS 11)                                                    |
+| `apps/api/src/modules/monitoring/`                   | Health endpoint module                                                       |
+| `apps/worker/src/main.ts`                            | Worker bootstrap (Inngest serve endpoint)                                    |
+| `infrastructure/docker/docker-compose.yml`           | Local dev environment (postgres, api, worker)                                |
+| `.github/workflows/ci.yml`                           | CI: install → build → lint → typecheck → test → format                       |
 
-*(This table grows as the project grows — add key entry-point files as they are created: package.json, prisma schema, docker-compose, CI workflows, etc.)*
+_(This table grows as the project grows — add key entry-point files as they are created: package.json, prisma schema, docker-compose, CI workflows, etc.)_
 
 ---
 
@@ -180,9 +180,11 @@ infrastructure/
 
 ## 10. Progress Log
 
-*Newest entries on top. One entry per completed slice/phase or approved milestone.*
+_Newest entries on top. One entry per completed slice/phase or approved milestone._
 
-| Date | Entry |
-|---|---|
+| Date       | Entry                                                                                                                                                                                                                                                                                 |
+| ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 2026-07-21 | **Slice 0.1 COMPLETE and verified.** pnpm monorepo scaffold (apps web/api/worker + 6 shared packages), TS 5 strict, ESLint 9 + Prettier, Vitest (6 tests passing), NestJS health endpoint with correlation IDs + helmet + JSON logs, Inngest skeleton with example durable function, Dockerfiles + Compose (images build; api container serves /health), GitHub Actions CI. Fixes during verification: @types/node in configuration/ui packages, zod deps in api/worker, nestjs-pino transport typing, .dockerignore + tsconfig.base.json in image context. Plan approved incl. Vitest + Inngest Cloud proposals. |
+| 2026-07-21 | Section 27 Phase 0 pre-code plan produced at `docs/PHASE-0-PLAN.md` — **approved by user**. Slice 0.1–0.5 split; Vitest and Inngest Cloud approved.                                                                                                                                   |
 | 2026-07-21 | **Environment setup complete.** Decisions: hosting = Railway · Docker per BRD 9.11 · package manager = pnpm · Node 22 LTS via fnm (v22.23.1, default; bash hook added). User reviewed Docker-vs-native alternatives incl. 1k/10k-user scaling analysis; confirmed BRD recommendation. |
-| 2026-07-21 | Handoff document created. BRD v1.2 reviewed and confirmed as governing spec. GitHub repo identified. Environment check run (see Section 7). No code written yet. |
+| 2026-07-21 | Handoff document created. BRD v1.2 reviewed and confirmed as governing spec. GitHub repo identified. Environment check run (see Section 7). No code written yet.                                                                                                                      |

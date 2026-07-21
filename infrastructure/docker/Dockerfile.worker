@@ -1,0 +1,18 @@
+# Eva worker — production image (BRD 9.11: Docker packaging; Railway deploys this).
+# Build context is the REPOSITORY ROOT (pnpm workspace).
+FROM node:22-alpine AS base
+RUN corepack enable && corepack prepare pnpm@10.15.0 --activate
+WORKDIR /app
+
+FROM base AS build
+COPY pnpm-workspace.yaml package.json pnpm-lock.yaml tsconfig.base.json ./
+COPY packages ./packages
+COPY apps/worker ./apps/worker
+RUN pnpm install --frozen-lockfile --filter @eva/worker...
+RUN pnpm --filter @eva/worker... run build
+
+FROM base AS runner
+ENV NODE_ENV=production
+COPY --from=build /app ./
+EXPOSE 3002
+CMD ["node", "apps/worker/dist/main.js"]
