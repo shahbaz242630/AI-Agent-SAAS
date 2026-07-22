@@ -15,7 +15,7 @@
   "dependencies": {
     "@eva/configuration": "workspace:*",
     "express": "^5.1.0",
-    "inngest": "^3.35.0",
+    "inngest": "^4.12.1",
     "pino": "^9.6.0",
     "zod": "^4.0.0"
   },
