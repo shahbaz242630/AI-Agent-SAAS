@@ -44,10 +44,14 @@ docs/
 # founder's external-provider records (Supabase, Paddle, etc.) — never commit
 detail/
 details/
+Details/
 *.xlsx
 *.xls
 *.csv
 ~$*
+
+# agent guidance + internal business/project documents — LOCAL ONLY
+AGENTS.md
 
 # NOTE: README.md and SECURITY.md stay tracked — they are GitHub-facing
 # (repo landing page + vulnerability-reporting policy), not internal docs.
