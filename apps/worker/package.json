@@ -16,7 +16,7 @@
     "@eva/configuration": "workspace:*",
     "express": "^5.1.0",
     "inngest": "^3.35.0",
-    "pino": "^9.6.0",
+    "pino": "^10.3.1",
     "zod": "^4.0.0"
   },
   "devDependencies": {
