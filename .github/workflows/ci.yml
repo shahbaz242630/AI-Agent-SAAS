@@ -1,6 +1,8 @@
 # CI — runs on every PR and push to main (BRD 9.10).
-# GitHub requires workflows under .github/workflows; BRD's infrastructure/ci
-# intent is satisfied here (see docs/PHASE-0-PLAN.md Section 10).
+# Security gates per docs/SECURITY-TESTING-STRATEGY.md Section 4: every PR runs
+# the verify gate plus secrets/dependency/workflow scans. CodeQL (default
+# setup) and secret scanning + push protection are enabled at repo level.
+# All actions are pinned to full commit SHAs; GITHUB_TOKEN is read-only.
 name: CI
 
 on:
@@ -11,6 +13,9 @@ on:
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
+
+permissions:
+  contents: read
 
 jobs:
   verify:
@@ -31,13 +36,15 @@ jobs:
           --health-timeout 3s
           --health-retries 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
         with:
           version: 10.15.0
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version-file: .nvmrc
           cache: pnpm
@@ -64,3 +71,45 @@ jobs:
 
       - name: Format check
         run: pnpm run format:check
+
+  security:
+    name: Security scans
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Secrets scan (gitleaks)
+        uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 10.15.0
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version-file: .nvmrc
+
+      - name: Dependency vulnerability audit (fails on high/critical)
+        run: pnpm audit --audit-level=high
+
+      - name: Workflow security lint (zizmor)
+        uses: zizmorcore/zizmor-action@6599ee8b7a49aef6a770f63d261d214911a7ce02 # v0.6.0
+
+  dependency-review:
+    name: Dependency review
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      # Blocks PRs that INTRODUCE high/critical vulnerable dependencies.
+      - uses: actions/dependency-review-action@e58c696e52cac8e62d61cc21fda89565d71505d7 # v4.3.0
+        with:
+          fail-on-severity: high

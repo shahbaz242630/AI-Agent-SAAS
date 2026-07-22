@@ -1,0 +1,8 @@
+# Founder is the required reviewer for everything (paired with the
+# protect-main ruleset once the builder bot account exists).
+* @shahbaz242630
+
+# CI/workflows, repo automation and infrastructure changes always need
+# explicit founder review.
+/.github/ @shahbaz242630
+/infrastructure/ @shahbaz242630

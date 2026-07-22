@@ -1,0 +1,22 @@
+# Dependabot — dependency graph + alerts + security updates are enabled at
+# repo level; this file adds weekly version-update PRs (grouped) and keeps
+# SHA-pinned GitHub Actions current.
+version: 2
+updates:
+  - package-ecosystem: "npm" # covers pnpm via the root lockfile
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    groups:
+      minor-patch:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
