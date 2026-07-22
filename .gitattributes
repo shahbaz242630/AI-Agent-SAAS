@@ -1,0 +1,3 @@
+# LF everywhere — Prettier enforces endOfLine:lf; this keeps Windows
+# checkouts from flipping files to CRLF and dirtying diffs.
+* text=auto eol=lf

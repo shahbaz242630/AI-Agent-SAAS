@@ -37,6 +37,7 @@ const DEMO_USERS = [
 ] as const;
 
 export async function seed(prisma: EvaPrismaClient): Promise<void> {
+  // roles is a global lookup table (no RLS) — plain upserts.
   for (const role of SEED_ROLES) {
     await prisma.role.upsert({
       where: { key: role.key },
@@ -45,52 +46,61 @@ export async function seed(prisma: EvaPrismaClient): Promise<void> {
     });
   }
 
-  const organisation = await prisma.organisation.upsert({
-    where: { id: DEMO_ORGANISATION_ID },
-    update: {},
-    create: {
-      id: DEMO_ORGANISATION_ID,
-      name: "Acme Demo Ltd (DEMO)",
-      isDemo: true,
-    },
-  });
+  // FORCE RLS binds the owner role too, so the seed declares its tenant/user
+  // context exactly like the application does (set_config ..., true = local to
+  // this transaction; BRD 15).
+  await prisma.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT set_config('app.current_org', ${DEMO_ORGANISATION_ID}, true)`;
 
-  await prisma.organisationSettings.upsert({
-    where: { organisationId: organisation.id },
-    update: {},
-    create: {
-      organisationId: organisation.id,
-      timezone: "Europe/London",
-      locale: "en-GB",
-    },
-  });
-
-  for (const demoUser of DEMO_USERS) {
-    const user = await prisma.user.upsert({
-      where: { id: demoUser.id },
+    const organisation = await tx.organisation.upsert({
+      where: { id: DEMO_ORGANISATION_ID },
       update: {},
       create: {
-        id: demoUser.id,
-        email: demoUser.email,
-        fullName: demoUser.fullName,
+        id: DEMO_ORGANISATION_ID,
+        name: "Acme Demo Ltd (DEMO)",
+        isDemo: true,
       },
     });
 
-    const role = await prisma.role.findUniqueOrThrow({ where: { key: demoUser.roleKey } });
-
-    await prisma.organisationMembership.upsert({
-      where: {
-        organisationId_userId: {
-          organisationId: organisation.id,
-          userId: user.id,
-        },
-      },
-      update: { roleId: role.id },
+    await tx.organisationSettings.upsert({
+      where: { organisationId: organisation.id },
+      update: {},
       create: {
         organisationId: organisation.id,
-        userId: user.id,
-        roleId: role.id,
+        timezone: "Europe/London",
+        locale: "en-GB",
       },
     });
-  }
+
+    for (const demoUser of DEMO_USERS) {
+      await tx.$executeRaw`SELECT set_config('app.current_user', ${demoUser.id}, true)`;
+
+      const user = await tx.user.upsert({
+        where: { id: demoUser.id },
+        update: {},
+        create: {
+          id: demoUser.id,
+          email: demoUser.email,
+          fullName: demoUser.fullName,
+        },
+      });
+
+      const role = await tx.role.findUniqueOrThrow({ where: { key: demoUser.roleKey } });
+
+      await tx.organisationMembership.upsert({
+        where: {
+          organisationId_userId: {
+            organisationId: organisation.id,
+            userId: user.id,
+          },
+        },
+        update: { roleId: role.id },
+        create: {
+          organisationId: organisation.id,
+          userId: user.id,
+          roleId: role.id,
+        },
+      });
+    }
+  });
 }

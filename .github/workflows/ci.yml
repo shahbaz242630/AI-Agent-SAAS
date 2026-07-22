@@ -64,10 +64,20 @@ jobs:
       - name: Create test database
         run: PGPASSWORD=eva psql -h localhost -U eva -d postgres -c "CREATE DATABASE eva_test;"
 
+      # Applies migrations (incl. the eva_app RLS role) to the test database
+      # before any spec runs — the API specs boot against it as eva_app.
+      - name: Apply database migrations to test database
+        run: pnpm --filter @eva/database exec prisma migrate deploy
+        env:
+          DATABASE_URL: postgresql://eva:eva@localhost:5432/eva_test
+
       - name: Unit tests
         run: pnpm run test
         env:
           DATABASE_URL: postgresql://eva:eva@localhost:5432/eva_test
+          APP_DATABASE_URL: postgresql://eva_app:eva_app@localhost:5432/eva_test
+          # API tests sign tokens locally and mock JWKS — no real Supabase.
+          SUPABASE_URL: https://test.supabase.local
 
       - name: Format check
         run: pnpm run format:check
