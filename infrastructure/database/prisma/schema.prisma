@@ -1,0 +1,113 @@
+// Eva — Phase 0 schema (BRD 10; Slice 0.2).
+// Conventions (BRD 10): snake_case columns, tenant-owned rows carry
+// organisation_id, mutable records carry created_at/updated_at/created_by,
+// soft delete via deleted_at, all timestamps timestamptz (UTC, BRD 18.1).
+// Phase 0 tables ONLY — invoicing/CRM/billing tables arrive with their phases
+// (Rule 11: no placeholder debt).
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model Organisation {
+  id          String    @id @default(uuid()) @db.Uuid
+  name        String
+  /// Demo/seed organisations are excluded from any real sending (BRD 18.6).
+  isDemo      Boolean   @default(false) @map("is_demo")
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy   String?   @map("created_by") @db.Uuid
+  deletedAt   DateTime? @map("deleted_at") @db.Timestamptz(6)
+  settings    OrganisationSettings?
+  memberships OrganisationMembership[]
+  auditLogs   AuditLog[]
+
+  @@map("organisations")
+}
+
+model OrganisationSettings {
+  id             String       @id @default(uuid()) @db.Uuid
+  organisationId String       @unique @map("organisation_id") @db.Uuid
+  organisation   Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+  /// All business logic runs in this timezone (BRD 18.1).
+  timezone       String       @default("Europe/London")
+  locale         String       @default("en-GB")
+  /// Shapes refined when the modules that consume them land (Phases 1-4);
+  /// calling hours are always clamped to 08:00-21:00 UK (BRD hard rule).
+  businessHours  Json?        @map("business_hours")
+  callingHours   Json?        @map("calling_hours")
+  createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy      String?      @map("created_by") @db.Uuid
+  deletedAt      DateTime?    @map("deleted_at") @db.Timestamptz(6)
+
+  @@map("organisation_settings")
+}
+
+model User {
+  id          String    @id @default(uuid()) @db.Uuid
+  /// Lowercased by the application layer before write.
+  email       String    @unique
+  fullName    String?   @map("full_name")
+  /// Links to Supabase Auth (auth.users.id); populated in Slice 0.3.
+  authUserId  String?   @unique @map("auth_user_id") @db.Uuid
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy   String?   @map("created_by") @db.Uuid
+  deletedAt   DateTime? @map("deleted_at") @db.Timestamptz(6)
+  memberships OrganisationMembership[]
+  auditLogs   AuditLog[]
+
+  @@map("users")
+}
+
+/// The six roles of BRD 7, seeded by src/seed.ts.
+model Role {
+  id          String                   @id @default(uuid()) @db.Uuid
+  key         String                   @unique
+  name        String
+  createdAt   DateTime                 @default(now()) @map("created_at") @db.Timestamptz(6)
+  memberships OrganisationMembership[]
+
+  @@map("roles")
+}
+
+model OrganisationMembership {
+  id             String       @id @default(uuid()) @db.Uuid
+  organisationId String       @map("organisation_id") @db.Uuid
+  userId         String       @map("user_id") @db.Uuid
+  roleId         String       @map("role_id") @db.Uuid
+  organisation   Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role           Role         @relation(fields: [roleId], references: [id])
+  createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy      String?      @map("created_by") @db.Uuid
+  deletedAt      DateTime?    @map("deleted_at") @db.Timestamptz(6)
+
+  @@unique([organisationId, userId])
+  @@map("organisation_memberships")
+}
+
+/// Append-only audit trail (BRD 15): never updated, never soft-deleted.
+model AuditLog {
+  id             String       @id @default(uuid()) @db.Uuid
+  organisationId String       @map("organisation_id") @db.Uuid
+  /// Null for system actions.
+  actorUserId    String?      @map("actor_user_id") @db.Uuid
+  action         String
+  entityType     String       @map("entity_type")
+  entityId       String?      @map("entity_id")
+  metadata       Json?
+  createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  organisation   Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+  actor          User?        @relation(fields: [actorUserId], references: [id])
+
+  @@index([organisationId, createdAt])
+  @@map("audit_logs")
+}
