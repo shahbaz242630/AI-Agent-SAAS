@@ -29,7 +29,12 @@
       "protobufjs",
       "sharp",
       "unrs-resolver"
-    ]
+    ],
+    "overrides": {
+      "inngest-cli>adm-zip": ">=0.6.0",
+      "next>postcss": ">=8.5.10",
+      "next>sharp": ">=0.35.0"
+    }
   },
   "devDependencies": {
     "@eslint/js": "^9.0.0",
