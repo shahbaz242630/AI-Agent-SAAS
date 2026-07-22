@@ -2,29 +2,24 @@
   "name": "@eva/worker",
   "version": "0.0.0",
   "private": true,
-  "description": "Eva background worker — Inngest durable functions (BRD 9.3)",
+  "description": "Eva background jobs — Trigger.dev v4 task project (BRD 9.3, locked 2026-07-22)",
   "scripts": {
-    "dev": "tsx watch src/main.ts",
+    "dev": "trigger dev",
+    "deploy": "trigger deploy",
     "build": "tsc -p tsconfig.build.json",
-    "start": "node dist/main.js",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run",
-    "inngest:dev": "inngest-cli dev -u http://localhost:3002/api/inngest"
+    "test": "vitest run"
   },
   "dependencies": {
     "@eva/configuration": "workspace:*",
-    "express": "^5.1.0",
-    "inngest": "^3.35.0",
-    "pino": "^10.3.1",
+    "@trigger.dev/sdk": "^4.0.0",
     "zod": "^4.0.0"
   },
   "devDependencies": {
     "@eva/testing": "workspace:*",
-    "@types/express": "^5.0.0",
     "@types/node": "^22.15.0",
-    "inngest-cli": "^1.5.0",
-    "tsx": "^4.19.0",
+    "trigger.dev": "^4.0.0",
     "typescript": "^5.8.0",
     "vitest": "^3.1.0"
   }

@@ -51,20 +51,10 @@ jobs:
       - name: Build api image
         run: docker build -f infrastructure/docker/Dockerfile.api -t eva-api:scan .
 
-      - name: Build worker image
-        run: docker build -f infrastructure/docker/Dockerfile.worker -t eva-worker:scan .
-
       - name: Scan api image
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: eva-api:scan
-          severity: CRITICAL,HIGH
-          ignore-unfixed: true
-
-      - name: Scan worker image
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
-        with:
-          image-ref: eva-worker:scan
           severity: CRITICAL,HIGH
           ignore-unfixed: true
 

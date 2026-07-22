@@ -24,16 +24,18 @@
     "onlyBuiltDependencies": [
       "@prisma/engines",
       "esbuild",
-      "inngest-cli",
       "prisma",
       "protobufjs",
       "sharp",
       "unrs-resolver"
     ],
     "overrides": {
-      "inngest-cli>adm-zip": ">=0.6.0",
       "next>postcss": ">=8.5.10",
-      "next>sharp": ">=0.35.0"
+      "next>sharp": ">=0.35.0",
+      "tar": ">=7.5.19",
+      "engine.io": ">=6.6.7",
+      "ws": ">=8.21.0",
+      "esbuild": ">=0.25.0"
     }
   },
   "devDependencies": {
