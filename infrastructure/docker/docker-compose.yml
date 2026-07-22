@@ -34,19 +34,5 @@ services:
       postgres:
         condition: service_healthy
 
-  worker:
-    build:
-      context: ../..
-      dockerfile: infrastructure/docker/Dockerfile.worker
-    environment:
-      NODE_ENV: production
-      WORKER_PORT: 3002
-      LOG_LEVEL: info
-    ports:
-      - "3002:3002"
-    depends_on:
-      postgres:
-        condition: service_healthy
-
 volumes:
   eva-pgdata:

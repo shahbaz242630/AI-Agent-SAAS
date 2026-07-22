@@ -5,7 +5,8 @@ import { workerEnvSchema } from "../src/config/env.js";
 describe("worker env validation", () => {
   it("applies documented defaults for an empty environment", () => {
     const env = loadEnv(workerEnvSchema, {});
-    expect(env.WORKER_PORT).toBe(3002);
     expect(env.NODE_ENV).toBe("development");
+    expect(env.LOG_LEVEL).toBe("info");
+    expect(env.TRIGGER_PROJECT_REF).toBeUndefined();
   });
 });

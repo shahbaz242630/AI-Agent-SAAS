@@ -1,10 +1,11 @@
 import { z } from "zod";
 
-/** Environment variables required by the worker process. Validated at boot — fail fast. */
+/** Environment variables for the worker (Trigger.dev task project). Validated — fail fast. */
 export const workerEnvSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
-  WORKER_PORT: z.coerce.number().int().min(1).max(65535).default(3002),
   LOG_LEVEL: z.enum(["fatal", "error", "warn", "info", "debug", "trace"]).default("info"),
+  /** Trigger.dev project ref from the dashboard — required to deploy, not to typecheck. */
+  TRIGGER_PROJECT_REF: z.string().optional(),
 });
 
 export type WorkerEnv = z.infer<typeof workerEnvSchema>;
