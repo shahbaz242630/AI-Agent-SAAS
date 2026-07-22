@@ -14,7 +14,6 @@
   },
   "dependencies": {
     "@eva/configuration": "workspace:*",
-    "@eva/types": "workspace:*",
     "express": "^5.1.0",
     "inngest": "^3.35.0",
     "pino": "^9.6.0",
