@@ -10,7 +10,7 @@ updates:
     open-pull-requests-limit: 5
     # Wait a few days before adopting fresh releases (supply-chain hygiene).
     cooldown:
-      default-days: 3
+      default-days: 7
     groups:
       minor-patch:
         patterns:
@@ -24,4 +24,4 @@ updates:
     schedule:
       interval: "weekly"
     cooldown:
-      default-days: 3
+      default-days: 7
