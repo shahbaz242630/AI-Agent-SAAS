@@ -110,6 +110,6 @@ jobs:
           persist-credentials: false
 
       # Blocks PRs that INTRODUCE high/critical vulnerable dependencies.
-      - uses: actions/dependency-review-action@e58c696e52cac8e62d61cc21fda89565d71505d7 # v4.3.0
+      - uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
         with:
           fail-on-severity: high
