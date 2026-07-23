@@ -1,6 +1,9 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "../src/generated/client.js";
+import { createPrismaClient } from "../src/client.js";
+import { seed } from "../src/seed.js";
+import { TEST_DATABASE_URL } from "./support.js";
 
 /**
  * RLS attack tests (BRD 13 security tests; Slice 0.3).
@@ -25,11 +28,11 @@ async function asTenant(orgId: string, fn: (tx: PrismaClient) => Promise<unknown
 
 beforeAll(async () => {
   prisma = new PrismaClient({ adapter: new PrismaPg({ connectionString: APP_DATABASE_URL }) });
-  // Fixture data must be created through migrations/seed as the OWNER role —
-  // eva_app cannot insert into another tenant's rows by design. The fixture
-  // orgs are created in this spec's owner-role setup below via raw SQL using
-  // the owner connection from TEST_DATABASE_URL is NOT available here, so the
-  // fixtures are created by the migration/seed instead (see seed.ts).
+  // Self-sufficient fixtures: the seed is idempotent, and spec files must not
+  // depend on run order (rls.spec runs before seed.spec alphabetically).
+  const owner = createPrismaClient(TEST_DATABASE_URL);
+  await seed(owner);
+  await owner.$disconnect();
 });
 
 afterAll(async () => {
@@ -105,5 +108,40 @@ describe("RLS: cross-tenant attacks are refused by Postgres itself", () => {
         tx.$executeRaw`DELETE FROM organisation_settings WHERE organisation_id = ${ORG_B}::uuid`,
     );
     expect(Number(count)).toBe(0);
+  });
+});
+
+describe("RLS: shared reference tables (BRD 18 — roles are platform reference data)", () => {
+  it("roles has RLS enabled with at least one policy (Supabase cloud parity)", async () => {
+    const table = await prisma.$queryRaw<{ rowsecurity: boolean }[]>`
+      SELECT rowsecurity FROM pg_tables WHERE schemaname = 'public' AND tablename = 'roles'`;
+    expect(table[0]?.rowsecurity).toBe(true);
+
+    const policies = await prisma.$queryRaw<{ policyname: string }[]>`
+      SELECT policyname FROM pg_policies WHERE schemaname = 'public' AND tablename = 'roles'`;
+    expect(policies.length).toBeGreaterThan(0);
+  });
+
+  it("runtime role can SELECT roles (needed for membership writes)", async () => {
+    const roles = await prisma.role.findMany();
+    expect(roles.length).toBe(6);
+  });
+
+  it("runtime role cannot INSERT into roles", async () => {
+    await expect(prisma.role.create({ data: { key: "hacker", name: "Hacker" } })).rejects.toThrow(
+      /row-level security|permission denied/i,
+    );
+  });
+
+  it("runtime role cannot UPDATE or DELETE roles (writes silently affect 0 rows)", async () => {
+    // With only a FOR SELECT policy, UPDATE/DELETE see no writable rows —
+    // Postgres refuses by making them no-ops, not by raising.
+    const updated = await prisma.role.updateMany({
+      where: { key: "owner" },
+      data: { name: "Hacker" },
+    });
+    expect(updated.count).toBe(0);
+    const deleted = await prisma.role.deleteMany({ where: { key: "owner" } });
+    expect(deleted.count).toBe(0);
   });
 });
