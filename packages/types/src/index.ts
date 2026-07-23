@@ -12,6 +12,18 @@ export interface HealthResponse {
   timestamp: string;
 }
 
+/** Readiness payload returned by GET /health/ready — dependency connectivity. */
+export interface ReadinessResponse {
+  status: "ok" | "error";
+  service: string;
+  version: string;
+  /** ISO-8601 UTC timestamp. */
+  timestamp: string;
+  checks: {
+    database: "up" | "down";
+  };
+}
+
 /** Organisation roles (BRD Section 7). Enforced in the backend on every request. */
 export const ORGANISATION_ROLES = [
   "owner",

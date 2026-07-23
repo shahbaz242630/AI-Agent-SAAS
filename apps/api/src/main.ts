@@ -1,4 +1,6 @@
 import "reflect-metadata";
+// Must precede all Nest imports: Sentry initialises before module evaluation.
+import "./instrument.js";
 import { NestFactory } from "@nestjs/core";
 import { Logger } from "nestjs-pino";
 import helmet from "helmet";

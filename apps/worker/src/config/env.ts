@@ -6,6 +6,8 @@ export const workerEnvSchema = z.object({
   LOG_LEVEL: z.enum(["fatal", "error", "warn", "info", "debug", "trace"]).default("info"),
   /** Trigger.dev project ref from the dashboard — required to deploy, not to typecheck. */
   TRIGGER_PROJECT_REF: z.string().optional(),
+  /** Sentry DSN (Slice 0.4) — empty/unset disables Sentry; always disabled in tests. */
+  SENTRY_DSN_WORKER: z.string().default(""),
 });
 
 export type WorkerEnv = z.infer<typeof workerEnvSchema>;

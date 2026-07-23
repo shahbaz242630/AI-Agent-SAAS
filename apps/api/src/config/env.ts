@@ -13,6 +13,8 @@ export const apiEnvSchema = z.object({
   SUPABASE_ANON_KEY: z.string().default(""),
   // Runtime database connection as the eva_app role (NOBYPASSRLS) — RLS applies.
   APP_DATABASE_URL: z.string().url().default("postgresql://eva_app:eva_app@localhost:5432/eva"),
+  // Sentry DSN (Slice 0.4) — empty disables Sentry; always disabled in tests.
+  SENTRY_DSN_API: z.string().default(""),
 });
 
 export type ApiEnv = z.infer<typeof apiEnvSchema>;
