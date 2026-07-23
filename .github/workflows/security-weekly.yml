@@ -1,7 +1,7 @@
 # Weekly security sweep (docs/SECURITY-TESTING-STRATEGY.md Section 4).
 # Non-blocking scheduled checks: full-history secrets scan, filesystem
-# vulnerability/misconfig scan, container image scans + SBOM evidence.
-# ZAP baseline/API scans join this workflow once staging exists (Slice 0.4).
+# vulnerability/misconfig scan, container image scans + SBOM evidence,
+# and an OWASP ZAP baseline scan against the staging API (Slice 0.4).
 name: Security (weekly)
 
 on:
@@ -70,4 +70,30 @@ jobs:
         with:
           name: sbom
           path: sbom-api.json
+          retention-days: 90
+
+  zap-baseline:
+    name: OWASP ZAP baseline scan (staging API)
+    runs-on: ubuntu-latest
+    # Skips silently until the staging URL is published as a repo variable.
+    if: vars.STAGING_API_URL != ''
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: ZAP baseline against staging
+        uses: zaproxy/action-baseline@de8ad967d3548d44ef623df22cf95c3b0baf8b25 # v0.15.0
+        with:
+          target: ${{ vars.STAGING_API_URL }}
+          # Baseline is passive-only by design (safe against staging); an
+          # authenticated active scan is a later, separately-approved step.
+          cmd_options: "-a -j"
+
+      - name: Upload ZAP report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: zap-baseline
+          path: report_html.html
           retention-days: 90
