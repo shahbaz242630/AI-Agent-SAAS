@@ -30,6 +30,7 @@ const testEnv: ApiEnv = {
   SUPABASE_URL: TEST_SUPABASE_URL,
   SUPABASE_ANON_KEY: "",
   APP_DATABASE_URL: TEST_APP_DATABASE_URL,
+  SENTRY_DSN_API: "",
 };
 
 interface TestKeys {

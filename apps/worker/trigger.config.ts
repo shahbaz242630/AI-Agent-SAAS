@@ -1,4 +1,10 @@
 import { defineConfig } from "@trigger.dev/sdk/v3";
+import { loadEnv } from "@eva/configuration";
+import { workerEnvSchema } from "./src/config/env.js";
+import { initSentry } from "./src/config/sentry.js";
+
+// Error reporting for task runs (BRD 14) — no-op without a DSN and in tests.
+initSentry(loadEnv(workerEnvSchema));
 
 /**
  * Trigger.dev v4 project config (BRD 9.3 — locked 2026-07-22).

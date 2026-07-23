@@ -2,3 +2,8 @@ packages:
   - "apps/*"
   - "packages/*"
   - "infrastructure/*"
+
+# Supply-chain gate (Slice 0.4): only install package versions published at
+# least 24h ago — blunts install-time malware in freshly compromised releases.
+# Requires pnpm >= 10.16 (pinned via package.json packageManager).
+minimumReleaseAge: 1440

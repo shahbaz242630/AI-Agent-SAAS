@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@eva/configuration": "workspace:*",
+    "@sentry/node": "^10.67.0",
     "@trigger.dev/sdk": "^4.0.0",
     "zod": "^4.0.0"
   },

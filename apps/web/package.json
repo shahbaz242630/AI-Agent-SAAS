@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@eva/ui": "workspace:*",
+    "@sentry/nextjs": "^10.67.0",
     "next": "16.2.11",
     "react": "19.2.7",
     "react-dom": "19.2.7"

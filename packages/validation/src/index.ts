@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { HealthResponse } from "@eva/types";
+import type { HealthResponse, ReadinessResponse } from "@eva/types";
 
 /**
  * Shared zod schemas (BRD Section 8). Schemas that validate cross-boundary
@@ -13,6 +13,19 @@ export const healthResponseSchema: z.ZodType<HealthResponse> = z.object({
   version: z.string().min(1),
   timestamp: z.string().refine((value) => !Number.isNaN(Date.parse(value)), {
     message: "timestamp must be a parseable ISO-8601 date",
+  }),
+});
+
+/** Validates a GET /health/ready payload (Slice 0.4). */
+export const readinessResponseSchema: z.ZodType<ReadinessResponse> = z.object({
+  status: z.enum(["ok", "error"]),
+  service: z.string().min(1),
+  version: z.string().min(1),
+  timestamp: z.string().refine((value) => !Number.isNaN(Date.parse(value)), {
+    message: "timestamp must be a parseable ISO-8601 date",
+  }),
+  checks: z.object({
+    database: z.enum(["up", "down"]),
   }),
 });
 
