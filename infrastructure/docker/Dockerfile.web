@@ -9,8 +9,18 @@ COPY pnpm-workspace.yaml package.json pnpm-lock.yaml tsconfig.base.json ./
 COPY packages ./packages
 COPY apps/web ./apps/web
 RUN pnpm install --frozen-lockfile --filter @eva/web...
-# SENTRY_DSN_WEB must be set at build time — next.config.ts bridges it to
-# NEXT_PUBLIC_SENTRY_DSN for the browser bundle (BRD 14). Empty = disabled.
+# NEXT_PUBLIC_* values are inlined into the browser bundle at build time, so
+# they must arrive as Docker build args (Railway injects service variables as
+# build args ONLY when declared with ARG — docs.railway.com/builds/dockerfiles).
+ARG NEXT_PUBLIC_SUPABASE_URL=""
+ARG NEXT_PUBLIC_SUPABASE_ANON_KEY=""
+ARG NEXT_PUBLIC_API_URL=""
+# SENTRY_DSN_WEB feeds NEXT_PUBLIC_SENTRY_DSN via apps/web/next.config.ts (BRD 14).
+ARG SENTRY_DSN_WEB=""
+ENV NEXT_PUBLIC_SUPABASE_URL=$NEXT_PUBLIC_SUPABASE_URL \
+    NEXT_PUBLIC_SUPABASE_ANON_KEY=$NEXT_PUBLIC_SUPABASE_ANON_KEY \
+    NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL \
+    SENTRY_DSN_WEB=$SENTRY_DSN_WEB
 RUN pnpm --filter @eva/web... run build
 
 FROM base AS runner
