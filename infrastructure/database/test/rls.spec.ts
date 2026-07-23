@@ -136,7 +136,10 @@ describe("RLS: shared reference tables (BRD 18 — roles are platform reference 
   it("runtime role cannot UPDATE or DELETE roles (writes silently affect 0 rows)", async () => {
     // With only a FOR SELECT policy, UPDATE/DELETE see no writable rows —
     // Postgres refuses by making them no-ops, not by raising.
-    const updated = await prisma.role.updateMany({ where: { key: "owner" }, data: { name: "Hacker" } });
+    const updated = await prisma.role.updateMany({
+      where: { key: "owner" },
+      data: { name: "Hacker" },
+    });
     expect(updated.count).toBe(0);
     const deleted = await prisma.role.deleteMany({ where: { key: "owner" } });
     expect(deleted.count).toBe(0);
