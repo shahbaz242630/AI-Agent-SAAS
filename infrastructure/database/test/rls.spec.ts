@@ -1,6 +1,9 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "../src/generated/client.js";
+import { createPrismaClient } from "../src/client.js";
+import { seed } from "../src/seed.js";
+import { TEST_DATABASE_URL } from "./support.js";
 
 /**
  * RLS attack tests (BRD 13 security tests; Slice 0.3).
@@ -25,11 +28,11 @@ async function asTenant(orgId: string, fn: (tx: PrismaClient) => Promise<unknown
 
 beforeAll(async () => {
   prisma = new PrismaClient({ adapter: new PrismaPg({ connectionString: APP_DATABASE_URL }) });
-  // Fixture data must be created through migrations/seed as the OWNER role —
-  // eva_app cannot insert into another tenant's rows by design. The fixture
-  // orgs are created in this spec's owner-role setup below via raw SQL using
-  // the owner connection from TEST_DATABASE_URL is NOT available here, so the
-  // fixtures are created by the migration/seed instead (see seed.ts).
+  // Self-sufficient fixtures: the seed is idempotent, and spec files must not
+  // depend on run order (rls.spec runs before seed.spec alphabetically).
+  const owner = createPrismaClient(TEST_DATABASE_URL);
+  await seed(owner);
+  await owner.$disconnect();
 });
 
 afterAll(async () => {
