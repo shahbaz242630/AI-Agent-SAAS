@@ -107,3 +107,35 @@ describe("RLS: cross-tenant attacks are refused by Postgres itself", () => {
     expect(Number(count)).toBe(0);
   });
 });
+
+describe("RLS: shared reference tables (BRD 18 — roles are platform reference data)", () => {
+  it("roles has RLS enabled with at least one policy (Supabase cloud parity)", async () => {
+    const table = await prisma.$queryRaw<{ rowsecurity: boolean }[]>`
+      SELECT rowsecurity FROM pg_tables WHERE schemaname = 'public' AND tablename = 'roles'`;
+    expect(table[0]?.rowsecurity).toBe(true);
+
+    const policies = await prisma.$queryRaw<{ policyname: string }[]>`
+      SELECT policyname FROM pg_policies WHERE schemaname = 'public' AND tablename = 'roles'`;
+    expect(policies.length).toBeGreaterThan(0);
+  });
+
+  it("runtime role can SELECT roles (needed for membership writes)", async () => {
+    const roles = await prisma.role.findMany();
+    expect(roles.length).toBe(6);
+  });
+
+  it("runtime role cannot INSERT into roles", async () => {
+    await expect(prisma.role.create({ data: { key: "hacker", name: "Hacker" } })).rejects.toThrow(
+      /row-level security|permission denied/i,
+    );
+  });
+
+  it("runtime role cannot UPDATE or DELETE roles (writes silently affect 0 rows)", async () => {
+    // With only a FOR SELECT policy, UPDATE/DELETE see no writable rows —
+    // Postgres refuses by making them no-ops, not by raising.
+    const updated = await prisma.role.updateMany({ where: { key: "owner" }, data: { name: "Hacker" } });
+    expect(updated.count).toBe(0);
+    const deleted = await prisma.role.deleteMany({ where: { key: "owner" } });
+    expect(deleted.count).toBe(0);
+  });
+});
