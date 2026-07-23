@@ -6,7 +6,8 @@ import { createTestApp } from "./support.js";
 /**
  * API rate limiting (BRD 13, Slice 0.4): a single client may not hammer the
  * API. The public /health endpoint is the cheapest way to exercise the global
- * guard — one burst beyond the limit must start returning 429.
+ * guard. Requests are sent sequentially so the test doesn't overload the CI
+ * test server (avoiding ECONNRESET).
  */
 describe("rate limiting (@nestjs/throttler)", () => {
   let app: INestApplication;
@@ -20,20 +21,20 @@ describe("rate limiting (@nestjs/throttler)", () => {
   });
 
   it("allows traffic up to the per-minute limit", async () => {
-    const responses = await Promise.all(
-      Array.from({ length: 50 }, () => request(app.getHttpServer()).get("/health")),
-    );
-
-    expect(responses.every((r) => r.status === 200)).toBe(true);
+    for (let i = 0; i < 50; i++) {
+      const response = await request(app.getHttpServer()).get("/health");
+      expect(response.status).toBe(200);
+    }
   });
 
   it("rejects requests beyond the per-minute limit with 429", async () => {
-    const responses = await Promise.all(
-      Array.from({ length: 60 }, () => request(app.getHttpServer()).get("/health")),
-    );
+    const responses: request.Response[] = [];
+    for (let i = 0; i < 60; i++) {
+      responses.push(await request(app.getHttpServer()).get("/health"));
+    }
 
     const throttled = responses.filter((r) => r.status === 429);
-    // The first 50 requests above plus 60 here = 110 against a limit of 100.
+    // 50 already used + 60 new = 110 against a limit of 100.
     expect(throttled.length).toBeGreaterThanOrEqual(10);
     for (const response of throttled) {
       expect(response.body.statusCode).toBe(429);
