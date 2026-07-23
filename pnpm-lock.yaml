@@ -128,6 +128,9 @@ importers:
 
   apps/web:
     dependencies:
+      '@eva/design-system':
+        specifier: workspace:*
+        version: link:../../packages/design-system
       '@eva/ui':
         specifier: workspace:*
         version: link:../../packages/ui

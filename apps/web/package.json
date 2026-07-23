@@ -10,6 +10,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@eva/design-system": "workspace:*",
     "@eva/ui": "workspace:*",
     "@sentry/nextjs": "^10.67.0",
     "next": "16.2.11",
