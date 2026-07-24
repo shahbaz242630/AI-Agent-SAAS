@@ -23,9 +23,13 @@ model Organisation {
   updatedAt   DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
   createdBy   String?   @map("created_by") @db.Uuid
   deletedAt   DateTime? @map("deleted_at") @db.Timestamptz(6)
-  settings    OrganisationSettings?
-  memberships OrganisationMembership[]
-  auditLogs   AuditLog[]
+  settings        OrganisationSettings?
+  memberships     OrganisationMembership[]
+  auditLogs       AuditLog[]
+  customers       Customer[]
+  contacts        Contact[]
+  suppressionList SuppressionEntry[]
+  rolePermissions OrganisationRolePermission[]
 
   @@map("organisations")
 }
@@ -68,11 +72,12 @@ model User {
 
 /// The six roles of BRD 7, seeded by src/seed.ts.
 model Role {
-  id          String                   @id @default(uuid()) @db.Uuid
-  key         String                   @unique
-  name        String
-  createdAt   DateTime                 @default(now()) @map("created_at") @db.Timestamptz(6)
-  memberships OrganisationMembership[]
+  id              String                       @id @default(uuid()) @db.Uuid
+  key             String                       @unique
+  name            String
+  createdAt       DateTime                     @default(now()) @map("created_at") @db.Timestamptz(6)
+  memberships     OrganisationMembership[]
+  rolePermissions OrganisationRolePermission[]
 
   @@map("roles")
 }
@@ -110,4 +115,93 @@ model AuditLog {
 
   @@index([organisationId, createdAt])
   @@map("audit_logs")
+}
+
+// --- Slice 1.1: CRM core + data-driven permissions (BRD 10; plan §7 ruling) ---
+
+/// A business the organisation sells to / is owed money by (BRD 10 — CRM core).
+model Customer {
+  id             String       @id @default(uuid()) @db.Uuid
+  organisationId String       @map("organisation_id") @db.Uuid
+  name           String
+  /// Lowercased by the application layer before write.
+  email          String?
+  phone          String?
+  /// The organisation's own account reference for this customer.
+  reference      String?
+  createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy      String?      @map("created_by") @db.Uuid
+  deletedAt      DateTime?    @map("deleted_at") @db.Timestamptz(6)
+  organisation   Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+  contacts       Contact[]
+
+  @@index([organisationId])
+  @@map("customers")
+}
+
+/// A person at a customer — reminders are addressed to contacts (BRD 10).
+/// organisation_id is denormalised onto every tenant-owned row so the RLS
+/// tenant_isolation policy stays uniform.
+model Contact {
+  id             String       @id @default(uuid()) @db.Uuid
+  organisationId String       @map("organisation_id") @db.Uuid
+  customerId     String       @map("customer_id") @db.Uuid
+  name           String
+  /// Lowercased by the application layer before write.
+  email          String?
+  phone          String?
+  jobTitle       String?      @map("job_title")
+  createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy      String?      @map("created_by") @db.Uuid
+  deletedAt      DateTime?    @map("deleted_at") @db.Timestamptz(6)
+  organisation   Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+  customer       Customer     @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@index([organisationId])
+  @@index([customerId])
+  @@map("contacts")
+}
+
+/// Permanent, cross-channel do-not-contact record (BRD hard rule: actioned
+/// immediately and permanently, across all channels). No updated_at/deleted_at:
+/// entries are NEVER updated or deleted — migration 0005 also revokes
+/// UPDATE/DELETE from the runtime role so permanence holds at the database
+/// layer, not just in app code. Channels: email | call (whatsapp added
+/// additively when Phase 3 needs it).
+model SuppressionEntry {
+  id             String       @id @default(uuid()) @db.Uuid
+  organisationId String       @map("organisation_id") @db.Uuid
+  channel        String
+  /// The suppressed address/number, normalised by the application layer.
+  value          String
+  reason         String?
+  createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  createdBy      String?      @map("created_by") @db.Uuid
+  organisation   Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+
+  /// Re-adding the same value on the same channel is idempotent (upsert key).
+  @@unique([organisationId, channel, value])
+  @@map("suppression_list")
+}
+
+/// Per-organisation role→permission grants (BRD 7 amendment, Slice 1.1 plan
+/// §7.1). An org with ZERO rows uses the coded BRD default matrix
+/// (DEFAULT_ROLE_PERMISSIONS in @eva/types); rows appear only when an
+/// owner/administrator saves a custom mapping (full-replace PUT, audit-logged).
+/// Rows are replaced, not edited in place — history lives in audit_logs.
+model OrganisationRolePermission {
+  id             String       @id @default(uuid()) @db.Uuid
+  organisationId String       @map("organisation_id") @db.Uuid
+  roleId         String       @map("role_id") @db.Uuid
+  permissionKey  String       @map("permission_key")
+  createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy      String?      @map("created_by") @db.Uuid
+  organisation   Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+  role           Role         @relation(fields: [roleId], references: [id])
+
+  @@unique([organisationId, roleId, permissionKey])
+  @@map("organisation_role_permissions")
 }

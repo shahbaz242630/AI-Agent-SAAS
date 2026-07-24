@@ -36,6 +36,37 @@ export const ORGANISATION_ROLES = [
 
 export type OrganisationRole = (typeof ORGANISATION_ROLES)[number];
 
+/**
+ * Permission keys checked by API guards (Slice 1.1; BRD 7 amendment). Guards
+ * never name roles — they ask whether the caller's role holds the permission
+ * in this organisation (org mapping → DEFAULT_ROLE_PERMISSIONS fallback).
+ */
+export const PERMISSION_KEYS = [
+  "customers:read",
+  "customers:write",
+  "contacts:read",
+  "contacts:write",
+  "permissions:read",
+  "permissions:manage",
+] as const;
+
+export type PermissionKey = (typeof PERMISSION_KEYS)[number];
+
+/**
+ * BRD 7 default role→permission matrix. Applies to every organisation that
+ * has no custom rows in organisation_role_permissions. High-risk actions
+ * (legal threats, fees, discounts, marking paid, commitments) are NEVER
+ * permission-keyed — they stay human-confirmed regardless of configuration.
+ */
+export const DEFAULT_ROLE_PERMISSIONS: Record<OrganisationRole, readonly PermissionKey[]> = {
+  owner: PERMISSION_KEYS,
+  administrator: PERMISSION_KEYS,
+  finance: ["customers:read", "customers:write", "contacts:read", "contacts:write"],
+  sales: ["customers:read", "contacts:read"],
+  reception: ["customers:read", "contacts:read"],
+  read_only: ["customers:read", "contacts:read"],
+};
+
 /** Product module identifiers (BRD Section 4) — used by entitlements from Slice 0.3. */
 export const MODULE_IDS = [
   "email_credit_controller",

@@ -6,7 +6,7 @@ import { seed } from "../src/seed.js";
 import { TEST_DATABASE_URL } from "./support.js";
 
 /**
- * RLS attack tests (BRD 13 security tests; Slice 0.3).
+ * RLS attack tests (BRD 13 security tests; Slice 0.3 + Slice 1.1).
  * These connect DIRECTLY to Postgres as the application runtime role
  * (eva_app — non-superuser, NOBYPASSRLS), bypassing all application code,
  * and attempt cross-tenant access. The database itself must refuse.
@@ -32,12 +32,27 @@ beforeAll(async () => {
   // depend on run order (rls.spec runs before seed.spec alphabetically).
   const owner = createPrismaClient(TEST_DATABASE_URL);
   await seed(owner);
+  // Suppression rows are permanent and may be left by earlier test runs; clean
+  // the deterministic fixture orgs so cross-tenant SELECT assertions are sound.
+  await owner.$executeRaw`DELETE FROM suppression_list WHERE organisation_id IN (${ORG_A}::uuid, ${ORG_B}::uuid)`;
   await owner.$disconnect();
 });
 
 afterAll(async () => {
   await prisma.$disconnect();
 });
+
+const TENANT_TABLES = [
+  "organisations",
+  "organisation_settings",
+  "organisation_memberships",
+  "users",
+  "audit_logs",
+  "customers",
+  "contacts",
+  "suppression_list",
+  "organisation_role_permissions",
+];
 
 describe("RLS: connection role hardening", () => {
   it("connects as a non-superuser role without BYPASSRLS", async () => {
@@ -55,8 +70,12 @@ describe("RLS: connection role hardening", () => {
     >`
       SELECT relname, relrowsecurity, relforcerowsecurity
       FROM pg_class
-      WHERE relname IN ('organisations', 'organisation_settings', 'organisation_memberships', 'users', 'audit_logs')`;
-    expect(rows.length).toBe(5);
+      WHERE relname IN (
+        'organisations', 'organisation_settings', 'organisation_memberships',
+        'users', 'audit_logs', 'customers', 'contacts',
+        'suppression_list', 'organisation_role_permissions'
+      )`;
+    expect(rows.length).toBe(TENANT_TABLES.length);
     for (const row of rows) {
       expect(row.relrowsecurity, `${row.relname} must ENABLE RLS`).toBe(true);
       expect(row.relforcerowsecurity, `${row.relname} must FORCE RLS`).toBe(true);
@@ -66,28 +85,34 @@ describe("RLS: connection role hardening", () => {
   it("every tenant-owned table has at least one policy", async () => {
     const rows = await prisma.$queryRaw<{ tablename: string; count: bigint }[]>`
       SELECT tablename, COUNT(*) AS count FROM pg_policies
-      WHERE tablename IN ('organisations', 'organisation_settings', 'organisation_memberships', 'users', 'audit_logs')
+      WHERE tablename IN (
+        'organisations', 'organisation_settings', 'organisation_memberships',
+        'users', 'audit_logs', 'customers', 'contacts',
+        'suppression_list', 'organisation_role_permissions'
+      )
       GROUP BY tablename`;
-    expect(rows.length).toBe(5);
+    expect(rows.length).toBe(TENANT_TABLES.length);
     for (const row of rows) expect(Number(row.count)).toBeGreaterThan(0);
   });
 });
 
 describe("RLS: cross-tenant attacks are refused by Postgres itself", () => {
-  it("tenant A cannot SELECT tenant B's organisations", async () => {
-    const visible = await asTenant(
-      ORG_A,
-      async (tx) => tx.$queryRaw<{ id: string }[]>`SELECT id FROM organisations`,
-    );
-    expect(visible).toEqual([]);
-  });
+  it.each(["customers", "contacts", "suppression_list", "organisation_role_permissions"])(
+    "tenant A cannot SELECT tenant B's %s",
+    async (table) => {
+      const visible = await asTenant(ORG_A, async (tx) =>
+        tx.$queryRawUnsafe<{ id: string }[]>(`SELECT id FROM ${table}`),
+      );
+      expect(visible).toEqual([]);
+    },
+  );
 
   it("tenant A cannot INSERT a row carrying tenant B's organisation_id", async () => {
     await expect(
       asTenant(
         ORG_A,
         async (tx) =>
-          tx.$executeRaw`INSERT INTO organisation_settings (organisation_id) VALUES (${ORG_B}::uuid)`,
+          tx.$executeRaw`INSERT INTO customers (organisation_id, name) VALUES (${ORG_B}::uuid, 'ACME')`,
       ),
     ).rejects.toThrow();
   });
@@ -96,7 +121,7 @@ describe("RLS: cross-tenant attacks are refused by Postgres itself", () => {
     const count = await asTenant(
       ORG_A,
       async (tx) =>
-        tx.$executeRaw`UPDATE organisation_settings SET locale = 'fr-FR' WHERE organisation_id = ${ORG_B}::uuid`,
+        tx.$executeRaw`UPDATE customers SET name = 'Pwned' WHERE organisation_id = ${ORG_B}::uuid`,
     );
     expect(Number(count)).toBe(0);
   });
@@ -104,10 +129,29 @@ describe("RLS: cross-tenant attacks are refused by Postgres itself", () => {
   it("tenant A cannot DELETE tenant B's rows", async () => {
     const count = await asTenant(
       ORG_A,
-      async (tx) =>
-        tx.$executeRaw`DELETE FROM organisation_settings WHERE organisation_id = ${ORG_B}::uuid`,
+      async (tx) => tx.$executeRaw`DELETE FROM customers WHERE organisation_id = ${ORG_B}::uuid`,
     );
     expect(Number(count)).toBe(0);
+  });
+});
+
+describe("RLS: suppression list permanence (BRD hard rule)", () => {
+  it("runtime role has UPDATE and DELETE revoked on suppression_list", async () => {
+    await expect(
+      asTenant(
+        ORG_A,
+        async (tx) =>
+          tx.$executeRaw`UPDATE suppression_list SET reason = 'tampered' WHERE organisation_id = ${ORG_A}::uuid`,
+      ),
+    ).rejects.toThrow(/permission denied|cannot update/i);
+
+    await expect(
+      asTenant(
+        ORG_A,
+        async (tx) =>
+          tx.$executeRaw`DELETE FROM suppression_list WHERE organisation_id = ${ORG_A}::uuid`,
+      ),
+    ).rejects.toThrow(/permission denied|cannot delete/i);
   });
 });
 
