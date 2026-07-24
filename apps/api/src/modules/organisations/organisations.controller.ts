@@ -1,8 +1,10 @@
-import { Body, Controller, Get, Param, ParseUUIDPipe, Patch, Post } from "@nestjs/common";
+import { Body, Controller, Get, Param, ParseUUIDPipe, Patch, Post, Put } from "@nestjs/common";
 import {
   createOrganisationRequestSchema,
+  putRolePermissionsRequestSchema,
   updateMemberRoleRequestSchema,
   type CreateOrganisationRequest,
+  type PutRolePermissionsRequest,
   type UpdateMemberRoleRequest,
 } from "@eva/validation";
 import { ZodValidationPipe } from "../../common/validation/zod-validation.pipe.js";
@@ -12,6 +14,7 @@ import {
   OrganisationsService,
   type MemberSummary,
   type OrganisationSummary,
+  type RolePermissionsView,
 } from "./organisations.service.js";
 
 @Controller("organisations")
@@ -54,5 +57,22 @@ export class OrganisationsController {
       targetUserId,
       body.roleKey,
     );
+  }
+
+  @Get(":id/permissions")
+  getRolePermissions(
+    @CurrentAuthUser() authUser: AuthUser,
+    @Param("id", ParseUUIDPipe) organisationId: string,
+  ): Promise<RolePermissionsView> {
+    return this.organisationsService.getRolePermissions(authUser, organisationId);
+  }
+
+  @Put(":id/permissions")
+  putRolePermissions(
+    @CurrentAuthUser() authUser: AuthUser,
+    @Param("id", ParseUUIDPipe) organisationId: string,
+    @Body(new ZodValidationPipe(putRolePermissionsRequestSchema)) body: PutRolePermissionsRequest,
+  ): Promise<RolePermissionsView> {
+    return this.organisationsService.putRolePermissions(authUser, organisationId, body);
   }
 }

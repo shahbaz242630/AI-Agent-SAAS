@@ -26,46 +26,73 @@ function columnsOf(table: string): Promise<ColumnRow[]> {
     WHERE table_schema = 'public' AND table_name = ${table}`;
 }
 
-describe("Phase 0 schema conventions (BRD 10)", () => {
-  it("creates exactly the Phase 0 tables — no future-module tables (Rule 11)", async () => {
+describe("Schema conventions (BRD 10)", () => {
+  it("creates exactly the Phase 0 + Slice 1.1 tables", async () => {
     const rows = await prisma.$queryRaw<{ table_name: string }[]>`
       SELECT table_name FROM information_schema.tables
       WHERE table_schema = 'public' AND table_type = 'BASE TABLE'`;
     expect(rows.map((r) => r.table_name).sort()).toEqual([
       "_prisma_migrations",
       "audit_logs",
+      "contacts",
+      "customers",
       "organisation_memberships",
+      "organisation_role_permissions",
       "organisation_settings",
       "organisations",
       "roles",
+      "suppression_list",
       "users",
     ]);
   });
 
-  it.each(["organisation_settings", "organisation_memberships", "audit_logs"])(
-    "tenant-owned table %s has a non-nullable organisation_id",
-    async (table) => {
-      const cols = await columnsOf(table);
-      const orgColumn = cols.find((c) => c.column_name === "organisation_id");
-      expect(orgColumn, `${table}.organisation_id must exist`).toBeDefined();
-      expect(orgColumn?.is_nullable).toBe("NO");
-    },
-  );
+  it.each([
+    "organisation_settings",
+    "organisation_memberships",
+    "audit_logs",
+    "customers",
+    "contacts",
+    "suppression_list",
+    "organisation_role_permissions",
+  ])("tenant-owned table %s has a non-nullable organisation_id", async (table) => {
+    const cols = await columnsOf(table);
+    const orgColumn = cols.find((c) => c.column_name === "organisation_id");
+    expect(orgColumn, `${table}.organisation_id must exist`).toBeDefined();
+    expect(orgColumn?.is_nullable).toBe("NO");
+  });
 
-  it.each(["organisations", "organisation_settings", "users", "organisation_memberships"])(
-    "mutable table %s carries audit and soft-delete columns",
-    async (table) => {
-      const names = (await columnsOf(table)).map((c) => c.column_name);
-      for (const col of ["created_at", "updated_at", "created_by", "deleted_at"]) {
-        expect(names, `${table} is missing ${col}`).toContain(col);
-      }
-    },
-  );
+  it.each([
+    "organisations",
+    "organisation_settings",
+    "users",
+    "organisation_memberships",
+    "customers",
+    "contacts",
+    "organisation_role_permissions",
+  ])("mutable table %s carries created_at/updated_at/created_by", async (table) => {
+    const names = (await columnsOf(table)).map((c) => c.column_name);
+    for (const col of ["created_at", "updated_at", "created_by"]) {
+      expect(names, `${table} is missing ${col}`).toContain(col);
+    }
+  });
+
+  it.each(["customers", "contacts"])("soft-deletable table %s has deleted_at", async (table) => {
+    const names = (await columnsOf(table)).map((c) => c.column_name);
+    expect(names).toContain("deleted_at");
+  });
 
   it("audit_logs is append-only: created_at + actor, no updated_at/deleted_at", async () => {
     const names = (await columnsOf("audit_logs")).map((c) => c.column_name);
     expect(names).toContain("created_at");
     expect(names).toContain("actor_user_id");
+    expect(names).not.toContain("updated_at");
+    expect(names).not.toContain("deleted_at");
+  });
+
+  it("suppression_list is permanent: created_at only, no updated_at/deleted_at", async () => {
+    const names = (await columnsOf("suppression_list")).map((c) => c.column_name);
+    expect(names).toContain("created_at");
+    expect(names).toContain("created_by");
     expect(names).not.toContain("updated_at");
     expect(names).not.toContain("deleted_at");
   });
