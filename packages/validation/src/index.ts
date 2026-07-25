@@ -97,3 +97,45 @@ export const putRolePermissionsRequestSchema = z.object({
 });
 
 export type PutRolePermissionsRequest = z.infer<typeof putRolePermissionsRequestSchema>;
+
+// --- Slice 1.2: invoice records ---
+
+/** ISO calendar date (YYYY-MM-DD) for date-only invoice fields. */
+const isoDate = z.iso.date();
+
+/**
+ * POST /organisations/:id/customers/:customerId/invoices payload (Slice 1.2).
+ * `status` may only request "draft" (default) or "active" (invoice already
+ * sent) — every later status change goes through the state machine actions.
+ */
+export const createInvoiceRequestSchema = z.object({
+  invoiceNumber: z.string().trim().min(1).max(50),
+  /** Integer minor units (pence); money is never float (BRD 10). */
+  amountMinorUnits: z.number().int().positive(),
+  /** ISO 4217 alpha-3, uppercase. */
+  currency: z
+    .string()
+    .regex(/^[A-Z]{3}$/, "currency must be a 3-letter uppercase ISO 4217 code")
+    .default("GBP"),
+  /** Defaults to the creation day in the organisation timezone when omitted. */
+  issueDate: isoDate.optional(),
+  dueDate: isoDate,
+  /** Must reference a live contact OF THIS CUSTOMER when set (plan §7.2). */
+  contactId: z.uuid().optional(),
+  status: z.enum(["draft", "active"]).default("draft"),
+});
+
+export type CreateInvoiceRequest = z.infer<typeof createInvoiceRequestSchema>;
+
+/**
+ * PATCH .../invoices/:invoiceId payload (Slice 1.2): Draft-only partial
+ * update. `status` is deliberately absent and the object is strict, so a
+ * status field on an update payload is rejected 400 — status changes ONLY via
+ * the state machine actions (BRD 4.1 hard rule).
+ */
+export const updateInvoiceRequestSchema = createInvoiceRequestSchema
+  .omit({ status: true })
+  .partial()
+  .strict();
+
+export type UpdateInvoiceRequest = z.infer<typeof updateInvoiceRequestSchema>;

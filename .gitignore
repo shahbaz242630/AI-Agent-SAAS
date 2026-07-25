@@ -53,5 +53,8 @@ Details/
 # agent guidance + internal business/project documents — LOCAL ONLY
 AGENTS.md
 
+# e2e evidence folders at repo root (e.g. "Phase 1.1/evidence-1.1/") — local-only
+/Phase */
+
 # NOTE: README.md and SECURITY.md stay tracked — they are GitHub-facing
 # (repo landing page + vulnerability-reporting policy), not internal docs.

@@ -28,6 +28,7 @@ model Organisation {
   auditLogs       AuditLog[]
   customers       Customer[]
   contacts        Contact[]
+  invoices        Invoice[]
   suppressionList SuppressionEntry[]
   rolePermissions OrganisationRolePermission[]
 
@@ -135,6 +136,7 @@ model Customer {
   deletedAt      DateTime?    @map("deleted_at") @db.Timestamptz(6)
   organisation   Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
   contacts       Contact[]
+  invoices       Invoice[]
 
   @@index([organisationId])
   @@map("customers")
@@ -158,10 +160,50 @@ model Contact {
   deletedAt      DateTime?    @map("deleted_at") @db.Timestamptz(6)
   organisation   Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
   customer       Customer     @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  invoices       Invoice[]
 
   @@index([organisationId])
   @@index([customerId])
   @@map("contacts")
+}
+
+// --- Slice 1.2: invoice records (BRD 4.1/10; Phase 1.2 plan §3) ---
+
+/// An amount owed by a customer (BRD 10). Status is one of the nine STORED
+/// statuses (CHECK constraint in migration 0006): draft, active, paused,
+/// cancelled, promise_to_pay, disputed, partially_paid, paid, written_off.
+/// due_soon/due_today/overdue are NOT stored — they are derived at read time
+/// from due_date + the organisation timezone (plan §7.1). status changes only
+/// via the invoices module state machine (BRD 4.1 hard rule).
+/// Uniqueness of invoice_number per organisation among live rows is enforced
+/// by a partial unique index (migration 0006), so a soft-deleted invoice's
+/// number can be reused.
+model Invoice {
+  id               String       @id @default(uuid()) @db.Uuid
+  organisationId   String       @map("organisation_id") @db.Uuid
+  customerId       String       @map("customer_id") @db.Uuid
+  /// Optional link to the person reminders are addressed to (plan §7.2);
+  /// SET NULL when the contact is deleted.
+  contactId        String?      @map("contact_id") @db.Uuid
+  /// The organisation's own invoice number (unique per org among live rows).
+  invoiceNumber    String       @map("invoice_number")
+  /// Integer minor units (pence) — money is never float (BRD 10).
+  amountMinorUnits Int          @map("amount_minor_units")
+  currency         String       @default("GBP") @db.Char(3)
+  issueDate        DateTime     @map("issue_date") @db.Date
+  dueDate          DateTime     @map("due_date") @db.Date
+  status           String       @default("draft")
+  createdAt        DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy        String?      @map("created_by") @db.Uuid
+  deletedAt        DateTime?    @map("deleted_at") @db.Timestamptz(6)
+  organisation     Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+  customer         Customer     @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  contact          Contact?     @relation(fields: [contactId], references: [id], onDelete: SetNull)
+
+  @@index([organisationId])
+  @@index([customerId])
+  @@map("invoices")
 }
 
 /// Permanent, cross-channel do-not-contact record (BRD hard rule: actioned
