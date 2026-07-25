@@ -54,6 +54,7 @@ const TENANT_TABLES = [
   "invoices",
   "imports",
   "import_rows",
+  "invoice_documents",
   "suppression_list",
   "organisation_role_permissions",
 ];
@@ -77,7 +78,8 @@ describe("RLS: connection role hardening", () => {
       WHERE relname IN (
         'organisations', 'organisation_settings', 'organisation_memberships',
         'users', 'audit_logs', 'customers', 'contacts', 'invoices',
-        'imports', 'import_rows', 'suppression_list', 'organisation_role_permissions'
+        'imports', 'import_rows', 'invoice_documents', 'suppression_list',
+        'organisation_role_permissions'
       )`;
     expect(rows.length).toBe(TENANT_TABLES.length);
     for (const row of rows) {
@@ -92,7 +94,8 @@ describe("RLS: connection role hardening", () => {
       WHERE tablename IN (
         'organisations', 'organisation_settings', 'organisation_memberships',
         'users', 'audit_logs', 'customers', 'contacts', 'invoices',
-        'imports', 'import_rows', 'suppression_list', 'organisation_role_permissions'
+        'imports', 'import_rows', 'invoice_documents', 'suppression_list',
+        'organisation_role_permissions'
       )
       GROUP BY tablename`;
     expect(rows.length).toBe(TENANT_TABLES.length);
@@ -107,6 +110,7 @@ describe("RLS: cross-tenant attacks are refused by Postgres itself", () => {
     "invoices",
     "imports",
     "import_rows",
+    "invoice_documents",
     "suppression_list",
     "organisation_role_permissions",
   ])("tenant A cannot SELECT tenant B's %s", async (table) => {
@@ -134,6 +138,17 @@ describe("RLS: cross-tenant attacks are refused by Postgres itself", () => {
         async (tx) =>
           tx.$executeRaw`INSERT INTO imports (organisation_id, original_filename, file_type, mapping)
             VALUES (${ORG_B}::uuid, 'pwn.csv', 'csv', '{}'::jsonb)`,
+      ),
+    ).rejects.toThrow();
+  });
+
+  it("tenant A cannot INSERT an invoice document carrying tenant B's organisation_id", async () => {
+    await expect(
+      asTenant(
+        ORG_A,
+        async (tx) =>
+          tx.$executeRaw`INSERT INTO invoice_documents (organisation_id, original_filename, size_bytes, content)
+            VALUES (${ORG_B}::uuid, 'pwn.pdf', 4, '\\x25504446'::bytea)`,
       ),
     ).rejects.toThrow();
   });

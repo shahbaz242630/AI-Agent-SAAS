@@ -181,6 +181,72 @@ export interface ImportDetail extends ImportSummary {
   rows: ImportRowView[];
 }
 
+// --- Slice 1.4: PDF extraction ---
+
+/** The four STORED invoice-document statuses (plan §3 — CHECK constraint in
+ *  migration 0008). Status changes only via the invoice-documents module
+ *  status machine (the 1.2/1.3 pattern). */
+export const INVOICE_DOCUMENT_STATUSES = ["uploaded", "extracted", "confirmed", "failed"] as const;
+
+export type InvoiceDocumentStatus = (typeof INVOICE_DOCUMENT_STATUSES)[number];
+
+/**
+ * The fields the extraction provider attempts to pull from a PDF (plan §3) —
+ * the SAME ten canonical fields as the 1.3 import. This list deliberately
+ * mirrors IMPORT_CANONICAL_FIELDS in @eva/validation (types must not depend
+ * on validation); keep the two in sync.
+ */
+export const EXTRACTABLE_FIELDS = [
+  "invoiceNumber",
+  "amount",
+  "currency",
+  "issueDate",
+  "dueDate",
+  "customerReference",
+  "customerName",
+  "customerEmail",
+  "contactName",
+  "contactEmail",
+] as const;
+
+export type ExtractableField = (typeof EXTRACTABLE_FIELDS)[number];
+
+/** One extracted field: the raw string value (null when not found) plus a
+ *  rule-derived confidence in [0, 1] (plan §3). */
+export interface ExtractedFieldValue {
+  value: string | null;
+  confidence: number;
+}
+
+/** One uploaded invoice PDF as the API exposes it in lists (plan §3). The
+ *  PDF bytes themselves are only ever streamed by the file endpoint. */
+export interface InvoiceDocumentSummary {
+  id: string;
+  originalFilename: string;
+  sizeBytes: number;
+  status: InvoiceDocumentStatus;
+  /** Sanitised, actionable failure reason when status is 'failed'. */
+  extractionError: string | null;
+  /** The Draft invoice created at confirm (plan §7.7); null before confirm. */
+  invoiceId: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+/**
+ * GET .../invoice-documents/:documentId — the review payload (plan §3).
+ * `extractedFields` and `extractionNotes` are both sourced from the
+ * extracted_fields jsonb column: a `{ fields, notes }` document where fields
+ * maps canonical field → { value, confidence } and notes carries extractor
+ * remarks (e.g. multi-invoice detection, plan §7.3).
+ */
+export interface InvoiceDocumentDetail extends InvoiceDocumentSummary {
+  /** Per-field extraction draft (null until extraction has run); missing or
+   *  low-confidence entries are completed by the human at review (plan §7.7). */
+  extractedFields: Partial<Record<ExtractableField, ExtractedFieldValue>> | null;
+  extractionNotes: string[];
+}
+
 /** Product module identifiers (BRD Section 4) — used by entitlements from Slice 0.3. */
 export const MODULE_IDS = [
   "email_credit_controller",

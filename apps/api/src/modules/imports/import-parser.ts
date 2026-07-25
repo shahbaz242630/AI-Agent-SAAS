@@ -9,7 +9,8 @@ import type { ImportFileType } from "@eva/types";
  * written to disk or object storage (BRD 16 data minimisation). Extensions
  * and MIME types are never trusted: the type is sniffed from magic bytes.
  * Both libraries are isolated behind this adapter (plan §7.5) so either is
- * swappable without route changes.
+ * swappable without route changes. The malware-scan seam lives in
+ * common/upload (Slice 1.4 — shared with the PDF upload surface).
  */
 
 /** 5 MB upload cap (plan §3) — enforced at the interceptor AND here. */
@@ -31,14 +32,6 @@ const XLS_MAGIC = [0xd0, 0xcf, 0x11, 0xe0];
 
 function hasMagic(buffer: Buffer, magic: readonly number[]): boolean {
   return magic.every((byte, index) => buffer.length > index && buffer[index] === byte);
-}
-
-/**
- * Malware-scan seam (BRD 15): a single hook in the upload path so a scanner
- * drops in later without route changes. Currently a no-op.
- */
-export function scanUpload(_buffer: Buffer): void {
-  // No-op until a malware scanner is integrated (BRD 15).
 }
 
 /**

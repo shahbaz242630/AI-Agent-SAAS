@@ -31,6 +31,7 @@ model Organisation {
   invoices        Invoice[]
   imports         Import[]
   importRows      ImportRow[]
+  invoiceDocuments InvoiceDocument[]
   suppressionList SuppressionEntry[]
   rolePermissions OrganisationRolePermission[]
 
@@ -203,6 +204,7 @@ model Invoice {
   customer         Customer     @relation(fields: [customerId], references: [id], onDelete: Cascade)
   contact          Contact?     @relation(fields: [contactId], references: [id], onDelete: SetNull)
   importRows       ImportRow[]
+  invoiceDocuments InvoiceDocument[]
 
   @@index([organisationId])
   @@index([customerId])
@@ -274,6 +276,45 @@ model ImportRow {
   @@index([organisationId])
   @@index([importId])
   @@map("import_rows")
+}
+
+// --- Slice 1.4: PDF invoice extraction (BRD 4.1/10/15/16; Phase 1.4 plan §3/§7) ---
+
+/// One uploaded single-invoice PDF plus its extraction outcome (plan §3).
+/// Unlike imports (1.3), the PDF itself IS persisted in `content` (bytea,
+/// RLS-protected — plan §7.2): review needs source-beside-fields, the
+/// manual-entry fallback needs the file readable, and it is the attachment
+/// source when Outlook sending lands in slice 1.7 (BRD 16).
+/// status is one of uploaded | extracted | confirmed | failed (CHECK
+/// constraint in migration 0008); status changes only via the
+/// invoice-documents module status machine (the 1.2/1.3 pattern).
+model InvoiceDocument {
+  id               String       @id @default(uuid()) @db.Uuid
+  organisationId   String       @map("organisation_id") @db.Uuid
+  originalFilename String       @map("original_filename")
+  sizeBytes        Int          @map("size_bytes")
+  /// The PDF bytes (plan §7.2). Never logged (BRD 14); streamed back only
+  /// through the tenant-scoped file endpoint.
+  content          Bytes
+  status           String       @default("uploaded")
+  /// Extraction draft: per canonical field `{ value, confidence }` plus
+  /// extraction notes (plan §3); null until extraction has run.
+  extractedFields  Json?        @map("extracted_fields")
+  /// Sanitised, actionable failure reason when status = 'failed' (plan §3) —
+  /// never raw extractor internals.
+  extractionError  String?      @map("extraction_error")
+  /// The Draft invoice created at confirm (plan §7.7); SET NULL if that
+  /// invoice is deleted.
+  invoiceId        String?      @map("invoice_id") @db.Uuid
+  createdAt        DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy        String?      @map("created_by") @db.Uuid
+  deletedAt        DateTime?    @map("deleted_at") @db.Timestamptz(6)
+  organisation     Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+  invoice          Invoice?     @relation(fields: [invoiceId], references: [id], onDelete: SetNull)
+
+  @@index([organisationId])
+  @@map("invoice_documents")
 }
 
 /// Permanent, cross-channel do-not-contact record (BRD hard rule: actioned

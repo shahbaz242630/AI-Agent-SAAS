@@ -116,6 +116,37 @@ describe("withTenant — app-layer tenant context (BRD 15)", () => {
       tx.import.delete({ where: { id: importId } }),
     );
   });
+
+  it("scopes invoice documents to the active tenant (Slice 1.4)", async () => {
+    const documentId = randomUUID();
+    await withTenant(
+      app,
+      { organisationId: DEMO_ORGANISATION_ID, userId: DEMO_USER_ID },
+      async (tx) => {
+        await tx.invoiceDocument.create({
+          data: {
+            id: documentId,
+            organisationId: DEMO_ORGANISATION_ID,
+            originalFilename: "invoice.pdf",
+            sizeBytes: 4,
+            content: Buffer.from("%PDF"),
+          },
+        });
+      },
+    );
+
+    const visibleToSecond = await withTenant(
+      app,
+      { organisationId: SECOND_ORG_ID, userId: DEMO_USER_ID },
+      async (tx) => tx.invoiceDocument.findMany(),
+    );
+    expect(visibleToSecond).toEqual([]);
+
+    // Fixture hygiene: remove the document this test created.
+    await withTenant(app, { organisationId: DEMO_ORGANISATION_ID, userId: DEMO_USER_ID }, (tx) =>
+      tx.invoiceDocument.delete({ where: { id: documentId } }),
+    );
+  });
 });
 
 describe("withUser — login path (resolve my memberships before picking an org)", () => {
