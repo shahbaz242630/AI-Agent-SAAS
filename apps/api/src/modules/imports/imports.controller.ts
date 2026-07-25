@@ -12,6 +12,8 @@ import {
 } from "@nestjs/common";
 import { FileInterceptor } from "@nestjs/platform-express";
 import type { ImportDetail, ImportSummary } from "@eva/types";
+import { confirmImportRequestSchema, type ConfirmImportRequest } from "@eva/validation";
+import { ZodValidationPipe } from "../../common/validation/zod-validation.pipe.js";
 import { CurrentAuthUser, type AuthUser } from "../authentication/current-auth-user.decorator.js";
 // eslint-disable-next-line @typescript-eslint/consistent-type-imports
 import { ImportsService, type UploadedImportFile } from "./imports.service.js";
@@ -61,8 +63,11 @@ export class ImportsController {
     @CurrentAuthUser() authUser: AuthUser,
     @Param("organisationId", ParseUUIDPipe) organisationId: string,
     @Param("importId", ParseUUIDPipe) importId: string,
+    // Optional per-row corrections (Slice 1.4 plan §7.9) — an empty/absent
+    // body confirms the staged rows exactly as previewed.
+    @Body(new ZodValidationPipe(confirmImportRequestSchema.optional())) body?: ConfirmImportRequest,
   ): Promise<ImportDetail> {
-    return this.importsService.confirm(authUser, organisationId, importId);
+    return this.importsService.confirm(authUser, organisationId, importId, body);
   }
 
   @Post(":importId/cancel")

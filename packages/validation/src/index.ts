@@ -179,28 +179,116 @@ const emptyToUndefined = <T extends z.ZodType>(schema: T) =>
 
 /**
  * One staged import row with RAW string values as they come from the file
- * (plan §3). Validates SHAPE at staging time only — semantic parsing
- * (amount → integer minor units, ISO/UK date forms) happens in the API
- * parser, not here. invoiceNumber/amount/dueDate are required; at least one
- * of customerReference/customerName is required; currency is optional (the
- * parser defaults GBP); emails are optional but must be valid when present.
+ * (plan §3) — shape only, WITHOUT the cross-field refinement, so Slice 1.4's
+ * per-row corrections schema can compose it (zod cannot .partial() a schema
+ * carrying refinements). Validates SHAPE at staging time only — semantic
+ * parsing (amount → integer minor units, ISO/UK date forms) happens in the
+ * API parser, not here.
  */
-export const importRowSchema = z
+const importRowBaseSchema = z.object({
+  invoiceNumber: z.string().trim().min(1).max(50),
+  /** Decimal major units as written in the file (e.g. "1234.56", "£1,234.56"). */
+  amount: z.string().trim().min(1),
+  currency: emptyToUndefined(z.string().trim().min(1)),
+  issueDate: emptyToUndefined(z.string().trim().min(1)),
+  dueDate: z.string().trim().min(1),
+  customerReference: emptyToUndefined(z.string().trim().min(1)),
+  customerName: emptyToUndefined(z.string().trim().min(1)),
+  customerEmail: emptyToUndefined(z.email().max(320)),
+  contactName: emptyToUndefined(z.string().trim().min(1)),
+  contactEmail: emptyToUndefined(z.email().max(320)),
+});
+
+/**
+ * The staged import row (plan §3): the base shape plus the requirement that
+ * invoiceNumber/amount/dueDate are present (base schema) and at least one of
+ * customerReference/customerName is given; currency is optional (the parser
+ * defaults GBP); emails are optional but must be valid when present.
+ */
+export const importRowSchema = importRowBaseSchema.refine(
+  (row) => row.customerReference !== undefined || row.customerName !== undefined,
+  { message: "at least one of customerReference or customerName is required" },
+);
+
+export type ImportRow = z.infer<typeof importRowSchema>;
+
+// --- Slice 1.4: PDF extraction ---
+
+/** One extracted field value: the raw string (null when not found) plus a
+ *  rule-derived confidence in [0, 1] (plan §3). */
+export const extractedFieldValueSchema = z.object({
+  value: z.string().nullable(),
+  confidence: z.number().min(0).max(1),
+});
+
+/**
+ * The extraction draft stored in invoice_documents.extracted_fields (plan §3):
+ * a partial map of canonical field → { value, confidence }. Missing fields
+ * are simply absent (completed by the human at review, plan §7.7).
+ */
+export const extractedFieldsSchema = z.partialRecord(
+  z.enum(IMPORT_CANONICAL_FIELDS),
+  extractedFieldValueSchema,
+);
+
+/**
+ * POST .../invoice-documents/:documentId/confirm payload (plan §7.7 — the
+ * hybrid ruling): ALWAYS the complete, final, human-reviewed field set,
+ * whether pre-filled from extraction or entered fully manually after a
+ * failure. Mirrors createInvoiceRequestSchema (1.2) for the invoice fields
+ * plus the 1.3 import-row customer/contact semantics: at least one of
+ * customerReference/customerName is required; emails optional but valid.
+ * No `status` — confirm always creates a Draft (BRD 4.1 hard rule).
+ */
+export const confirmInvoiceDocumentRequestSchema = z
   .object({
     invoiceNumber: z.string().trim().min(1).max(50),
-    /** Decimal major units as written in the file (e.g. "1234.56", "£1,234.56"). */
-    amount: z.string().trim().min(1),
-    currency: emptyToUndefined(z.string().trim().min(1)),
-    issueDate: emptyToUndefined(z.string().trim().min(1)),
-    dueDate: z.string().trim().min(1),
-    customerReference: emptyToUndefined(z.string().trim().min(1)),
-    customerName: emptyToUndefined(z.string().trim().min(1)),
-    customerEmail: emptyToUndefined(z.email().max(320)),
-    contactName: emptyToUndefined(z.string().trim().min(1)),
-    contactEmail: emptyToUndefined(z.email().max(320)),
+    /** Integer minor units (pence); money is never float (BRD 10). */
+    amountMinorUnits: z.number().int().positive(),
+    /** ISO 4217 alpha-3, uppercase. */
+    currency: z
+      .string()
+      .regex(/^[A-Z]{3}$/, "currency must be a 3-letter uppercase ISO 4217 code")
+      .default("GBP"),
+    /** Defaults to the confirmation day in the organisation timezone when omitted. */
+    issueDate: isoDate.optional(),
+    dueDate: isoDate,
+    customerReference: z.string().trim().min(1).max(100).optional(),
+    customerName: z.string().trim().min(1).max(200).optional(),
+    customerEmail: z.email().max(320).optional(),
+    contactName: z.string().trim().min(1).max(200).optional(),
+    contactEmail: z.email().max(320).optional(),
   })
-  .refine((row) => row.customerReference !== undefined || row.customerName !== undefined, {
+  .refine((body) => body.customerReference !== undefined || body.customerName !== undefined, {
     message: "at least one of customerReference or customerName is required",
   });
 
-export type ImportRow = z.infer<typeof importRowSchema>;
+export type ConfirmInvoiceDocumentRequest = z.infer<typeof confirmInvoiceDocumentRequestSchema>;
+
+/**
+ * Optional `corrections` map on the 1.3 imports confirm (plan §7.9 — CSV/XLSX
+ * parity with the PDF review-fix-save flow): `{ rowNumber: { field: value } }`
+ * where each entry is a PARTIAL import row (raw string values, as staged).
+ * The API merges a correction over the staged row and re-validates against
+ * the full importRowSchema, so the base shape is reused without its
+ * refinement. Keys are 1-based row numbers (coerced from JSON strings).
+ */
+export const importRowCorrectionsSchema = z.record(
+  z.coerce.number().int().positive(),
+  // Strict: an unknown correction field is a client error (400), never
+  // silently dropped (the 1.2 update-invoice precedent).
+  importRowBaseSchema.partial().strict(),
+);
+
+export type ImportRowCorrections = z.infer<typeof importRowCorrectionsSchema>;
+
+/**
+ * Optional body of POST .../imports/:importId/confirm (plan §7.9 — CSV/XLSX
+ * parity with the PDF review-fix-save flow): per-row corrections, merged over
+ * the staged raw values and re-validated before the row is processed.
+ */
+export const confirmImportRequestSchema = z.object({
+  corrections: importRowCorrectionsSchema.optional(),
+});
+
+export type ConfirmImportRequest = z.infer<typeof confirmImportRequestSchema>;

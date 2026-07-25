@@ -14,8 +14,9 @@ import type { ImportDetail, ImportRowView, ImportSummary } from "@eva/types";
 import {
   importMappingSchema,
   importRowSchema,
-  type ImportCanonicalField,
+  type ConfirmImportRequest,
   type ImportMapping,
+  type ImportRowCorrections,
 } from "@eva/validation";
 // eslint-disable-next-line @typescript-eslint/consistent-type-imports
 import { PrismaService } from "../../common/database/prisma.service.js";
@@ -24,13 +25,22 @@ import { UsersService } from "../users/users.service.js";
 import { requirePermission, type TenantTx } from "../../common/permissions/permissions.js";
 import { writeAuditLog } from "../../common/audit/audit-log.js";
 import { isSuppressed, normaliseSuppressionValue } from "../../common/suppression/suppression.js";
+import { scanUpload } from "../../common/upload/upload-security.js";
+import {
+  createCustomerFromCanonical,
+  createDraftInvoice,
+  listLiveCustomers,
+  listLiveInvoiceNumbers,
+  resolveCustomer,
+  resolveOrCreateContact,
+  type CanonicalRow,
+  type ParsedInvoiceValues,
+} from "../../common/ledger/ledger.js";
 import type { AuthUser } from "../authentication/current-auth-user.decorator.js";
-import { todayInTimezone } from "../invoices/invoice-status.js";
 import {
   MAX_IMPORT_ROWS,
   MAX_UPLOAD_BYTES,
   parseImportFile,
-  scanUpload,
   sniffFileType,
 } from "./import-parser.js";
 import { autoMapHeaders } from "./import-mapping.js";
@@ -47,27 +57,8 @@ export interface UploadedImportFile {
 type ImportRecord = Prisma.ImportGetPayload<object>;
 type ImportRowRecord = Prisma.ImportRowGetPayload<object>;
 
-type CanonicalRow = Partial<Record<ImportCanonicalField, string>>;
-
 /** Semantic invoice values parsed from a canonical row (BRD 10 minor units). */
-interface ParsedValues {
-  invoiceNumber: string;
-  amountMinorUnits: number;
-  currency: string;
-  issueDate?: Date;
-  dueDate: Date;
-}
-
-interface CustomerMatch {
-  id: string;
-  name: string;
-  reference: string | null;
-}
-
-type CustomerResolution =
-  | { kind: "matched"; customerId: string }
-  | { kind: "ambiguous"; matches: number }
-  | { kind: "create" };
+type ParsedValues = ParsedInvoiceValues;
 
 const DEFAULT_TIMEZONE = "Europe/London";
 
@@ -107,8 +98,8 @@ export class ImportsService {
     const user = await this.usersService.resolveOrProvision(authUser);
     return withTenant(this.prisma.db, { organisationId, userId: user.id }, async (tx) => {
       await requirePermission(tx, organisationId, user.id, "imports:write");
-      const customers = await this.liveCustomers(tx);
-      const existingNumbers = await this.liveInvoiceNumbers(tx);
+      const customers = await listLiveCustomers(tx);
+      const existingNumbers = await listLiveInvoiceNumbers(tx);
 
       const seenInFile = new Set<string>();
       const staged: {
@@ -238,12 +229,20 @@ export class ImportsService {
    * completed. Duplicates and invalid rows are skipped, never upserted
    * (plan §7.3). Any unexpected error rolls the whole transaction back: the
    * import is marked failed and zero rows land (plan §8 risk 3).
+   * Optional per-row corrections (Slice 1.4 plan §7.9) are merged over the
+   * staged raw values and re-validated BEFORE the row is processed: a
+   * corrected-invalid row becomes importable; a correction making the number
+   * duplicate a live invoice is skipped as `duplicate`; a still-invalid
+   * corrected row stays invalid with the new errors. Rows without a
+   * correction behave exactly as before.
    */
   async confirm(
     authUser: AuthUser,
     organisationId: string,
     importId: string,
+    request?: ConfirmImportRequest,
   ): Promise<ImportDetail> {
+    const corrections = request?.corrections;
     const user = await this.usersService.resolveOrProvision(authUser);
     try {
       return await withTenant(this.prisma.db, { organisationId, userId: user.id }, async (tx) => {
@@ -252,8 +251,8 @@ export class ImportsService {
         this.requireUploaded(importRecord, "confirm");
         const mapping = importRecord.mapping as ImportMapping;
         const timezone = await this.orgTimezone(tx, organisationId);
-        const customers = await this.liveCustomers(tx);
-        const existingNumbers = await this.liveInvoiceNumbers(tx);
+        const customers = await listLiveCustomers(tx);
+        const existingNumbers = await listLiveInvoiceNumbers(tx);
         const stagedRows = await tx.importRow.findMany({
           where: { importId },
           orderBy: { rowNumber: "asc" },
@@ -261,14 +260,24 @@ export class ImportsService {
 
         let createdRows = 0;
         let customersCreated = 0;
+        let correctionsApplied = 0;
         for (const row of stagedRows) {
-          if (row.status !== "valid" && row.status !== "suppressed") continue;
+          const correction = corrections?.[row.rowNumber];
+          const importable = row.status === "valid" || row.status === "suppressed";
+          // Non-importable rows stay untouched UNLESS a correction re-opens
+          // them (plan §7.9 — the review-fix-save parity with PDFs).
+          if (!importable && correction === undefined) continue;
+          if (correction !== undefined) correctionsApplied++;
           const raw = row.raw as Record<string, string>;
-          const canonical = canonicalise(raw, mapping);
+          const canonical = applyCorrection(canonicalise(raw, mapping), correction);
           const analysis = analyseRow(canonical);
-          const notes = (row.errors as string[]).filter(
-            (message) => !message.endsWith("will be created on confirm"),
-          );
+          const notes = importable
+            ? (row.errors as string[]).filter(
+                (message) => !message.endsWith("will be created on confirm"),
+              )
+            : // A re-opened invalid row's staged errors are stale — replaced by
+              // the re-validation outcome below.
+              [];
           if (!analysis.values) {
             await tx.importRow.update({
               where: { id: row.id },
@@ -354,6 +363,7 @@ export class ImportsService {
             ...counts,
             createdRows,
             customersCreated,
+            correctionsApplied,
           },
         });
         const completed = await tx.import.findUniqueOrThrow({ where: { id: importId } });
@@ -469,26 +479,18 @@ export class ImportsService {
     return isSuppressed(tx, organisationId, "email", normaliseSuppressionValue("email", email));
   }
 
-  /** Auto-creates an unmatched customer (plan §7.2); never updates existing rows. */
+  /** Thin wrappers over the shared ledger helpers (common/ledger — the same
+   *  code path the 1.4 PDF confirm uses); kept as methods so the module's
+   *  seams (and specs) are unchanged. */
   private async createCustomer(
     tx: TenantTx,
     organisationId: string,
     userId: string,
     canonical: CanonicalRow,
   ) {
-    return tx.customer.create({
-      data: {
-        organisationId,
-        name: (canonical.customerName ?? canonical.customerReference)!,
-        email: canonical.customerEmail?.toLowerCase() ?? null,
-        reference: canonical.customerReference ?? null,
-        createdBy: userId,
-      },
-    });
+    return createCustomerFromCanonical(tx, organisationId, userId, canonical);
   }
 
-  /** Creates a contact when contact fields are present, reusing a live contact
-   *  with the same normalised email on that customer (never duplicates). */
   private async resolveOrCreateContact(
     tx: TenantTx,
     organisationId: string,
@@ -496,29 +498,9 @@ export class ImportsService {
     customerId: string,
     canonical: CanonicalRow,
   ): Promise<string | null> {
-    if (canonical.contactName === undefined && canonical.contactEmail === undefined) return null;
-    const email = canonical.contactEmail?.toLowerCase() ?? null;
-    if (email !== null) {
-      const existing = await tx.contact.findFirst({
-        where: { customerId, deletedAt: null, email },
-      });
-      if (existing) return existing.id;
-    }
-    const contact = await tx.contact.create({
-      data: {
-        organisationId,
-        customerId,
-        name: canonical.contactName ?? email!,
-        email,
-        createdBy: userId,
-      },
-    });
-    return contact.id;
+    return resolveOrCreateContact(tx, organisationId, userId, customerId, canonical);
   }
 
-  /** Creates the DRAFT invoice for an importable row (plan §7.7) — the same
-   *  creation semantics as 1.2: integer minor units, currency, issueDate
-   *  defaulting to the creation day in the org timezone (BRD 18.1). */
   private async createImportedInvoice(
     tx: TenantTx,
     organisationId: string,
@@ -526,36 +508,7 @@ export class ImportsService {
     timezone: string,
     input: { customerId: string; contactId: string | null; values: ParsedValues },
   ) {
-    return tx.invoice.create({
-      data: {
-        organisationId,
-        customerId: input.customerId,
-        contactId: input.contactId,
-        invoiceNumber: input.values.invoiceNumber,
-        amountMinorUnits: input.values.amountMinorUnits,
-        currency: input.values.currency,
-        issueDate: input.values.issueDate ?? todayInTimezone(timezone),
-        dueDate: input.values.dueDate,
-        status: "draft",
-        createdBy: userId,
-      },
-    });
-  }
-
-  private async liveCustomers(tx: TenantTx): Promise<CustomerMatch[]> {
-    return tx.customer.findMany({
-      where: { deletedAt: null },
-      select: { id: true, name: true, reference: true },
-    });
-  }
-
-  /** Live invoice numbers only — a soft-deleted number is reusable (0006 index). */
-  private async liveInvoiceNumbers(tx: TenantTx): Promise<Set<string>> {
-    const invoices = await tx.invoice.findMany({
-      where: { deletedAt: null },
-      select: { invoiceNumber: true },
-    });
-    return new Set(invoices.map((invoice) => invoice.invoiceNumber));
+    return createDraftInvoice(tx, organisationId, userId, timezone, input);
   }
 
   /** The org's business timezone (BRD 18.1); default Europe/London. */
@@ -617,6 +570,21 @@ function canonicalise(raw: Record<string, string>, mapping: ImportMapping): Cano
   return canonical;
 }
 
+/** Merges a per-row correction (Slice 1.4 plan §7.9) over the staged
+ *  canonical values; empty correction cells mean "absent" — corrections
+ *  overwrite, they never clear (the importRowSchema empty-cell rule). */
+function applyCorrection(
+  canonical: CanonicalRow,
+  correction: ImportRowCorrections[number] | undefined,
+): CanonicalRow {
+  if (correction === undefined) return canonical;
+  const merged: CanonicalRow = { ...canonical };
+  for (const [field, value] of Object.entries(correction)) {
+    if (value !== undefined) merged[field as keyof CanonicalRow] = value;
+  }
+  return merged;
+}
+
 /**
  * Shape (importRowSchema — shared with the web/worker, plan §3) + semantic
  * validation of one staged row. Returns per-row errors and, when clean, the
@@ -670,22 +638,8 @@ function analyseRow(canonical: CanonicalRow): { errors: string[]; values?: Parse
   };
 }
 
-/** Customer pre-resolution (plan §7.2): live customer by reference, else by
- *  case-insensitive exact name; multiple matches are errors, never guesses. */
-function resolveCustomer(canonical: CanonicalRow, customers: CustomerMatch[]): CustomerResolution {
-  if (canonical.customerReference !== undefined) {
-    const matches = customers.filter((c) => c.reference === canonical.customerReference);
-    if (matches.length === 1) return { kind: "matched", customerId: matches[0]!.id };
-    if (matches.length > 1) return { kind: "ambiguous", matches: matches.length };
-  }
-  if (canonical.customerName !== undefined) {
-    const wanted = canonical.customerName.toLowerCase();
-    const matches = customers.filter((c) => c.name.toLowerCase() === wanted);
-    if (matches.length === 1) return { kind: "matched", customerId: matches[0]!.id };
-    if (matches.length > 1) return { kind: "ambiguous", matches: matches.length };
-  }
-  return { kind: "create" };
-}
+/** Customer pre-resolution lives in common/ledger (Slice 1.4 — shared with the
+ *  PDF invoice-document confirm). */
 
 function countStatuses(rows: { status: string }[]): {
   validRows: number;

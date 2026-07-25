@@ -44,7 +44,7 @@ async function invoiceFixtureCustomer() {
 }
 
 describe("Schema conventions (BRD 10)", () => {
-  it("creates exactly the Phase 0 + Slice 1.1 + Slice 1.2 + Slice 1.3 tables", async () => {
+  it("creates exactly the Phase 0 + Slice 1.1 + Slice 1.2 + Slice 1.3 + Slice 1.4 tables", async () => {
     const rows = await prisma.$queryRaw<{ table_name: string }[]>`
       SELECT table_name FROM information_schema.tables
       WHERE table_schema = 'public' AND table_type = 'BASE TABLE'`;
@@ -55,6 +55,7 @@ describe("Schema conventions (BRD 10)", () => {
       "customers",
       "import_rows",
       "imports",
+      "invoice_documents",
       "invoices",
       "organisation_memberships",
       "organisation_role_permissions",
@@ -75,6 +76,7 @@ describe("Schema conventions (BRD 10)", () => {
     "invoices",
     "imports",
     "import_rows",
+    "invoice_documents",
     "suppression_list",
     "organisation_role_permissions",
   ])("tenant-owned table %s has a non-nullable organisation_id", async (table) => {
@@ -94,6 +96,7 @@ describe("Schema conventions (BRD 10)", () => {
     "invoices",
     "imports",
     "import_rows",
+    "invoice_documents",
     "organisation_role_permissions",
   ])("mutable table %s carries created_at/updated_at/created_by", async (table) => {
     const names = (await columnsOf(table)).map((c) => c.column_name);
@@ -102,7 +105,7 @@ describe("Schema conventions (BRD 10)", () => {
     }
   });
 
-  it.each(["customers", "contacts", "invoices", "imports"])(
+  it.each(["customers", "contacts", "invoices", "imports", "invoice_documents"])(
     "soft-deletable table %s has deleted_at",
     async (table) => {
       const names = (await columnsOf(table)).map((c) => c.column_name);
@@ -140,6 +143,18 @@ describe("Schema conventions (BRD 10)", () => {
     const statusCheck = rows.find((r) => r.pg_get_constraintdef.includes("status"));
     expect(statusCheck).toBeDefined();
     for (const status of ["valid", "invalid", "duplicate", "suppressed", "imported", "skipped"]) {
+      expect(statusCheck?.pg_get_constraintdef).toContain(`'${status}'`);
+    }
+  });
+
+  it("invoice_documents stores only the four stored statuses (CHECK constraint)", async () => {
+    const rows = await prisma.$queryRaw<{ conname: string; pg_get_constraintdef: string }[]>`
+      SELECT conname, pg_get_constraintdef(oid)
+      FROM pg_constraint
+      WHERE conrelid = 'invoice_documents'::regclass AND contype = 'c'`;
+    const statusCheck = rows.find((r) => r.pg_get_constraintdef.includes("status"));
+    expect(statusCheck).toBeDefined();
+    for (const status of ["uploaded", "extracted", "confirmed", "failed"]) {
       expect(statusCheck?.pg_get_constraintdef).toContain(`'${status}'`);
     }
   });
