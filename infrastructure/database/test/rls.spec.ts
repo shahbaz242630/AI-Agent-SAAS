@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "../src/generated/client.js";
@@ -50,6 +51,7 @@ const TENANT_TABLES = [
   "audit_logs",
   "customers",
   "contacts",
+  "invoices",
   "suppression_list",
   "organisation_role_permissions",
 ];
@@ -72,7 +74,7 @@ describe("RLS: connection role hardening", () => {
       FROM pg_class
       WHERE relname IN (
         'organisations', 'organisation_settings', 'organisation_memberships',
-        'users', 'audit_logs', 'customers', 'contacts',
+        'users', 'audit_logs', 'customers', 'contacts', 'invoices',
         'suppression_list', 'organisation_role_permissions'
       )`;
     expect(rows.length).toBe(TENANT_TABLES.length);
@@ -87,7 +89,7 @@ describe("RLS: connection role hardening", () => {
       SELECT tablename, COUNT(*) AS count FROM pg_policies
       WHERE tablename IN (
         'organisations', 'organisation_settings', 'organisation_memberships',
-        'users', 'audit_logs', 'customers', 'contacts',
+        'users', 'audit_logs', 'customers', 'contacts', 'invoices',
         'suppression_list', 'organisation_role_permissions'
       )
       GROUP BY tablename`;
@@ -97,15 +99,29 @@ describe("RLS: connection role hardening", () => {
 });
 
 describe("RLS: cross-tenant attacks are refused by Postgres itself", () => {
-  it.each(["customers", "contacts", "suppression_list", "organisation_role_permissions"])(
-    "tenant A cannot SELECT tenant B's %s",
-    async (table) => {
-      const visible = await asTenant(ORG_A, async (tx) =>
-        tx.$queryRawUnsafe<{ id: string }[]>(`SELECT id FROM ${table}`),
-      );
-      expect(visible).toEqual([]);
-    },
-  );
+  it.each([
+    "customers",
+    "contacts",
+    "invoices",
+    "suppression_list",
+    "organisation_role_permissions",
+  ])("tenant A cannot SELECT tenant B's %s", async (table) => {
+    const visible = await asTenant(ORG_A, async (tx) =>
+      tx.$queryRawUnsafe<{ id: string }[]>(`SELECT id FROM ${table}`),
+    );
+    expect(visible).toEqual([]);
+  });
+
+  it("tenant A cannot INSERT an invoice carrying tenant B's organisation_id", async () => {
+    await expect(
+      asTenant(
+        ORG_A,
+        async (tx) =>
+          tx.$executeRaw`INSERT INTO invoices (organisation_id, customer_id, invoice_number, amount_minor_units, issue_date, due_date)
+            VALUES (${ORG_B}::uuid, ${randomUUID()}::uuid, 'PWN-1', 100, CURRENT_DATE, CURRENT_DATE)`,
+      ),
+    ).rejects.toThrow();
+  });
 
   it("tenant A cannot INSERT a row carrying tenant B's organisation_id", async () => {
     await expect(
