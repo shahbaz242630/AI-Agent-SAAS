@@ -44,7 +44,7 @@ async function invoiceFixtureCustomer() {
 }
 
 describe("Schema conventions (BRD 10)", () => {
-  it("creates exactly the Phase 0 + Slice 1.1 + Slice 1.2 tables", async () => {
+  it("creates exactly the Phase 0 + Slice 1.1 + Slice 1.2 + Slice 1.3 tables", async () => {
     const rows = await prisma.$queryRaw<{ table_name: string }[]>`
       SELECT table_name FROM information_schema.tables
       WHERE table_schema = 'public' AND table_type = 'BASE TABLE'`;
@@ -53,6 +53,8 @@ describe("Schema conventions (BRD 10)", () => {
       "audit_logs",
       "contacts",
       "customers",
+      "import_rows",
+      "imports",
       "invoices",
       "organisation_memberships",
       "organisation_role_permissions",
@@ -71,6 +73,8 @@ describe("Schema conventions (BRD 10)", () => {
     "customers",
     "contacts",
     "invoices",
+    "imports",
+    "import_rows",
     "suppression_list",
     "organisation_role_permissions",
   ])("tenant-owned table %s has a non-nullable organisation_id", async (table) => {
@@ -88,6 +92,8 @@ describe("Schema conventions (BRD 10)", () => {
     "customers",
     "contacts",
     "invoices",
+    "imports",
+    "import_rows",
     "organisation_role_permissions",
   ])("mutable table %s carries created_at/updated_at/created_by", async (table) => {
     const names = (await columnsOf(table)).map((c) => c.column_name);
@@ -96,13 +102,92 @@ describe("Schema conventions (BRD 10)", () => {
     }
   });
 
-  it.each(["customers", "contacts", "invoices"])(
+  it.each(["customers", "contacts", "invoices", "imports"])(
     "soft-deletable table %s has deleted_at",
     async (table) => {
       const names = (await columnsOf(table)).map((c) => c.column_name);
       expect(names).toContain("deleted_at");
     },
   );
+
+  it("import_rows has no deleted_at: lifecycle follows the parent import (plan §3)", async () => {
+    const names = (await columnsOf("import_rows")).map((c) => c.column_name);
+    expect(names).not.toContain("deleted_at");
+  });
+
+  it("imports stores only csv/xlsx file types and the four stored statuses (CHECK constraints)", async () => {
+    const rows = await prisma.$queryRaw<{ conname: string; pg_get_constraintdef: string }[]>`
+      SELECT conname, pg_get_constraintdef(oid)
+      FROM pg_constraint
+      WHERE conrelid = 'imports'::regclass AND contype = 'c'`;
+    const fileTypeCheck = rows.find((r) => r.pg_get_constraintdef.includes("file_type"));
+    expect(fileTypeCheck).toBeDefined();
+    for (const fileType of ["csv", "xlsx"]) {
+      expect(fileTypeCheck?.pg_get_constraintdef).toContain(`'${fileType}'`);
+    }
+    const statusCheck = rows.find((r) => r.pg_get_constraintdef.includes("status"));
+    expect(statusCheck).toBeDefined();
+    for (const status of ["uploaded", "completed", "failed", "cancelled"]) {
+      expect(statusCheck?.pg_get_constraintdef).toContain(`'${status}'`);
+    }
+  });
+
+  it("import_rows stores only the six staged-row statuses (CHECK constraint)", async () => {
+    const rows = await prisma.$queryRaw<{ conname: string; pg_get_constraintdef: string }[]>`
+      SELECT conname, pg_get_constraintdef(oid)
+      FROM pg_constraint
+      WHERE conrelid = 'import_rows'::regclass AND contype = 'c'`;
+    const statusCheck = rows.find((r) => r.pg_get_constraintdef.includes("status"));
+    expect(statusCheck).toBeDefined();
+    for (const status of ["valid", "invalid", "duplicate", "suppressed", "imported", "skipped"]) {
+      expect(statusCheck?.pg_get_constraintdef).toContain(`'${status}'`);
+    }
+  });
+
+  it("import_rows cascade with their import; created_invoice_id SET NULLs with the invoice", async () => {
+    const customer = await invoiceFixtureCustomer();
+    const invoice = await prisma.invoice.create({
+      data: {
+        organisationId: customer.organisationId,
+        customerId: customer.id,
+        invoiceNumber: `IMP-${randomUUID().slice(0, 8)}`,
+        amountMinorUnits: 100,
+        issueDate: new Date(),
+        dueDate: new Date(),
+      },
+    });
+    const importRecord = await prisma.import.create({
+      data: {
+        organisationId: customer.organisationId,
+        originalFilename: "ledger.csv",
+        fileType: "csv",
+        mapping: { "Invoice No": "invoiceNumber" },
+      },
+    });
+    const row = await prisma.importRow.create({
+      data: {
+        organisationId: customer.organisationId,
+        importId: importRecord.id,
+        rowNumber: 1,
+        raw: { "Invoice No": invoice.invoiceNumber },
+        status: "imported",
+        createdInvoiceId: invoice.id,
+      },
+    });
+
+    // Deleting the invoice SET NULLs the back-reference (plan §3).
+    await prisma.invoice.delete({ where: { id: invoice.id } });
+    expect(
+      (await prisma.importRow.findUniqueOrThrow({ where: { id: row.id } })).createdInvoiceId,
+    ).toBeNull();
+
+    // Deleting the import cascades to its staged rows (plan §3).
+    await prisma.import.delete({ where: { id: importRecord.id } });
+    expect(await prisma.importRow.findMany({ where: { importId: importRecord.id } })).toEqual([]);
+
+    // Fixture hygiene: remove the customer this test created.
+    await prisma.customer.delete({ where: { id: customer.id } });
+  });
 
   it("invoices stores only the nine stored statuses (CHECK constraint)", async () => {
     const rows = await prisma.$queryRaw<{ conname: string; pg_get_constraintdef: string }[]>`

@@ -48,6 +48,8 @@ export const PERMISSION_KEYS = [
   "contacts:write",
   "invoices:read",
   "invoices:write",
+  "imports:read",
+  "imports:write",
   "permissions:read",
   "permissions:manage",
 ] as const;
@@ -70,10 +72,12 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<OrganisationRole, readonly Permiss
     "contacts:write",
     "invoices:read",
     "invoices:write",
+    "imports:read",
+    "imports:write",
   ],
-  sales: ["customers:read", "contacts:read", "invoices:read"],
-  reception: ["customers:read", "contacts:read", "invoices:read"],
-  read_only: ["customers:read", "contacts:read", "invoices:read"],
+  sales: ["customers:read", "contacts:read", "invoices:read", "imports:read"],
+  reception: ["customers:read", "contacts:read", "invoices:read", "imports:read"],
+  read_only: ["customers:read", "contacts:read", "invoices:read", "imports:read"],
 };
 
 // --- Slice 1.2: invoice records ---
@@ -109,6 +113,73 @@ export type InvoiceComputedStatus = (typeof INVOICE_COMPUTED_STATUSES)[number];
 
 /** What API responses expose: stored status, or a computed one when Active. */
 export type InvoiceDisplayStatus = InvoiceStoredStatus | InvoiceComputedStatus;
+
+// --- Slice 1.3: CSV/Excel invoice import ---
+
+/** Accepted import file types (plan §3). Legacy .xls (BIFF) is rejected. */
+export const IMPORT_FILE_TYPES = ["csv", "xlsx"] as const;
+
+export type ImportFileType = (typeof IMPORT_FILE_TYPES)[number];
+
+/**
+ * The four STORED import statuses (plan §3 — CHECK constraint in migration
+ * 0007). 'confirmed' is not a stored state: confirm runs synchronously to
+ * completion (plan §7.8). Status changes only via the imports module status
+ * machine (the 1.2 pattern).
+ */
+export const IMPORT_STATUSES = ["uploaded", "completed", "failed", "cancelled"] as const;
+
+export type ImportStatus = (typeof IMPORT_STATUSES)[number];
+
+/** The staged-row statuses (plan §3 — CHECK constraint in migration 0007). */
+export const IMPORT_ROW_STATUSES = [
+  "valid",
+  "invalid",
+  "duplicate",
+  "suppressed",
+  "imported",
+  "skipped",
+] as const;
+
+export type ImportRowStatus = (typeof IMPORT_ROW_STATUSES)[number];
+
+/** One import upload as the API exposes it (list + preview/report header). */
+export interface ImportSummary {
+  id: string;
+  originalFilename: string;
+  fileType: ImportFileType;
+  status: ImportStatus;
+  /** Resolved file-column → canonical-field mapping (echoed from upload). */
+  mapping: Record<string, string>;
+  totalRows: number;
+  validRows: number;
+  invalidRows: number;
+  duplicateRows: number;
+  suppressedRows: number;
+  createdRows: number;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+/** One staged row as the API exposes it (preview before confirm; report after). */
+export interface ImportRowView {
+  id: string;
+  /** 1-based position of the data row in the uploaded file. */
+  rowNumber: number;
+  /** The original file row (file column names → raw string values). */
+  raw: Record<string, string>;
+  status: ImportRowStatus;
+  /** Row-level validation errors and informational flags (e.g. customer
+   *  auto-creation, plan §7.2); empty when there is nothing to report. */
+  errors: string[];
+  /** The Draft invoice created at confirm (plan §7.7); null before confirm. */
+  createdInvoiceId: string | null;
+}
+
+/** GET .../imports/:importId — preview before confirm, report after (plan §3). */
+export interface ImportDetail extends ImportSummary {
+  rows: ImportRowView[];
+}
 
 /** Product module identifiers (BRD Section 4) — used by entitlements from Slice 0.3. */
 export const MODULE_IDS = [

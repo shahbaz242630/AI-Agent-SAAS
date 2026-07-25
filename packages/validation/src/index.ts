@@ -139,3 +139,68 @@ export const updateInvoiceRequestSchema = createInvoiceRequestSchema
   .strict();
 
 export type UpdateInvoiceRequest = z.infer<typeof updateInvoiceRequestSchema>;
+
+// --- Slice 1.3: CSV/Excel import ---
+
+/** Canonical fields a file column can map to (Phase 1.3 plan §3). */
+export const IMPORT_CANONICAL_FIELDS = [
+  "invoiceNumber",
+  "amount",
+  "currency",
+  "issueDate",
+  "dueDate",
+  "customerReference",
+  "customerName",
+  "customerEmail",
+  "contactName",
+  "contactEmail",
+] as const;
+
+export type ImportCanonicalField = (typeof IMPORT_CANONICAL_FIELDS)[number];
+
+/**
+ * Optional `mapping` form field on POST .../imports (plan §3): file column
+ * name → canonical field. Partial — not every canonical field must be mapped;
+ * when the mapping is absent the server auto-maps by header name.
+ */
+export const importMappingSchema = z.record(
+  z.string().trim().min(1),
+  z.enum(IMPORT_CANONICAL_FIELDS),
+);
+
+export type ImportMapping = z.infer<typeof importMappingSchema>;
+
+/** Empty file cells mean "absent", not an invalid value. */
+const emptyToUndefined = <T extends z.ZodType>(schema: T) =>
+  z.preprocess(
+    (value) => (typeof value === "string" && value.trim() === "" ? undefined : value),
+    schema.optional(),
+  );
+
+/**
+ * One staged import row with RAW string values as they come from the file
+ * (plan §3). Validates SHAPE at staging time only — semantic parsing
+ * (amount → integer minor units, ISO/UK date forms) happens in the API
+ * parser, not here. invoiceNumber/amount/dueDate are required; at least one
+ * of customerReference/customerName is required; currency is optional (the
+ * parser defaults GBP); emails are optional but must be valid when present.
+ */
+export const importRowSchema = z
+  .object({
+    invoiceNumber: z.string().trim().min(1).max(50),
+    /** Decimal major units as written in the file (e.g. "1234.56", "£1,234.56"). */
+    amount: z.string().trim().min(1),
+    currency: emptyToUndefined(z.string().trim().min(1)),
+    issueDate: emptyToUndefined(z.string().trim().min(1)),
+    dueDate: z.string().trim().min(1),
+    customerReference: emptyToUndefined(z.string().trim().min(1)),
+    customerName: emptyToUndefined(z.string().trim().min(1)),
+    customerEmail: emptyToUndefined(z.email().max(320)),
+    contactName: emptyToUndefined(z.string().trim().min(1)),
+    contactEmail: emptyToUndefined(z.email().max(320)),
+  })
+  .refine((row) => row.customerReference !== undefined || row.customerName !== undefined, {
+    message: "at least one of customerReference or customerName is required",
+  });
+
+export type ImportRow = z.infer<typeof importRowSchema>;

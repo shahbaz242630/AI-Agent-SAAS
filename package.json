@@ -44,7 +44,10 @@
       "eslint-plugin-import>minimatch": "^10.2.5",
       "eslint-plugin-jsx-a11y>minimatch": "^10.2.5",
       "eslint-plugin-react>minimatch": "^10.2.5",
-      "fork-ts-checker-webpack-plugin>minimatch": "^10.2.5"
+      "fork-ts-checker-webpack-plugin>minimatch": "^10.2.5",
+      "exceljs>archiver": "^8.0.0",
+      "exceljs>unzipper": "^0.12.5",
+      "exceljs>uuid": "^11.1.1"
     }
   },
   "devDependencies": {
