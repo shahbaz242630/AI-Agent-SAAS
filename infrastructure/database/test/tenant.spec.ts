@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createPrismaClient, type EvaPrismaClient } from "../src/client.js";
 import { seed, DEMO_ORGANISATION_ID } from "../src/seed.js";
@@ -70,6 +71,50 @@ describe("withTenant — app-layer tenant context (BRD 15)", () => {
         tx.organisationSettings.create({ data: { organisationId: SECOND_ORG_ID } }),
       ),
     ).rejects.toThrow();
+  });
+
+  it("scopes imports and their staged rows to the active tenant (Slice 1.3)", async () => {
+    const importId = randomUUID();
+    await withTenant(
+      app,
+      { organisationId: DEMO_ORGANISATION_ID, userId: DEMO_USER_ID },
+      async (tx) => {
+        await tx.import.create({
+          data: {
+            id: importId,
+            organisationId: DEMO_ORGANISATION_ID,
+            originalFilename: "ledger.csv",
+            fileType: "csv",
+            mapping: { "Invoice No": "invoiceNumber" },
+          },
+        });
+        await tx.importRow.create({
+          data: {
+            organisationId: DEMO_ORGANISATION_ID,
+            importId,
+            rowNumber: 1,
+            raw: { "Invoice No": "INV-1" },
+            status: "valid",
+          },
+        });
+      },
+    );
+
+    const visibleToSecond = await withTenant(
+      app,
+      { organisationId: SECOND_ORG_ID, userId: DEMO_USER_ID },
+      async (tx) => ({
+        imports: await tx.import.findMany(),
+        rows: await tx.importRow.findMany(),
+      }),
+    );
+    expect(visibleToSecond.imports).toEqual([]);
+    expect(visibleToSecond.rows).toEqual([]);
+
+    // Fixture hygiene: deleting the import cascades to its staged rows.
+    await withTenant(app, { organisationId: DEMO_ORGANISATION_ID, userId: DEMO_USER_ID }, (tx) =>
+      tx.import.delete({ where: { id: importId } }),
+    );
   });
 });
 

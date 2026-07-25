@@ -29,6 +29,8 @@ model Organisation {
   customers       Customer[]
   contacts        Contact[]
   invoices        Invoice[]
+  imports         Import[]
+  importRows      ImportRow[]
   suppressionList SuppressionEntry[]
   rolePermissions OrganisationRolePermission[]
 
@@ -200,10 +202,78 @@ model Invoice {
   organisation     Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
   customer         Customer     @relation(fields: [customerId], references: [id], onDelete: Cascade)
   contact          Contact?     @relation(fields: [contactId], references: [id], onDelete: SetNull)
+  importRows       ImportRow[]
 
   @@index([organisationId])
   @@index([customerId])
   @@map("invoices")
+}
+
+// --- Slice 1.3: CSV/Excel invoice import (BRD 4.1/10/15/16; Phase 1.3 plan §3/§7) ---
+
+/// One row per uploaded import file (plan §7.1: persisted two-phase import).
+/// The file itself is NEVER persisted — held in memory, parsed, discarded
+/// (BRD 16 data minimisation); only staged rows in import_rows survive.
+/// status is one of uploaded | completed | failed | cancelled (CHECK
+/// constraint in migration 0007); 'confirmed' is not a stored state — confirm
+/// runs synchronously to completion (plan §7.8). Status changes only via the
+/// imports module status machine (the 1.2 pattern).
+model Import {
+  id               String       @id @default(uuid()) @db.Uuid
+  organisationId   String       @map("organisation_id") @db.Uuid
+  originalFilename String       @map("original_filename")
+  /// csv | xlsx (CHECK constraint in migration 0007). Legacy .xls rejected.
+  fileType         String       @map("file_type")
+  status           String       @default("uploaded")
+  /// Resolved file-column → canonical-field mapping (echoed to the client).
+  mapping          Json
+  totalRows        Int          @default(0) @map("total_rows")
+  validRows        Int          @default(0) @map("valid_rows")
+  invalidRows      Int          @default(0) @map("invalid_rows")
+  duplicateRows    Int          @default(0) @map("duplicate_rows")
+  suppressedRows   Int          @default(0) @map("suppressed_rows")
+  createdRows      Int          @default(0) @map("created_rows")
+  createdAt        DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy        String?      @map("created_by") @db.Uuid
+  deletedAt        DateTime?    @map("deleted_at") @db.Timestamptz(6)
+  organisation     Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+  rows             ImportRow[]
+
+  @@index([organisationId])
+  @@map("imports")
+}
+
+/// A staged parse result — one row per data row of the uploaded file
+/// (plan §3). organisation_id is denormalised onto every tenant-owned row so
+/// the RLS tenant_isolation policy stays uniform (the contacts precedent).
+/// No deleted_at: lifecycle follows the parent import via cascade.
+/// status is one of valid | invalid | duplicate | suppressed | imported |
+/// skipped (CHECK constraint in migration 0007).
+model ImportRow {
+  id               String       @id @default(uuid()) @db.Uuid
+  organisationId   String       @map("organisation_id") @db.Uuid
+  importId         String       @map("import_id") @db.Uuid
+  /// 1-based position of the data row in the uploaded file.
+  rowNumber        Int          @map("row_number")
+  /// The original file row (file column names → raw string values).
+  raw              Json
+  status           String
+  /// Row-level validation errors (jsonb string array); empty when valid.
+  errors           Json         @default("[]")
+  /// The Draft invoice created at confirm (plan §7.7); SET NULL if that
+  /// invoice is deleted.
+  createdInvoiceId String?      @map("created_invoice_id") @db.Uuid
+  createdAt        DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy        String?      @map("created_by") @db.Uuid
+  organisation     Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+  import           Import       @relation(fields: [importId], references: [id], onDelete: Cascade)
+  createdInvoice   Invoice?     @relation(fields: [createdInvoiceId], references: [id], onDelete: SetNull)
+
+  @@index([organisationId])
+  @@index([importId])
+  @@map("import_rows")
 }
 
 /// Permanent, cross-channel do-not-contact record (BRD hard rule: actioned
