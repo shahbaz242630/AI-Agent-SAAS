@@ -1,10 +1,11 @@
 import { randomUUID } from "node:crypto";
 import type { INestApplication } from "@nestjs/common";
 import request from "supertest";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { EvaPrismaClient } from "@eva/database";
 import type { ReminderActionType, ReminderStepKey, ScheduledActionStatus } from "@eva/types";
 import { todayInTimezone } from "../src/modules/invoices/invoice-status.js";
+import type { scheduleInvoiceReminders } from "../src/modules/reminders/reminder-actions.js";
 import {
   createOrgWithMembers,
   createOwnerClient,
@@ -14,6 +15,33 @@ import {
   TEST_INTERNAL_API_SECRET,
   type FixtureOrg,
 } from "./support.js";
+
+/**
+ * Minimal module-boundary double (the ONLY mock in this file — the invoices
+ * transactionality pattern, plan §6): when armed with an organisation id,
+ * `scheduleInvoiceReminders` rejects for that org so the reconcile sweep's
+ * per-org failure isolation can be proven. Disarmed it delegates to the real
+ * implementation, so every other test exercises the genuine scheduling code.
+ */
+const reminderActionsMock = vi.hoisted(() => ({ failForOrganisationId: "" }));
+
+vi.mock("../src/modules/reminders/reminder-actions.js", async (importOriginal) => {
+  const actual = await importOriginal<{
+    scheduleInvoiceReminders: typeof scheduleInvoiceReminders;
+  }>();
+  return {
+    ...actual,
+    scheduleInvoiceReminders: (
+      tx: Parameters<typeof scheduleInvoiceReminders>[0],
+      input: Parameters<typeof scheduleInvoiceReminders>[1],
+    ): ReturnType<typeof scheduleInvoiceReminders> => {
+      if (reminderActionsMock.failForOrganisationId === input.organisationId) {
+        return Promise.reject(new Error("forced reconcile failure (test double)"));
+      }
+      return actual.scheduleInvoiceReminders(tx, input);
+    },
+  };
+});
 
 /**
  * Reminder sequence (Slice 1.5; plan §3/§6): lazy default-sequence
@@ -596,5 +624,135 @@ describe("Reminders (Slice 1.5)", () => {
       });
       expect(after).toEqual(before);
     });
+
+    it("per-org failure isolation: one org's failure lands in `failed`, others still process, HTTP 200", async () => {
+      // Two fresh orgs, each holding a backfill candidate (active invoice,
+      // zero actions). The armed double fails ONLY the first org's scheduling.
+      const failingOrg = await createOrgWithMembers(owner, "reminders-fail", ["owner"]);
+      const healthyOrg = await createOrgWithMembers(owner, "reminders-ok", ["owner"]);
+      const failing = await createActiveInvoice(failingOrg.id, { dueInDays: 15 });
+      const healthy = await createActiveInvoice(healthyOrg.id, { dueInDays: 15 });
+
+      reminderActionsMock.failForOrganisationId = failingOrg.id;
+      let body: { processed: number; failed: string[] };
+      try {
+        const response = await reconcile(TEST_INTERNAL_API_SECRET).expect(200);
+        body = response.body as { processed: number; failed: string[] };
+      } finally {
+        reminderActionsMock.failForOrganisationId = "";
+      }
+
+      expect(body.failed).toContain(failingOrg.id);
+      expect(body.failed).not.toContain(healthyOrg.id);
+      expect(body.processed).toBeGreaterThanOrEqual(1);
+
+      // The failed org rolled back cleanly; the healthy org was backfilled.
+      expect(await owner.scheduledAction.count({ where: { invoiceId: failing.invoiceId } })).toBe(
+        0,
+      );
+      expect(await actionsOf(healthy.invoiceId)).toHaveLength(6);
+    });
+  });
+});
+
+describe("Reminders module: structural no-send guard (plan §8 risk 7)", () => {
+  it("no module file imports or references any email-sending/provider path", async () => {
+    const { readdirSync, readFileSync } = await import("node:fs");
+    const path = await import("node:path");
+    const moduleDir = path.resolve(__dirname, "../src/modules/reminders");
+    for (const file of readdirSync(moduleDir)) {
+      if (!file.endsWith(".ts")) continue;
+      const source = readFileSync(path.join(moduleDir, file), "utf8");
+      // 1.5 writes only the queue; sending arrives with 1.7 behind an
+      // integrations adapter — never scattered direct provider calls.
+      expect(source, `${file} must not reference sending/provider code`).not.toMatch(
+        /resend|sendgrid|nodemailer|@microsoft\/graph|sendMail|sendEmail|modules\/integrations/i,
+      );
+    }
+  });
+});
+
+describe("Contact spacing under concurrent activation (BRD 4.1)", () => {
+  let app: INestApplication;
+  let owner: EvaPrismaClient;
+  let org: FixtureOrg;
+  let financeToken: string;
+
+  beforeAll(async () => {
+    owner = createOwnerClient();
+    await seedTestDatabase(owner);
+    app = await createTestApp();
+    org = await createOrgWithMembers(owner, "reminders-spacing", ["finance"]);
+    const finance = org.members[0]!;
+    financeToken = await signToken({ sub: finance.authUserId, email: finance.email });
+    // Provision the sequence up front — this test races SCHEDULING, not
+    // first-touch provisioning (whose honest loud-failure path is documented
+    // in reminder-actions.ensureDefaultSequence).
+    await request(app.getHttpServer())
+      .get(`/organisations/${org.id}/reminder-sequence`)
+      .set("Authorization", `Bearer ${financeToken}`)
+      .expect(200);
+  });
+
+  afterAll(async () => {
+    await app.close();
+    await owner.$disconnect();
+  });
+
+  it("two concurrent activations for invoices sharing a contact honour the 3-day spacing invariant", async () => {
+    const suffix = randomUUID().slice(0, 8);
+    const customer = await owner.customer.create({
+      data: { organisationId: org.id, name: `REM Spacing Customer ${suffix}` },
+    });
+    const contact = await owner.contact.create({
+      data: {
+        organisationId: org.id,
+        customerId: customer.id,
+        name: `REM Spacing Contact ${suffix}`,
+        email: `rem-spacing-${suffix}@example.test`,
+      },
+    });
+    const dueDate = new Date(Date.now() + 10 * DAY_MS).toISOString().slice(0, 10);
+
+    const createDraft = async (invoiceNumber: string): Promise<string> => {
+      const response = await request(app.getHttpServer())
+        .post(`/organisations/${org.id}/customers/${customer.id}/invoices`)
+        .set("Authorization", `Bearer ${financeToken}`)
+        .send({ invoiceNumber, amountMinorUnits: 5000, dueDate, contactId: contact.id })
+        .expect(201);
+      return (response.body as { id: string }).id;
+    };
+    const activate = (id: string) =>
+      request(app.getHttpServer())
+        .post(`/organisations/${org.id}/customers/${customer.id}/invoices/${id}/activate`)
+        .set("Authorization", `Bearer ${financeToken}`)
+        .expect(200);
+
+    const [firstId, secondId] = await Promise.all([
+      createDraft(`REM-SP-A-${suffix}`),
+      createDraft(`REM-SP-B-${suffix}`),
+    ]);
+    // Same due date, same contact, activated concurrently: the advisory lock
+    // serialises the two scheduling transactions, so the loser's dates defer.
+    await Promise.all([activate(firstId), activate(secondId)]);
+
+    const rows = await owner.scheduledAction.findMany({
+      where: { invoiceId: { in: [firstId, secondId] }, status: { not: "cancelled" } },
+      include: { reminderStep: { select: { key: true } } },
+    });
+    expect(rows).toHaveLength(12);
+    // Per step, the two invoices' dates must be ≥3 days apart (same raw date
+    // for both — spacing must have separated them).
+    const keys = [...new Set(rows.map((row) => row.reminderStep.key))];
+    expect(keys).toHaveLength(6);
+    for (const key of keys) {
+      const dates = rows
+        .filter((row) => row.reminderStep.key === key)
+        .map((row) => row.scheduledDate.getTime());
+      expect(dates).toHaveLength(2);
+      expect(Math.abs(dates[0]! - dates[1]!), `step ${key} dates too close`).toBeGreaterThanOrEqual(
+        3 * DAY_MS,
+      );
+    }
   });
 });

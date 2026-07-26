@@ -55,11 +55,15 @@ function deriveForDate(
 }
 
 /**
- * Catch-up collapse + offsets (plan §3/§7.5). One ComputedAction per enabled
- * step at `dueDate + offsetDays` (pure UTC-day arithmetic), EXCEPT missed
- * steps (rawDate < today): only the missed step with the latest rawDate
- * survives, scheduled for today — a 40-day-overdue invoice gets the 30-day
- * reminder today, never a same-day 7+14+30 burst. Steps landing exactly
+ * Catch-up collapse + offsets (plan §3/§7.5; escalation survival ruled in
+ * plan §7.10). One ComputedAction per enabled step at `dueDate + offsetDays`
+ * (pure UTC-day arithmetic), EXCEPT missed steps (rawDate < today): the
+ * missed EMAIL steps collapse to only the latest missed email step,
+ * scheduled for today — a 40-day-overdue invoice gets the 30-day reminder
+ * today, never a same-day 7+14+30 burst. A missed `internal_escalation`
+ * step ALSO survives, scheduled for today alongside it (the human handover
+ * still fires even when every email stage was missed); if no email step was
+ * missed, only the escalation collapses to today. Steps landing exactly
  * today are NOT missed. The deterministic idempotency key (uuidv5 of
  * invoice + step + date) backs the unique (invoice, step, scheduled_date)
  * constraint — the BRD 4.1 duplicate-prevention mechanism.
@@ -80,13 +84,19 @@ export function computeInvoiceSchedule(input: {
 
   const survivors = raw.filter((r) => r.rawMs >= todayMs);
   const missed = raw.filter((r) => r.rawMs < todayMs);
-  if (missed.length > 0) {
-    const latestMissedMs = Math.max(...missed.map((r) => r.rawMs));
-    // Only the latest missed step collapses to today (a same-offset tie keeps
-    // both — deterministic; the 3-day spacing pass separates them).
-    for (const r of missed) {
+  // Latest missed EMAIL step collapses to today (a same-offset tie keeps
+  // both — deterministic; the 3-day spacing pass separates them).
+  const missedEmails = missed.filter((r) => r.step.actionType === "email");
+  if (missedEmails.length > 0) {
+    const latestMissedMs = Math.max(...missedEmails.map((r) => r.rawMs));
+    for (const r of missedEmails) {
       if (r.rawMs === latestMissedMs) survivors.push({ step: r.step, rawMs: todayMs });
     }
+  }
+  // A missed escalation is never collapsed away (plan §7.10).
+  for (const r of missed) {
+    if (r.step.actionType === "internal_escalation")
+      survivors.push({ step: r.step, rawMs: todayMs });
   }
 
   return survivors
@@ -102,7 +112,7 @@ export function computeInvoiceSchedule(input: {
     .sort((a, b) => a.scheduledDate.getTime() - b.scheduledDate.getTime());
 }
 
-/** RFC 4122 §4.1.3 DNS namespace — the uuidv5 default (plan §3). */
+/** RFC 4122 Appendix C namespace UUID for DNS (referenced from §4.3) — the uuidv5 default (plan §3). */
 const DNS_NAMESPACE = "6ba7b810-9dad-11d1-80b4-00c04fd430c8";
 
 /**

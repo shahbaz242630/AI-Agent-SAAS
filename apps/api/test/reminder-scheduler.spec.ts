@@ -42,8 +42,9 @@ function byStep(actions: ComputedAction[], key: ReminderStepKey): ComputedAction
 
 /**
  * Slice 1.5 scheduling engine units (plan §6): default offsets, catch-up
- * collapse (plan §7.5), DST boundaries, BRD 4.1 3-day per-contact spacing,
- * uuidv5 idempotency keys. Pure functions — no database involved.
+ * collapse (plan §7.5, escalation survival ruled in §7.10), DST boundaries,
+ * BRD 4.1 3-day per-contact spacing, uuidv5 idempotency keys. Pure
+ * functions — no database involved.
  */
 
 describe("uuidv5 (RFC 4122 §4.3, plan §4: zero new dependencies)", () => {
@@ -102,7 +103,7 @@ describe("computeInvoiceSchedule (plan §3/§7.4)", () => {
     expect(actions.find((a) => a.reminderStepId === "overdue_14")).toBeUndefined();
   });
 
-  it("catch-up collapse: all steps missed — only the latest survives, scheduled today, ready (plan §7.5)", () => {
+  it("catch-up collapse: all steps missed — latest missed EMAIL + the missed escalation both survive today, ready (plan §7.10)", () => {
     const today = day("2026-05-10");
     const dueDate = addDays(today, -40); // even final_escalation (+37) is missed
     const actions = computeInvoiceSchedule({
@@ -112,11 +113,45 @@ describe("computeInvoiceSchedule (plan §3/§7.4)", () => {
       today,
     });
 
-    expect(actions).toHaveLength(1);
-    expect(actions[0]).toMatchObject({
-      reminderStepId: "final_escalation", // latest missed rawDate (due + 37)
+    // Exactly TWO rows for today: the 30-day email (latest missed email —
+    // never a same-day 7+14+30 burst) AND the escalation (the human handover
+    // still fires even when every email stage was missed).
+    expect(actions).toHaveLength(2);
+    expect(byStep(actions, "overdue_30")).toMatchObject({
       scheduledDate: today,
       status: "ready",
+    });
+    expect(byStep(actions, "final_escalation")).toMatchObject({
+      scheduledDate: today,
+      status: "ready",
+    });
+  });
+
+  it("catch-up collapse: escalation missed with NO missed email — only the escalation collapses to today (plan §7.10)", () => {
+    const dueDate = day("2026-03-15");
+    const today = addDays(dueDate, 40); // final_escalation (+37) missed; the only email step (+90) is future
+    const actions = computeInvoiceSchedule({
+      invoiceId: "inv-1",
+      dueDate,
+      steps: defaultSteps({
+        pre_due_3: { enabled: false },
+        due_date: { enabled: false },
+        overdue_7: { enabled: false },
+        overdue_14: { enabled: false },
+        overdue_30: { offsetDays: 90 },
+      }),
+      today,
+    });
+
+    expect(actions).toHaveLength(2);
+    expect(byStep(actions, "final_escalation")).toMatchObject({
+      scheduledDate: today,
+      status: "ready",
+    });
+    // No email collapse happened — the future email keeps its raw date.
+    expect(byStep(actions, "overdue_30")).toMatchObject({
+      scheduledDate: addDays(dueDate, 90),
+      status: "pending",
     });
   });
 

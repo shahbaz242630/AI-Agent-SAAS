@@ -90,6 +90,13 @@ export async function scheduleInvoiceReminders(
   });
   if (!eligibility.eligible) return { scheduled: 0, skipped: eligibility.reason };
 
+  // Serialises concurrent scheduling for the same contact (transaction-scoped
+  // advisory lock keyed on the contact) so the BRD 4.1 3-day spacing invariant
+  // holds when two invoices for one contact are scheduled at once — the second
+  // transaction reads the first's committed occupied dates (whole-branch
+  // review finding).
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${contact!.id}))`;
+
   const sequence = await ensureDefaultSequence(tx, input.organisationId);
   const steps: ScheduleStep[] = sequence.steps.map((step) => ({
     id: step.id,
