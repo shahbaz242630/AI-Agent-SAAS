@@ -1140,4 +1140,53 @@ describe("Invoices: reminder scheduling hooks (Slice 1.5 — plan §3 recompute 
       scheduledAudit!.createdAt.getTime(),
     );
   });
+
+  it("create-as-active schedules immediately; ineligible contact → zero rows; draft → zero rows", async () => {
+    // An already-sent invoice created directly as Active gets the same
+    // schedule a Draft→Active activation would produce.
+    const contactId = await createContact(`hook-${randomUUID().slice(0, 8)}@example.test`);
+    const dueDate = orgDate(14);
+    const active = await request(app.getHttpServer())
+      .post(baseUrl())
+      .set("Authorization", `Bearer ${financeToken}`)
+      .send({
+        invoiceNumber: `HOOK-ACT-${randomUUID().slice(0, 8)}`,
+        amountMinorUnits: 5000,
+        dueDate,
+        contactId,
+        status: "active",
+      })
+      .expect(201);
+    expect(active.body.status).toBe("active");
+
+    const rows = await actionsOf(active.body.id);
+    expect(rows).toHaveLength(6);
+    const dueMs = new Date(dueDate).getTime();
+    for (const row of rows) {
+      const spec = DEFAULT_STEPS[row.reminderStep.key];
+      expect(spec, `unexpected step '${row.reminderStep.key}'`).toBeDefined();
+      expect(row.scheduledDate.getTime()).toBe(dueMs + spec!.offsetDays * DAY_MS);
+      expect(row.status).toBe("pending");
+      expect(row.createdBy).toBe(financeMember.id);
+    }
+
+    // Ineligible contact: the invoice is still created Active, schedule empty.
+    const ineligible = await request(app.getHttpServer())
+      .post(baseUrl())
+      .set("Authorization", `Bearer ${financeToken}`)
+      .send({
+        invoiceNumber: `HOOK-INEL-${randomUUID().slice(0, 8)}`,
+        amountMinorUnits: 5000,
+        dueDate: orgDate(14),
+        contactId: await createContact(null),
+        status: "active",
+      })
+      .expect(201);
+    expect(ineligible.body.status).toBe("active");
+    expect(await actionsOf(ineligible.body.id)).toHaveLength(0);
+
+    // Draft creates stay unscheduled.
+    const draftId = await createDraft({ contactId });
+    expect(await actionsOf(draftId)).toHaveLength(0);
+  });
 });

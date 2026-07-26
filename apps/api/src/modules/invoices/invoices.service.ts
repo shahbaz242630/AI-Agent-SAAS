@@ -128,6 +128,17 @@ export class InvoicesService {
         entityId: invoice.id,
         metadata: { customerId, invoiceNumber: invoice.invoiceNumber, status: invoice.status },
       });
+      // Slice 1.5: an invoice created directly as Active ("already sent") gets
+      // the same schedule a Draft→Active activation would — in the same
+      // transaction, so a scheduling failure rolls the create back too.
+      if (invoice.status === "active") {
+        await scheduleInvoiceReminders(tx, {
+          organisationId,
+          invoiceId: invoice.id,
+          timezone,
+          actorUserId: user.id,
+        });
+      }
       return this.toSummary(invoice, timezone);
     });
   }
@@ -294,6 +305,12 @@ export class InvoicesService {
           actorUserId,
         });
         break;
+      default: {
+        // Compile-time exhaustiveness: a future InvoiceAction must wire its
+        // schedule side effect here, not silently no-op.
+        const exhaustive: never = action;
+        throw new Error(`Unhandled invoice action '${exhaustive as string}'`);
+      }
     }
   }
 
