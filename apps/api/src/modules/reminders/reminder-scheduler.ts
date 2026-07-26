@@ -37,6 +37,24 @@ function yyyyMmDd(date: Date): string {
 }
 
 /**
+ * The single derivation of `status` (ready when scheduledDate <= today) and
+ * the BRD 4.1 idempotency key (uuidv5 of invoice + step + date) for a FINAL
+ * scheduledDate — shared by computeInvoiceSchedule and applyContactSpacing so
+ * a spacing-deferred date is re-derived identically to a freshly computed one.
+ */
+function deriveForDate(
+  invoiceId: string,
+  stepId: string,
+  scheduledDate: Date,
+  todayMs: number,
+): Pick<ComputedAction, "status" | "idempotencyKey"> {
+  return {
+    status: (scheduledDate.getTime() <= todayMs ? "ready" : "pending") as ComputedAction["status"],
+    idempotencyKey: uuidv5(`${invoiceId}:${stepId}:${yyyyMmDd(scheduledDate)}`),
+  };
+}
+
+/**
  * Catch-up collapse + offsets (plan §3/§7.5). One ComputedAction per enabled
  * step at `dueDate + offsetDays` (pure UTC-day arithmetic), EXCEPT missed
  * steps (rawDate < today): only the missed step with the latest rawDate
@@ -78,8 +96,7 @@ export function computeInvoiceSchedule(input: {
         reminderStepId: step.id,
         actionType: step.actionType,
         scheduledDate,
-        status: (rawMs <= todayMs ? "ready" : "pending") as ComputedAction["status"],
-        idempotencyKey: uuidv5(`${invoiceId}:${step.id}:${yyyyMmDd(scheduledDate)}`),
+        ...deriveForDate(invoiceId, step.id, scheduledDate, todayMs),
       };
     })
     .sort((a, b) => a.scheduledDate.getTime() - b.scheduledDate.getTime());
@@ -111,17 +128,20 @@ export function uuidv5(value: string, namespace: string = DNS_NAMESPACE): string
  * placed candidate (placed candidates join the occupied set). Dates only ever
  * shift forward, never backward. The input array is not mutated.
  *
- * NOTE for the persisting caller (Task 4): only `scheduledDate` is adjusted
- * here — a deferred candidate's `status` and `idempotencyKey` still reflect
- * its pre-spacing date, so re-derive both from the final date at insert time
- * (status vs today; key via uuidv5(invoiceId:reminderStepId:yyyyMmDd(date))).
+ * When (and only when) a candidate's date shifts, its `status` and
+ * `idempotencyKey` are re-derived from the FINAL date via the same
+ * `deriveForDate` derivation computeInvoiceSchedule uses — so every returned
+ * action is internally consistent and insert-ready. Unshifted candidates pass
+ * through untouched.
  */
 export function applyContactSpacing(
   candidates: ComputedAction[],
   occupiedDates: ReadonlyArray<Date>,
+  context: { invoiceId: string; today: Date },
   minGapDays = 3,
 ): ComputedAction[] {
   const gapMs = minGapDays * DAY_MS;
+  const todayMs = context.today.getTime();
   const occupied = occupiedDates.map((d) => d.getTime());
   const ordered = [...candidates].sort(
     (a, b) => a.scheduledDate.getTime() - b.scheduledDate.getTime(),
@@ -132,8 +152,12 @@ export function applyContactSpacing(
       dateMs += DAY_MS;
     }
     occupied.push(dateMs);
-    return dateMs === candidate.scheduledDate.getTime()
-      ? candidate
-      : { ...candidate, scheduledDate: new Date(dateMs) };
+    if (dateMs === candidate.scheduledDate.getTime()) return candidate;
+    const scheduledDate = new Date(dateMs);
+    return {
+      ...candidate,
+      scheduledDate,
+      ...deriveForDate(context.invoiceId, candidate.reminderStepId, scheduledDate, todayMs),
+    };
   });
 }

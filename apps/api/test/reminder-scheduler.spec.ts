@@ -301,20 +301,22 @@ describe("applyContactSpacing (BRD 4.1: minimum 3 days between reminders to the 
     };
   }
 
+  const CONTEXT = { invoiceId: "inv-1", today: day("2026-03-15") };
+
   it("leaves candidates unchanged when nothing conflicts", () => {
     const candidates = [action("a", "2026-03-12"), action("b", "2026-03-15")];
-    const spaced = applyContactSpacing(candidates, []);
+    const spaced = applyContactSpacing(candidates, [], CONTEXT);
     expect(spaced.map((a) => a.scheduledDate)).toEqual([day("2026-03-12"), day("2026-03-15")]);
   });
 
   it("defers a conflicting candidate day-by-day to the first clear day", () => {
-    const spaced = applyContactSpacing([action("a", "2026-03-15")], [day("2026-03-15")]);
+    const spaced = applyContactSpacing([action("a", "2026-03-15")], [day("2026-03-15")], CONTEXT);
     expect(spaced[0]!.scheduledDate).toEqual(day("2026-03-18"));
   });
 
   it("counts occupied dates just AFTER the candidate as conflicts too", () => {
     // 03-15..03-19 are all within 3 days of the occupied 03-17 → first clear is 03-20.
-    const spaced = applyContactSpacing([action("a", "2026-03-15")], [day("2026-03-17")]);
+    const spaced = applyContactSpacing([action("a", "2026-03-15")], [day("2026-03-17")], CONTEXT);
     expect(spaced[0]!.scheduledDate).toEqual(day("2026-03-20"));
   });
 
@@ -322,12 +324,17 @@ describe("applyContactSpacing (BRD 4.1: minimum 3 days between reminders to the 
     const spaced = applyContactSpacing(
       [action("a", "2026-03-15")],
       [day("2026-03-15"), day("2026-03-18")],
+      CONTEXT,
     );
     expect(spaced[0]!.scheduledDate).toEqual(day("2026-03-21"));
   });
 
   it("spaces multiple colliding candidates in ascending date order", () => {
-    const spaced = applyContactSpacing([action("b", "2026-03-15"), action("a", "2026-03-15")], []);
+    const spaced = applyContactSpacing(
+      [action("b", "2026-03-15"), action("a", "2026-03-15")],
+      [],
+      CONTEXT,
+    );
     expect(spaced.map((a) => a.scheduledDate)).toEqual([day("2026-03-15"), day("2026-03-18")]);
   });
 
@@ -340,23 +347,65 @@ describe("applyContactSpacing (BRD 4.1: minimum 3 days between reminders to the 
       steps: defaultSteps(),
       today,
     });
-    const spaced = applyContactSpacing(computed, []);
-    const dates = spaced.map((a) => ({ step: a.reminderStepId, date: a.scheduledDate }));
-    // First candidate in ascending order keeps today; the other defers by 3.
-    expect(dates.find((d) => d.step === "overdue_7")!.date).toEqual(today);
-    expect(dates.find((d) => d.step === "due_date")!.date).toEqual(addDays(today, 3));
+    const spaced = applyContactSpacing(computed, [], { invoiceId: "inv-1", today });
+    // First candidate in ascending order keeps today — untouched pass-through.
+    expect(spaced.find((a) => a.reminderStepId === "overdue_7")).toBe(
+      computed.find((a) => a.reminderStepId === "overdue_7"),
+    );
+    // The collapsed due_date action defers by 3 — fully re-derived for the final date.
+    const deferred = spaced.find((a) => a.reminderStepId === "due_date")!;
+    expect(deferred.scheduledDate).toEqual(day("2026-03-25"));
+    expect(deferred.status).toBe("pending"); // 03-25 > today
+    expect(deferred.idempotencyKey).toBe(uuidv5("inv-1:due_date:2026-03-25"));
     // Futures intact.
-    expect(dates.find((d) => d.step === "overdue_14")!.date).toEqual(addDays(dueDate, 14));
+    expect(spaced.find((a) => a.reminderStepId === "overdue_14")!.scheduledDate).toEqual(
+      addDays(dueDate, 14),
+    );
   });
 
   it("never shifts a candidate backward", () => {
-    const spaced = applyContactSpacing([action("a", "2026-03-22")], [day("2026-03-19")]);
+    const spaced = applyContactSpacing([action("a", "2026-03-22")], [day("2026-03-19")], CONTEXT);
     expect(spaced[0]!.scheduledDate).toEqual(day("2026-03-22")); // exactly 3 days clear
   });
 
   it("honours a custom minGapDays", () => {
-    const spaced = applyContactSpacing([action("a", "2026-03-15")], [day("2026-03-15")], 7);
+    const spaced = applyContactSpacing(
+      [action("a", "2026-03-15")],
+      [day("2026-03-15")],
+      CONTEXT,
+      7,
+    );
     expect(spaced[0]!.scheduledDate).toEqual(day("2026-03-22"));
+  });
+
+  it("re-derives status and idempotencyKey from the FINAL date when (and only when) a candidate shifts", () => {
+    const shifted: ComputedAction = {
+      reminderStepId: "a",
+      actionType: "email",
+      scheduledDate: day("2026-03-15"), // == today → ready
+      status: "ready",
+      idempotencyKey: uuidv5("inv-1:a:2026-03-15"),
+    };
+    const spaced = applyContactSpacing([shifted], [day("2026-03-15")], CONTEXT);
+    expect(spaced[0]).toEqual({
+      reminderStepId: "a",
+      actionType: "email",
+      scheduledDate: day("2026-03-18"),
+      status: "pending", // final date is after today
+      idempotencyKey: uuidv5("inv-1:a:2026-03-18"), // final date, same uuidv5 formula
+    });
+  });
+
+  it("passes an unshifted candidate through untouched (identity)", () => {
+    const candidate: ComputedAction = {
+      reminderStepId: "a",
+      actionType: "email",
+      scheduledDate: day("2026-03-15"),
+      status: "ready",
+      idempotencyKey: uuidv5("inv-1:a:2026-03-15"),
+    };
+    const spaced = applyContactSpacing([candidate], [], CONTEXT);
+    expect(spaced[0]).toBe(candidate);
   });
 
   it("does not mutate the input array or candidate objects", () => {
@@ -364,7 +413,11 @@ describe("applyContactSpacing (BRD 4.1: minimum 3 days between reminders to the 
       Object.freeze(c),
     );
     const frozenInput = Object.freeze([...candidates]);
-    const spaced = applyContactSpacing(frozenInput as ComputedAction[], [day("2026-03-16")]);
+    const spaced = applyContactSpacing(
+      frozenInput as ComputedAction[],
+      [day("2026-03-16")],
+      CONTEXT,
+    );
     expect(candidates[0]!.scheduledDate).toEqual(day("2026-03-15"));
     expect(candidates[1]!.scheduledDate).toEqual(day("2026-03-15"));
     expect(spaced).toHaveLength(2);
