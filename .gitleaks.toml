@@ -1,0 +1,18 @@
+# Gitleaks configuration (Slice 1.5) — extends the default ruleset; nothing here
+# weakens detection of real secrets. CI runs this via gitleaks-action (ci.yml).
+
+[extend]
+useDefault = true
+
+# Allowlist ONLY the two fake, publicly-documented placeholder values used in
+# test fixtures and .env.example (both also carry inline `gitleaks:allow`
+# comments, but gitleaks-action scans full branch history, so old commits need
+# this value-level suppression). regexTarget = "secret" matches the detected
+# secret value itself, not surrounding code.
+[allowlist]
+description = "Fake test/placeholder secrets only — never real credentials"
+regexTarget = "secret"
+regexes = [
+  '''^test-internal-secret-0123456789abcdef$''',
+  '''^local-dev-only-internal-secret-change-me$''',
+]
