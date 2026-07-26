@@ -295,6 +295,35 @@ describe("Reminders (Slice 1.5)", () => {
       const moved = live.find((action) => action.reminderStepId === overdue7);
       expect(ymd(moved!.scheduledDate)).toBe(expectedDate);
 
+      // Audit on every mutation (BRD 15): the recompute writes one
+      // reminder_action.cancelled and one reminder_action.scheduled per
+      // affected invoice, counts + entity ids only (BRD 14).
+      const cancelAudit = await owner.auditLog.findFirst({
+        where: {
+          organisationId: org.id,
+          action: "reminder_action.cancelled",
+          entityType: "invoice",
+          entityId: fixture.invoiceId,
+        },
+        orderBy: { createdAt: "desc" },
+      });
+      expect(cancelAudit).toBeDefined();
+      expect(cancelAudit?.metadata).toMatchObject({ cancelledCount: 6, reason: "recompute" });
+      const scheduleAudit = await owner.auditLog.findFirst({
+        where: {
+          organisationId: org.id,
+          action: "reminder_action.scheduled",
+          entityType: "invoice",
+          entityId: fixture.invoiceId,
+        },
+        orderBy: { createdAt: "desc" },
+      });
+      expect(scheduleAudit).toBeDefined();
+      expect(scheduleAudit?.metadata).toMatchObject({ scheduledCount: 6 });
+      const auditBlob = JSON.stringify([cancelAudit?.metadata, scheduleAudit?.metadata]);
+      expect(auditBlob).not.toContain("@");
+      expect(auditBlob).not.toContain(invoice.invoiceNumber);
+
       // restore the default offset for later tests
       await patchStep(org, "finance", overdue7, { offsetDays: 7 }).expect(200);
     });

@@ -1,5 +1,4 @@
 import { NotFoundException } from "@nestjs/common";
-import { Prisma } from "@eva/database";
 import { DEFAULT_REMINDER_STEPS } from "@eva/types";
 import type { TenantTx } from "../../common/permissions/permissions.js";
 import { writeAuditLog } from "../../common/audit/audit-log.js";
@@ -23,40 +22,35 @@ import {
  */
 
 /** Lazily provisions the org's default sequence from DEFAULT_REMINDER_STEPS
- *  (BRD 4.1). Idempotent: the partial unique index on (organisation_id)
- *  WHERE is_default makes a concurrent first-touch safe — the loser re-reads. */
+ *  (BRD 4.1). Idempotent per org: existing rows are re-used, and the partial
+ *  unique index (one live default per org, migration 0009) makes duplicates
+ *  impossible. A concurrent first-touch race CANNOT be recovered here: every
+ *  caller runs inside a $transaction, so the loser's unique violation aborts
+ *  its transaction (25P02) — the request (or one sweep org, via per-org
+ *  failure isolation) fails loudly and self-heals on retry / the next sweep.
+ *  That outcome is rare, safe and honest; there is no silent retry path. */
 export async function ensureDefaultSequence(tx: TenantTx, organisationId: string) {
   const existing = await tx.reminderSequence.findFirst({
     where: { organisationId, isDefault: true, deletedAt: null },
     include: { steps: { where: { deletedAt: null } } },
   });
   if (existing) return existing;
-  try {
-    return await tx.reminderSequence.create({
-      data: {
-        organisationId,
-        name: "Default reminder sequence",
-        isDefault: true,
-        steps: {
-          create: DEFAULT_REMINDER_STEPS.map((step) => ({
-            organisationId,
-            key: step.key,
-            offsetDays: step.offsetDays,
-            actionType: step.actionType,
-          })),
-        },
+  return await tx.reminderSequence.create({
+    data: {
+      organisationId,
+      name: "Default reminder sequence",
+      isDefault: true,
+      steps: {
+        create: DEFAULT_REMINDER_STEPS.map((step) => ({
+          organisationId,
+          key: step.key,
+          offsetDays: step.offsetDays,
+          actionType: step.actionType,
+        })),
       },
-      include: { steps: { where: { deletedAt: null } } },
-    });
-  } catch (error) {
-    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
-      return await tx.reminderSequence.findFirstOrThrow({
-        where: { organisationId, isDefault: true, deletedAt: null },
-        include: { steps: { where: { deletedAt: null } } },
-      });
-    }
-    throw error;
-  }
+    },
+    include: { steps: { where: { deletedAt: null } } },
+  });
 }
 
 export interface ScheduleInput {

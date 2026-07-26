@@ -177,6 +177,10 @@ export class RemindersService {
 
       // (b) Final-reminder escalation hands over to a human (plan §3). The
       // unique scheduled_action_id dedups repeats across sweep runs.
+      // Concurrency assumption: a SINGLE daily reconcile schedule. Two
+      // concurrent runs would collide on that unique key here, roll back THIS
+      // org's transaction into `failed` (per-org failure isolation below) and
+      // self-heal on the next run — never a duplicate escalation.
       const escalationActions = await tx.scheduledAction.findMany({
         where: { status: "ready", actionType: "internal_escalation", humanEscalation: null },
       });
