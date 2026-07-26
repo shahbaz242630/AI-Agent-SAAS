@@ -131,53 +131,36 @@ export async function scheduleInvoiceReminders(
   const spaced = applyContactSpacing(candidates, occupied, { invoiceId: invoice.id, today });
   if (spaced.length === 0) return { scheduled: 0, skipped: null };
 
-  const rows = spaced.map((action) => ({
-    organisationId: input.organisationId,
-    invoiceId: invoice.id,
-    reminderStepId: action.reminderStepId,
-    actionType: action.actionType,
-    scheduledDate: action.scheduledDate,
-    status: action.status,
-    idempotencyKey: action.idempotencyKey,
-    createdBy: input.actorUserId ?? null,
-  }));
-  // Unique (invoice_id, reminder_step_id, scheduled_date) makes retries
-  // idempotent (BRD 4.1): live slots (pending/ready/claimed/sent/…) are
-  // skipped and NEVER touched.
-  const inserted = await tx.scheduledAction.createMany({ data: rows, skipDuplicates: true });
-  // A conflicting slot in `cancelled` is a leftover of an earlier recompute
-  // (cancel + schedule — plan §7.5): re-slot it with the re-derived status
-  // and idempotency key (the brief's per-row-upsert rule; conditioned on
-  // status so genuine retries over live rows stay no-ops).
-  let revived = 0;
-  for (const action of spaced) {
-    const result = await tx.scheduledAction.updateMany({
-      where: {
-        invoiceId: invoice.id,
-        reminderStepId: action.reminderStepId,
-        scheduledDate: action.scheduledDate,
-        status: "cancelled",
-      },
-      data: {
-        status: action.status,
-        idempotencyKey: action.idempotencyKey,
-        actionType: action.actionType,
-      },
-    });
-    revived += result.count;
-  }
-  const count = inserted.count + revived;
-  if (count > 0) {
+  // Always insert FRESH rows (founder ruling 2026-07-26): cancelled is
+  // terminal — a cancelled slot is simply re-filled (the partial unique index
+  // of migration 0011 covers live rows only). skipDuplicates against live
+  // slots keeps genuine retries idempotent (BRD 4.1) — a re-run never throws
+  // and never duplicates; live rows (pending/ready/claimed/sent/…) are NEVER
+  // touched.
+  const result = await tx.scheduledAction.createMany({
+    data: spaced.map((action) => ({
+      organisationId: input.organisationId,
+      invoiceId: invoice.id,
+      reminderStepId: action.reminderStepId,
+      actionType: action.actionType,
+      scheduledDate: action.scheduledDate,
+      status: action.status,
+      idempotencyKey: action.idempotencyKey,
+      createdBy: input.actorUserId ?? null,
+    })),
+    skipDuplicates: true,
+  });
+  if (result.count > 0) {
     await writeAuditLog(tx, {
       organisationId: input.organisationId,
       actorUserId: input.actorUserId ?? null,
       action: "reminder_action.scheduled",
       entityType: "invoice",
       entityId: invoice.id,
-      metadata: { scheduledCount: count },
+      metadata: { scheduledCount: result.count },
     });
   }
-  return { scheduled: count, skipped: null };
+  return { scheduled: result.count, skipped: null };
 }
 
 /** Cancels the invoice's live queue rows (pending/ready → cancelled). */

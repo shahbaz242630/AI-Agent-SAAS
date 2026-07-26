@@ -272,17 +272,19 @@ describe("Reminders (Slice 1.5)", () => {
       const firstRound = await actionsOf(fixture.invoiceId);
       expect(firstRound).toHaveLength(6);
       expect(firstRound.every((action) => action.status === "pending")).toBe(true);
+      const firstRoundIds = new Set(firstRound.map((action) => action.id));
 
       await patchStep(org, "finance", overdue7, { offsetDays: 11 }).expect(200);
       const secondRound = await actionsOf(fixture.invoiceId);
       const live = secondRound.filter((action) => action.status !== "cancelled");
       const cancelled = secondRound.filter((action) => action.status === "cancelled");
-      // Only the edited step's old slot stays cancelled; unchanged (step, date)
-      // slots are re-slotted in place (the unique constraint holds them), so
-      // the full six-stage queue is live again per the new config.
-      expect(cancelled).toHaveLength(1);
-      expect(cancelled[0]?.reminderStepId).toBe(overdue7);
+      // cancelled is terminal (founder ruling 2026-07-26): the whole first
+      // round stays cancelled, and the replacement round is six FRESH rows —
+      // recompute is always cancel + insert-new, never a revive.
+      expect(cancelled).toHaveLength(6);
+      expect(cancelled.every((action) => firstRoundIds.has(action.id))).toBe(true);
       expect(live).toHaveLength(6);
+      expect(live.every((action) => !firstRoundIds.has(action.id))).toBe(true);
       expect(live.every((action) => action.status === "pending")).toBe(true);
 
       // The edited step fires at due_date + 11 (org-local calendar day).
