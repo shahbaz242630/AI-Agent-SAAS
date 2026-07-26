@@ -443,8 +443,11 @@ model ScheduledAction {
   reminderStep    ReminderStep     @relation(fields: [reminderStepId], references: [id], onDelete: Cascade)
   humanEscalation HumanEscalation?
 
-  /// BRD 4.1 duplicate prevention.
-  @@unique([invoiceId, reminderStepId, scheduledDate], map: "scheduled_actions_invoice_step_date_key")
+  /// BRD 4.1 duplicate prevention over LIVE rows only: uniqueness of
+  /// (invoice_id, reminder_step_id, scheduled_date) WHERE status <> 'cancelled'
+  /// is enforced by a partial unique index (migration 0011, the 0009
+  /// precedent). A cancelled slot can be re-filled by a fresh insert —
+  /// cancelled is terminal, rows are never revived.
   @@index([organisationId])
   @@index([status, scheduledDate])
   @@map("scheduled_actions")

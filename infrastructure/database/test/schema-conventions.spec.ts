@@ -317,7 +317,7 @@ describe("Schema conventions (BRD 10)", () => {
     await prisma.reminderSequence.delete({ where: { id: sequence.id } });
   });
 
-  it("BRD 4.1 duplicate prevention: two concurrent schedules of the same (invoice, step, date) — exactly one succeeds", async () => {
+  it("BRD 4.1 duplicate prevention: two concurrent LIVE schedules of the same (invoice, step, date) — exactly one succeeds", async () => {
     const { invoice, step } = await scheduledActionFixture();
     const scheduledDate = new Date();
     const data = {
@@ -350,6 +350,43 @@ describe("Schema conventions (BRD 10)", () => {
 
     // Fixture hygiene: invoice delete cascades actions → escalations; sequence
     // delete cascades steps; then remove the customer.
+    await prisma.invoice.delete({ where: { id: invoice.id } });
+    await prisma.reminderSequence.delete({ where: { id: step.sequenceId } });
+    await prisma.customer.delete({ where: { id: invoice.customerId } });
+  });
+
+  it("a cancelled slot CAN be re-inserted: partial unique index covers live rows only (migration 0011, founder ruling)", async () => {
+    const { invoice, step } = await scheduledActionFixture();
+    const scheduledDate = new Date();
+    const data = {
+      organisationId: DEMO_ORGANISATION_ID,
+      invoiceId: invoice.id,
+      reminderStepId: step.id,
+      actionType: "email",
+      scheduledDate,
+      idempotencyKey: randomUUID(),
+    };
+    const original = await prisma.scheduledAction.create({ data });
+    // cancelled is terminal — the row stays, but its (invoice, step, date)
+    // slot is free for a fresh row.
+    await prisma.scheduledAction.update({
+      where: { id: original.id },
+      data: { status: "cancelled" },
+    });
+    const replacement = await prisma.scheduledAction.create({
+      data: { ...data, idempotencyKey: randomUUID() },
+    });
+    expect(replacement.id).not.toBe(original.id);
+
+    const untouched = await prisma.scheduledAction.findUniqueOrThrow({
+      where: { id: original.id },
+    });
+    expect(untouched.status).toBe("cancelled");
+
+    // …while TWO live rows for the slot are still refused.
+    await expect(prisma.scheduledAction.create({ data })).rejects.toThrow();
+
+    // Fixture hygiene.
     await prisma.invoice.delete({ where: { id: invoice.id } });
     await prisma.reminderSequence.delete({ where: { id: step.sequenceId } });
     await prisma.customer.delete({ where: { id: invoice.customerId } });
