@@ -15,6 +15,8 @@ const baseEnv: WorkerEnv = {
   LOG_LEVEL: "info",
   TRIGGER_PROJECT_REF: "proj_test",
   SENTRY_DSN_WORKER: "https://public@o0.ingest.de.sentry.io/0",
+  API_BASE_URL: "http://localhost:3001",
+  INTERNAL_API_SECRET: "test-only-internal-secret-0123456789abcdef",
 };
 
 describe("worker initSentry (BRD 14)", () => {
