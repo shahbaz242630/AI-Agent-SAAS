@@ -2,7 +2,10 @@ import { describe, expect, it } from "vitest";
 import { loadEnv } from "@eva/configuration";
 import { apiEnvSchema } from "../src/config/env.js";
 
-const REQUIRED_ENV = { SUPABASE_URL: "https://test.supabase.local" };
+const REQUIRED_ENV = {
+  SUPABASE_URL: "https://test.supabase.local",
+  INTERNAL_API_SECRET: "test-internal-secret-0123456789abcdef", // gitleaks:allow — fake test fixture
+};
 
 describe("api env validation", () => {
   it("applies documented defaults for a minimal environment", () => {
@@ -17,6 +20,14 @@ describe("api env validation", () => {
   it("requires SUPABASE_URL and validates it as a URL", () => {
     expect(() => loadEnv(apiEnvSchema, {})).toThrow();
     expect(() => loadEnv(apiEnvSchema, { SUPABASE_URL: "not-a-url" })).toThrow();
+  });
+
+  it("requires INTERNAL_API_SECRET with at least 32 characters (Slice 1.5 internal endpoints)", () => {
+    const { INTERNAL_API_SECRET: _omitted, ...withoutSecret } = REQUIRED_ENV;
+    expect(() => loadEnv(apiEnvSchema, withoutSecret)).toThrow();
+    expect(() =>
+      loadEnv(apiEnvSchema, { ...REQUIRED_ENV, INTERNAL_API_SECRET: "too-short" }),
+    ).toThrow();
   });
 
   it("coerces PORT from string and rejects invalid values", () => {

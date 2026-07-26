@@ -52,6 +52,8 @@ export const PERMISSION_KEYS = [
   "imports:write",
   "permissions:read",
   "permissions:manage",
+  "reminders:read",
+  "reminders:write",
 ] as const;
 
 export type PermissionKey = (typeof PERMISSION_KEYS)[number];
@@ -74,10 +76,13 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<OrganisationRole, readonly Permiss
     "invoices:write",
     "imports:read",
     "imports:write",
+    // BRD §6: finance configures reminder sequences; everyone reads them.
+    "reminders:read",
+    "reminders:write",
   ],
-  sales: ["customers:read", "contacts:read", "invoices:read", "imports:read"],
-  reception: ["customers:read", "contacts:read", "invoices:read", "imports:read"],
-  read_only: ["customers:read", "contacts:read", "invoices:read", "imports:read"],
+  sales: ["customers:read", "contacts:read", "invoices:read", "imports:read", "reminders:read"],
+  reception: ["customers:read", "contacts:read", "invoices:read", "imports:read", "reminders:read"],
+  read_only: ["customers:read", "contacts:read", "invoices:read", "imports:read", "reminders:read"],
 };
 
 // --- Slice 1.2: invoice records ---
@@ -256,3 +261,114 @@ export const MODULE_IDS = [
 ] as const;
 
 export type ModuleId = (typeof MODULE_IDS)[number];
+
+// --- Slice 1.5: reminder sequence ---
+
+/**
+ * The six reminder stages (BRD 4.1; plan §3/§7.1) — CHECK constraint in
+ * migration 0009. `final_escalation` is the internal handover to a human, not
+ * a customer-facing email.
+ */
+export const REMINDER_STEP_KEYS = [
+  "pre_due_3",
+  "due_date",
+  "overdue_7",
+  "overdue_14",
+  "overdue_30",
+  "final_escalation",
+] as const;
+
+export type ReminderStepKey = (typeof REMINDER_STEP_KEYS)[number];
+
+/** What a scheduled action does when it fires (plan §3) — CHECK in 0009. */
+export const REMINDER_ACTION_TYPES = ["email", "internal_escalation"] as const;
+
+export type ReminderActionType = (typeof REMINDER_ACTION_TYPES)[number];
+
+/**
+ * The full scheduled-action lifecycle (plan §3 — CHECK constraint in
+ * migration 0009): slice 1.5 writes only pending/ready/cancelled;
+ * claimed/sent/failed/skipped are driven by 1.7 via conditional-update claim.
+ */
+export const SCHEDULED_ACTION_STATUSES = [
+  "pending",
+  "ready",
+  "claimed",
+  "sent",
+  "failed",
+  "skipped",
+  "cancelled",
+] as const;
+
+export type ScheduledActionStatus = (typeof SCHEDULED_ACTION_STATUSES)[number];
+
+/** Human escalation lifecycle (plan §3) — CHECK constraint in migration 0009. */
+export const HUMAN_ESCALATION_STATUSES = ["open", "resolved"] as const;
+
+export type HumanEscalationStatus = (typeof HUMAN_ESCALATION_STATUSES)[number];
+
+/**
+ * The default stage definitions (BRD 4.1; plan §3/§7.1) — the single source
+ * of truth the API provisions for each organisation. Offsets are days
+ * relative to the invoice due_date (negative = before); `final_escalation`
+ * fires at +37, seven days after the last email stage.
+ */
+export const DEFAULT_REMINDER_STEPS: ReadonlyArray<{
+  key: ReminderStepKey;
+  offsetDays: number;
+  actionType: ReminderActionType;
+}> = [
+  { key: "pre_due_3", offsetDays: -3, actionType: "email" },
+  { key: "due_date", offsetDays: 0, actionType: "email" },
+  { key: "overdue_7", offsetDays: 7, actionType: "email" },
+  { key: "overdue_14", offsetDays: 14, actionType: "email" },
+  { key: "overdue_30", offsetDays: 30, actionType: "email" },
+  { key: "final_escalation", offsetDays: 37, actionType: "internal_escalation" },
+];
+
+/** One reminder step as the API exposes it (plan §3). */
+export interface ReminderStepDto {
+  id: string;
+  key: ReminderStepKey;
+  /** Days relative to the invoice due_date (negative = before). */
+  offsetDays: number;
+  actionType: ReminderActionType;
+  enabled: boolean;
+}
+
+/** GET .../reminder-sequence — the org's sequence with its steps (plan §3). */
+export interface ReminderSequenceDto {
+  id: string;
+  name: string;
+  isDefault: boolean;
+  steps: ReminderStepDto[];
+}
+
+/** One scheduled action as the API exposes it (plan §3). */
+export interface ScheduledActionDto {
+  id: string;
+  invoiceId: string;
+  reminderStepId: string;
+  actionType: ReminderActionType;
+  /** Calendar date (YYYY-MM-DD) in the organisation timezone. */
+  scheduledDate: string;
+  status: ScheduledActionStatus;
+  idempotencyKey: string;
+}
+
+/** One human escalation as the API exposes it (plan §3). */
+export interface HumanEscalationDto {
+  id: string;
+  invoiceId: string;
+  scheduledActionId: string;
+  reason: string;
+  status: HumanEscalationStatus;
+  /** ISO-8601 UTC timestamp; null until resolved. */
+  resolvedAt: string | null;
+  /** Resolving user's id; null until resolved. */
+  resolvedBy: string | null;
+  /** Resolution notes; null until supplied. */
+  notes: string | null;
+  /** ISO-8601 UTC timestamp. */
+  createdAt: string;
+}

@@ -57,6 +57,10 @@ const TENANT_TABLES = [
   "invoice_documents",
   "suppression_list",
   "organisation_role_permissions",
+  "reminder_sequences",
+  "reminder_steps",
+  "scheduled_actions",
+  "human_escalations",
 ];
 
 describe("RLS: connection role hardening", () => {
@@ -79,7 +83,8 @@ describe("RLS: connection role hardening", () => {
         'organisations', 'organisation_settings', 'organisation_memberships',
         'users', 'audit_logs', 'customers', 'contacts', 'invoices',
         'imports', 'import_rows', 'invoice_documents', 'suppression_list',
-        'organisation_role_permissions'
+        'organisation_role_permissions', 'reminder_sequences', 'reminder_steps',
+        'scheduled_actions', 'human_escalations'
       )`;
     expect(rows.length).toBe(TENANT_TABLES.length);
     for (const row of rows) {
@@ -95,7 +100,8 @@ describe("RLS: connection role hardening", () => {
         'organisations', 'organisation_settings', 'organisation_memberships',
         'users', 'audit_logs', 'customers', 'contacts', 'invoices',
         'imports', 'import_rows', 'invoice_documents', 'suppression_list',
-        'organisation_role_permissions'
+        'organisation_role_permissions', 'reminder_sequences', 'reminder_steps',
+        'scheduled_actions', 'human_escalations'
       )
       GROUP BY tablename`;
     expect(rows.length).toBe(TENANT_TABLES.length);
@@ -113,11 +119,59 @@ describe("RLS: cross-tenant attacks are refused by Postgres itself", () => {
     "invoice_documents",
     "suppression_list",
     "organisation_role_permissions",
+    "reminder_sequences",
+    "reminder_steps",
+    "scheduled_actions",
+    "human_escalations",
   ])("tenant A cannot SELECT tenant B's %s", async (table) => {
     const visible = await asTenant(ORG_A, async (tx) =>
       tx.$queryRawUnsafe<{ id: string }[]>(`SELECT id FROM ${table}`),
     );
     expect(visible).toEqual([]);
+  });
+
+  it("tenant A cannot INSERT a reminder sequence carrying tenant B's organisation_id", async () => {
+    await expect(
+      asTenant(
+        ORG_A,
+        async (tx) =>
+          tx.$executeRaw`INSERT INTO reminder_sequences (organisation_id, name)
+            VALUES (${ORG_B}::uuid, 'PWN')`,
+      ),
+    ).rejects.toThrow();
+  });
+
+  it("tenant A cannot INSERT a reminder step carrying tenant B's organisation_id", async () => {
+    await expect(
+      asTenant(
+        ORG_A,
+        async (tx) =>
+          tx.$executeRaw`INSERT INTO reminder_steps (organisation_id, sequence_id, key, offset_days, action_type)
+            VALUES (${ORG_B}::uuid, ${randomUUID()}::uuid, 'due_date', 0, 'email')`,
+      ),
+    ).rejects.toThrow();
+  });
+
+  it("tenant A cannot INSERT a scheduled action carrying tenant B's organisation_id", async () => {
+    await expect(
+      asTenant(
+        ORG_A,
+        async (tx) =>
+          tx.$executeRaw`INSERT INTO scheduled_actions (organisation_id, invoice_id, reminder_step_id, action_type, scheduled_date, idempotency_key)
+            VALUES (${ORG_B}::uuid, ${randomUUID()}::uuid, ${randomUUID()}::uuid, 'email', CURRENT_DATE, ${randomUUID()})`,
+      ),
+    ).rejects.toThrow();
+  });
+
+  it("tenant A cannot INSERT a human escalation carrying tenant B's organisation_id", async () => {
+    await expect(
+      asTenant(
+        ORG_A,
+        async (tx) =>
+          tx.$executeRaw`INSERT INTO human_escalations (organisation_id, invoice_id, scheduled_action_id, reason)
+            VALUES (${ORG_B}::uuid, ${randomUUID()}::uuid, ${randomUUID()}::uuid, 'final_reminder_escalation')`,
+      ),
+    ).rejects.toThrow();
   });
 
   it("tenant A cannot INSERT an invoice carrying tenant B's organisation_id", async () => {
@@ -178,6 +232,37 @@ describe("RLS: cross-tenant attacks are refused by Postgres itself", () => {
       async (tx) => tx.$executeRaw`DELETE FROM customers WHERE organisation_id = ${ORG_B}::uuid`,
     );
     expect(Number(count)).toBe(0);
+  });
+
+  it.each(["reminder_sequences", "reminder_steps", "scheduled_actions", "human_escalations"])(
+    "tenant A cannot UPDATE tenant B's %s rows",
+    async (table) => {
+      const count = await asTenant(ORG_A, async (tx) =>
+        tx.$queryRawUnsafe(
+          `UPDATE ${table} SET created_by = created_by WHERE organisation_id = '${ORG_B}'::uuid`,
+        ),
+      );
+      expect(Number(count)).toBe(0);
+    },
+  );
+
+  it.each(["reminder_sequences", "reminder_steps", "scheduled_actions", "human_escalations"])(
+    "tenant A cannot DELETE tenant B's %s rows",
+    async (table) => {
+      const count = await asTenant(ORG_A, async (tx) =>
+        tx.$queryRawUnsafe(`DELETE FROM ${table} WHERE organisation_id = '${ORG_B}'::uuid`),
+      );
+      expect(Number(count)).toBe(0);
+    },
+  );
+});
+
+describe("RLS: list_active_organisations sweep enumeration (migration 0010, plan §7.8)", () => {
+  it("eva_app can EXECUTE the SECURITY DEFINER function without tenant context", async () => {
+    // The ONLY controlled cross-tenant enumeration path: returns org ids, not rows.
+    const rows = await prisma.$queryRaw<{ list_active_organisations: string }[]>`
+      SELECT * FROM list_active_organisations()`;
+    expect(Array.isArray(rows)).toBe(true);
   });
 });
 

@@ -292,3 +292,21 @@ export const confirmImportRequestSchema = z.object({
 });
 
 export type ConfirmImportRequest = z.infer<typeof confirmImportRequestSchema>;
+
+// --- Slice 1.5: reminder sequence ---
+
+/**
+ * PATCH .../reminder-sequence/steps/:stepId payload (Slice 1.5, plan §3):
+ * toggle a step and/or shift its offset. Offsets stay within −30…+90 days
+ * relative to the invoice due_date; at least one field is required.
+ */
+export const updateReminderStepSchema = z
+  .object({
+    enabled: z.boolean().optional(),
+    offsetDays: z.number().int().min(-30).max(90).optional(),
+  })
+  .refine((body) => body.enabled !== undefined || body.offsetDays !== undefined, {
+    message: "at least one of enabled or offsetDays is required",
+  });
+
+export type UpdateReminderStepInput = z.infer<typeof updateReminderStepSchema>;

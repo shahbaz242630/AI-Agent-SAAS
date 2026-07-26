@@ -34,6 +34,10 @@ model Organisation {
   invoiceDocuments InvoiceDocument[]
   suppressionList SuppressionEntry[]
   rolePermissions OrganisationRolePermission[]
+  reminderSequences ReminderSequence[]
+  reminderSteps     ReminderStep[]
+  scheduledActions  ScheduledAction[]
+  humanEscalations  HumanEscalation[]
 
   @@map("organisations")
 }
@@ -205,6 +209,8 @@ model Invoice {
   contact          Contact?     @relation(fields: [contactId], references: [id], onDelete: SetNull)
   importRows       ImportRow[]
   invoiceDocuments InvoiceDocument[]
+  scheduledActions ScheduledAction[]
+  humanEscalations HumanEscalation[]
 
   @@index([organisationId])
   @@index([customerId])
@@ -357,4 +363,117 @@ model OrganisationRolePermission {
 
   @@unique([organisationId, roleId, permissionKey])
   @@map("organisation_role_permissions")
+}
+
+// --- Slice 1.5: reminder sequence (BRD 4.1/10; Phase 1.5 plan §3) ---
+
+/// The organisation's reminder sequence of BRD 4.1 stages (plan §3). One
+/// default per organisation among LIVE rows is enforced by a partial unique
+/// index (migration 0009), so a soft-deleted default can be replaced.
+model ReminderSequence {
+  id             String          @id @default(uuid()) @db.Uuid
+  organisationId String          @map("organisation_id") @db.Uuid
+  name           String
+  isDefault      Boolean         @default(false) @map("is_default")
+  createdAt      DateTime        @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime        @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy      String?         @map("created_by") @db.Uuid
+  deletedAt      DateTime?       @map("deleted_at") @db.Timestamptz(6)
+  organisation   Organisation    @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+  steps          ReminderStep[]
+
+  @@index([organisationId])
+  @@map("reminder_sequences")
+}
+
+/// One BRD 4.1 stage of a sequence (plan §3). key is one of pre_due_3 |
+/// due_date | overdue_7 | overdue_14 | overdue_30 | final_escalation and
+/// action_type one of email | internal_escalation (CHECK constraints in
+/// migration 0009). offset_days is relative to the invoice due_date
+/// (negative = before). organisation_id is denormalised onto every
+/// tenant-owned row so the RLS tenant_isolation policy stays uniform (the
+/// contacts precedent). Uniqueness of key per sequence among live rows is
+/// enforced by a partial unique index (migration 0009).
+model ReminderStep {
+  id               String            @id @default(uuid()) @db.Uuid
+  organisationId   String            @map("organisation_id") @db.Uuid
+  sequenceId       String            @map("sequence_id") @db.Uuid
+  key              String
+  offsetDays       Int               @map("offset_days")
+  actionType       String            @map("action_type")
+  enabled          Boolean           @default(true)
+  createdAt        DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime          @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy        String?           @map("created_by") @db.Uuid
+  deletedAt        DateTime?         @map("deleted_at") @db.Timestamptz(6)
+  organisation     Organisation      @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+  sequence         ReminderSequence  @relation(fields: [sequenceId], references: [id], onDelete: Cascade)
+  scheduledActions ScheduledAction[]
+
+  @@index([organisationId])
+  @@index([sequenceId])
+  @@map("reminder_steps")
+}
+
+/// One durable send-queue row: a reminder (or internal escalation) due on an
+/// org-local calendar day (plan §3). status is the full lifecycle — pending |
+/// ready | claimed | sent | failed | skipped | cancelled (CHECK constraint in
+/// migration 0009, the 1.2 invoice-status precedent); slice 1.5 writes only
+/// pending/ready/cancelled, 1.7 drives the rest. action_type is denormalised
+/// from the step so escalations fire without a step join. UNIQUE
+/// (invoice_id, reminder_step_id, scheduled_date) is the BRD 4.1 mandatory
+/// duplicate prevention; idempotency_key is the deterministic uuidv5 of
+/// invoice+step+date, generated app-side. No deleted_at: a lifecycle/queue
+/// record — cancelled is terminal.
+model ScheduledAction {
+  id              String           @id @default(uuid()) @db.Uuid
+  organisationId  String           @map("organisation_id") @db.Uuid
+  invoiceId       String           @map("invoice_id") @db.Uuid
+  reminderStepId  String           @map("reminder_step_id") @db.Uuid
+  actionType      String           @map("action_type")
+  /// The org-local calendar day the action is due (like invoices.due_date).
+  scheduledDate   DateTime         @map("scheduled_date") @db.Date
+  status          String           @default("pending")
+  idempotencyKey  String           @map("idempotency_key")
+  createdAt       DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime         @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy       String?          @map("created_by") @db.Uuid
+  organisation    Organisation     @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+  invoice         Invoice          @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  reminderStep    ReminderStep     @relation(fields: [reminderStepId], references: [id], onDelete: Cascade)
+  humanEscalation HumanEscalation?
+
+  /// BRD 4.1 duplicate prevention over LIVE rows only: uniqueness of
+  /// (invoice_id, reminder_step_id, scheduled_date) WHERE status <> 'cancelled'
+  /// is enforced by a partial unique index (migration 0011, the 0009
+  /// precedent). A cancelled slot can be re-filled by a fresh insert —
+  /// cancelled is terminal, rows are never revived.
+  @@index([organisationId])
+  @@index([status, scheduledDate])
+  @@map("scheduled_actions")
+}
+
+/// A platform workflow record raised when the final reminder fires (plan §3).
+/// scheduled_action_id is UNIQUE — one escalation per fired step (the dedup).
+/// status is open | resolved (CHECK constraint in migration 0009); resolution
+/// is its lifecycle, so no deleted_at.
+model HumanEscalation {
+  id                String          @id @default(uuid()) @db.Uuid
+  organisationId    String          @map("organisation_id") @db.Uuid
+  invoiceId         String          @map("invoice_id") @db.Uuid
+  scheduledActionId String          @unique @map("scheduled_action_id") @db.Uuid
+  reason            String
+  status            String          @default("open")
+  resolvedAt        DateTime?       @map("resolved_at") @db.Timestamptz(6)
+  resolvedBy        String?         @map("resolved_by") @db.Uuid
+  notes             String?
+  createdAt         DateTime        @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime        @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy         String?         @map("created_by") @db.Uuid
+  organisation      Organisation    @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+  invoice           Invoice         @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  scheduledAction   ScheduledAction @relation(fields: [scheduledActionId], references: [id], onDelete: Cascade)
+
+  @@index([organisationId])
+  @@map("human_escalations")
 }
