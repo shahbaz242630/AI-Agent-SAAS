@@ -147,6 +147,95 @@ describe("withTenant — app-layer tenant context (BRD 15)", () => {
       tx.invoiceDocument.delete({ where: { id: documentId } }),
     );
   });
+
+  it("scopes reminder sequences, steps, scheduled actions and escalations to the active tenant (Slice 1.5)", async () => {
+    const ids = { customer: randomUUID(), sequence: randomUUID(), action: randomUUID() };
+    await withTenant(
+      app,
+      { organisationId: DEMO_ORGANISATION_ID, userId: DEMO_USER_ID },
+      async (tx) => {
+        const customer = await tx.customer.create({
+          data: {
+            id: ids.customer,
+            organisationId: DEMO_ORGANISATION_ID,
+            name: "Reminder Fixture Ltd",
+          },
+        });
+        const invoice = await tx.invoice.create({
+          data: {
+            organisationId: DEMO_ORGANISATION_ID,
+            customerId: customer.id,
+            invoiceNumber: `REM-${randomUUID().slice(0, 8)}`,
+            amountMinorUnits: 100,
+            issueDate: new Date(),
+            dueDate: new Date(),
+          },
+        });
+        await tx.reminderSequence.create({
+          data: {
+            id: ids.sequence,
+            organisationId: DEMO_ORGANISATION_ID,
+            name: "Default",
+            isDefault: true,
+          },
+        });
+        const step = await tx.reminderStep.create({
+          data: {
+            organisationId: DEMO_ORGANISATION_ID,
+            sequenceId: ids.sequence,
+            key: "due_date",
+            offsetDays: 0,
+            actionType: "email",
+          },
+        });
+        await tx.scheduledAction.create({
+          data: {
+            id: ids.action,
+            organisationId: DEMO_ORGANISATION_ID,
+            invoiceId: invoice.id,
+            reminderStepId: step.id,
+            actionType: "email",
+            scheduledDate: new Date(),
+            idempotencyKey: randomUUID(),
+          },
+        });
+        await tx.humanEscalation.create({
+          data: {
+            organisationId: DEMO_ORGANISATION_ID,
+            invoiceId: invoice.id,
+            scheduledActionId: ids.action,
+            reason: "final_reminder_escalation",
+          },
+        });
+      },
+    );
+
+    const visibleToSecond = await withTenant(
+      app,
+      { organisationId: SECOND_ORG_ID, userId: DEMO_USER_ID },
+      async (tx) => ({
+        sequences: await tx.reminderSequence.findMany(),
+        steps: await tx.reminderStep.findMany(),
+        actions: await tx.scheduledAction.findMany(),
+        escalations: await tx.humanEscalation.findMany(),
+      }),
+    );
+    expect(visibleToSecond.sequences).toEqual([]);
+    expect(visibleToSecond.steps).toEqual([]);
+    expect(visibleToSecond.actions).toEqual([]);
+    expect(visibleToSecond.escalations).toEqual([]);
+
+    // Fixture hygiene: deleting the customer cascades invoice → scheduled
+    // action → escalation; deleting the sequence cascades to its steps.
+    await withTenant(
+      app,
+      { organisationId: DEMO_ORGANISATION_ID, userId: DEMO_USER_ID },
+      async (tx) => {
+        await tx.customer.delete({ where: { id: ids.customer } });
+        await tx.reminderSequence.delete({ where: { id: ids.sequence } });
+      },
+    );
+  });
 });
 
 describe("withUser — login path (resolve my memberships before picking an org)", () => {

@@ -1,4 +1,7 @@
 import { randomUUID } from "node:crypto";
+import { existsSync, readdirSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createPrismaClient, type EvaPrismaClient } from "../src/client.js";
 import { DEMO_ORGANISATION_ID, seed } from "../src/seed.js";
@@ -43,8 +46,36 @@ async function invoiceFixtureCustomer() {
   });
 }
 
+/** Self-sufficient fixture: invoice + reminder step to schedule actions against. */
+async function scheduledActionFixture() {
+  const customer = await invoiceFixtureCustomer();
+  const invoice = await prisma.invoice.create({
+    data: {
+      organisationId: customer.organisationId,
+      customerId: customer.id,
+      invoiceNumber: `REM-${randomUUID().slice(0, 8)}`,
+      amountMinorUnits: 100,
+      issueDate: new Date(),
+      dueDate: new Date(),
+    },
+  });
+  const sequence = await prisma.reminderSequence.create({
+    data: { organisationId: customer.organisationId, name: `SEQ-${randomUUID().slice(0, 8)}` },
+  });
+  const step = await prisma.reminderStep.create({
+    data: {
+      organisationId: customer.organisationId,
+      sequenceId: sequence.id,
+      key: "due_date",
+      offsetDays: 0,
+      actionType: "email",
+    },
+  });
+  return { customer, invoice, sequence, step };
+}
+
 describe("Schema conventions (BRD 10)", () => {
-  it("creates exactly the Phase 0 + Slice 1.1 + Slice 1.2 + Slice 1.3 + Slice 1.4 tables", async () => {
+  it("creates exactly the Phase 0 + Slice 1.1 + Slice 1.2 + Slice 1.3 + Slice 1.4 + Slice 1.5 tables", async () => {
     const rows = await prisma.$queryRaw<{ table_name: string }[]>`
       SELECT table_name FROM information_schema.tables
       WHERE table_schema = 'public' AND table_type = 'BASE TABLE'`;
@@ -53,6 +84,7 @@ describe("Schema conventions (BRD 10)", () => {
       "audit_logs",
       "contacts",
       "customers",
+      "human_escalations",
       "import_rows",
       "imports",
       "invoice_documents",
@@ -61,7 +93,10 @@ describe("Schema conventions (BRD 10)", () => {
       "organisation_role_permissions",
       "organisation_settings",
       "organisations",
+      "reminder_sequences",
+      "reminder_steps",
       "roles",
+      "scheduled_actions",
       "suppression_list",
       "users",
     ]);
@@ -79,6 +114,10 @@ describe("Schema conventions (BRD 10)", () => {
     "invoice_documents",
     "suppression_list",
     "organisation_role_permissions",
+    "reminder_sequences",
+    "reminder_steps",
+    "scheduled_actions",
+    "human_escalations",
   ])("tenant-owned table %s has a non-nullable organisation_id", async (table) => {
     const cols = await columnsOf(table);
     const orgColumn = cols.find((c) => c.column_name === "organisation_id");
@@ -98,6 +137,10 @@ describe("Schema conventions (BRD 10)", () => {
     "import_rows",
     "invoice_documents",
     "organisation_role_permissions",
+    "reminder_sequences",
+    "reminder_steps",
+    "scheduled_actions",
+    "human_escalations",
   ])("mutable table %s carries created_at/updated_at/created_by", async (table) => {
     const names = (await columnsOf(table)).map((c) => c.column_name);
     for (const col of ["created_at", "updated_at", "created_by"]) {
@@ -105,17 +148,29 @@ describe("Schema conventions (BRD 10)", () => {
     }
   });
 
-  it.each(["customers", "contacts", "invoices", "imports", "invoice_documents"])(
-    "soft-deletable table %s has deleted_at",
-    async (table) => {
-      const names = (await columnsOf(table)).map((c) => c.column_name);
-      expect(names).toContain("deleted_at");
-    },
-  );
+  it.each([
+    "customers",
+    "contacts",
+    "invoices",
+    "imports",
+    "invoice_documents",
+    "reminder_sequences",
+    "reminder_steps",
+  ])("soft-deletable table %s has deleted_at", async (table) => {
+    const names = (await columnsOf(table)).map((c) => c.column_name);
+    expect(names).toContain("deleted_at");
+  });
 
   it("import_rows has no deleted_at: lifecycle follows the parent import (plan §3)", async () => {
     const names = (await columnsOf("import_rows")).map((c) => c.column_name);
     expect(names).not.toContain("deleted_at");
+  });
+
+  it("scheduled_actions and human_escalations have no deleted_at: lifecycle records, cancelled/resolved is terminal (plan §3)", async () => {
+    for (const table of ["scheduled_actions", "human_escalations"]) {
+      const names = (await columnsOf(table)).map((c) => c.column_name);
+      expect(names, `${table} must not have deleted_at`).not.toContain("deleted_at");
+    }
   });
 
   it("imports stores only csv/xlsx file types and the four stored statuses (CHECK constraints)", async () => {
@@ -156,6 +211,158 @@ describe("Schema conventions (BRD 10)", () => {
     expect(statusCheck).toBeDefined();
     for (const status of ["uploaded", "extracted", "confirmed", "failed"]) {
       expect(statusCheck?.pg_get_constraintdef).toContain(`'${status}'`);
+    }
+  });
+
+  it("reminder_steps stores only the six BRD 4.1 stage keys and two action types (CHECK constraints)", async () => {
+    const rows = await prisma.$queryRaw<{ conname: string; pg_get_constraintdef: string }[]>`
+      SELECT conname, pg_get_constraintdef(oid)
+      FROM pg_constraint
+      WHERE conrelid = 'reminder_steps'::regclass AND contype = 'c'`;
+    const keyCheck = rows.find((r) => r.pg_get_constraintdef.includes("key"));
+    expect(keyCheck).toBeDefined();
+    for (const key of [
+      "pre_due_3",
+      "due_date",
+      "overdue_7",
+      "overdue_14",
+      "overdue_30",
+      "final_escalation",
+    ]) {
+      expect(keyCheck?.pg_get_constraintdef).toContain(`'${key}'`);
+    }
+    const actionTypeCheck = rows.find((r) => r.pg_get_constraintdef.includes("action_type"));
+    expect(actionTypeCheck).toBeDefined();
+    for (const actionType of ["email", "internal_escalation"]) {
+      expect(actionTypeCheck?.pg_get_constraintdef).toContain(`'${actionType}'`);
+    }
+  });
+
+  it("scheduled_actions stores the full seven-state lifecycle and two action types (CHECK constraints)", async () => {
+    const rows = await prisma.$queryRaw<{ conname: string; pg_get_constraintdef: string }[]>`
+      SELECT conname, pg_get_constraintdef(oid)
+      FROM pg_constraint
+      WHERE conrelid = 'scheduled_actions'::regclass AND contype = 'c'`;
+    const statusCheck = rows.find((r) => r.pg_get_constraintdef.includes("status"));
+    expect(statusCheck).toBeDefined();
+    for (const status of [
+      "pending",
+      "ready",
+      "claimed",
+      "sent",
+      "failed",
+      "skipped",
+      "cancelled",
+    ]) {
+      expect(statusCheck?.pg_get_constraintdef).toContain(`'${status}'`);
+    }
+    const actionTypeCheck = rows.find((r) => r.pg_get_constraintdef.includes("action_type"));
+    expect(actionTypeCheck).toBeDefined();
+    for (const actionType of ["email", "internal_escalation"]) {
+      expect(actionTypeCheck?.pg_get_constraintdef).toContain(`'${actionType}'`);
+    }
+  });
+
+  it("human_escalations stores only open/resolved statuses (CHECK constraint)", async () => {
+    const rows = await prisma.$queryRaw<{ conname: string; pg_get_constraintdef: string }[]>`
+      SELECT conname, pg_get_constraintdef(oid)
+      FROM pg_constraint
+      WHERE conrelid = 'human_escalations'::regclass AND contype = 'c'`;
+    const statusCheck = rows.find((r) => r.pg_get_constraintdef.includes("status"));
+    expect(statusCheck).toBeDefined();
+    for (const status of ["open", "resolved"]) {
+      expect(statusCheck?.pg_get_constraintdef).toContain(`'${status}'`);
+    }
+  });
+
+  it("one default reminder sequence per org among live rows (partial unique index)", async () => {
+    const base = {
+      organisationId: DEMO_ORGANISATION_ID,
+      name: `SEQ-${randomUUID().slice(0, 8)}`,
+      isDefault: true,
+    };
+    const first = await prisma.reminderSequence.create({ data: base });
+    await expect(prisma.reminderSequence.create({ data: base })).rejects.toThrow();
+    // A soft-deleted default no longer blocks a new one.
+    await prisma.reminderSequence.update({
+      where: { id: first.id },
+      data: { deletedAt: new Date() },
+    });
+    const second = await prisma.reminderSequence.create({ data: base });
+    // Fixture hygiene: deleting the sequence cascades to its steps.
+    await prisma.reminderSequence.deleteMany({ where: { name: base.name } });
+    expect(second.isDefault).toBe(true);
+  });
+
+  it("reminder step keys are unique per sequence among live rows (partial unique index)", async () => {
+    const sequence = await prisma.reminderSequence.create({
+      data: {
+        organisationId: DEMO_ORGANISATION_ID,
+        name: `SEQ-${randomUUID().slice(0, 8)}`,
+      },
+    });
+    const step = {
+      organisationId: DEMO_ORGANISATION_ID,
+      sequenceId: sequence.id,
+      key: "due_date",
+      offsetDays: 0,
+      actionType: "email",
+    };
+    const first = await prisma.reminderStep.create({ data: step });
+    await expect(prisma.reminderStep.create({ data: step })).rejects.toThrow();
+    // A soft-deleted step's key can be reused.
+    await prisma.reminderStep.update({ where: { id: first.id }, data: { deletedAt: new Date() } });
+    await prisma.reminderStep.create({ data: step });
+    // Fixture hygiene: deleting the sequence cascades to its steps.
+    await prisma.reminderSequence.delete({ where: { id: sequence.id } });
+  });
+
+  it("BRD 4.1 duplicate prevention: two concurrent schedules of the same (invoice, step, date) — exactly one succeeds", async () => {
+    const { invoice, step } = await scheduledActionFixture();
+    const scheduledDate = new Date();
+    const data = {
+      organisationId: DEMO_ORGANISATION_ID,
+      invoiceId: invoice.id,
+      reminderStepId: step.id,
+      actionType: "email",
+      scheduledDate,
+      idempotencyKey: randomUUID(),
+    };
+    const results = await Promise.allSettled([
+      prisma.scheduledAction.create({ data }),
+      prisma.scheduledAction.create({ data }),
+    ]);
+    expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+    expect(results.filter((r) => r.status === "rejected")).toHaveLength(1);
+
+    // One escalation per fired step: the unique scheduled_action_id is the dedup.
+    const [action] = await prisma.scheduledAction.findMany({
+      where: { invoiceId: invoice.id, reminderStepId: step.id, scheduledDate },
+    });
+    const escalation = {
+      organisationId: DEMO_ORGANISATION_ID,
+      invoiceId: invoice.id,
+      scheduledActionId: action!.id,
+      reason: "final_reminder_escalation",
+    };
+    await prisma.humanEscalation.create({ data: escalation });
+    await expect(prisma.humanEscalation.create({ data: escalation })).rejects.toThrow();
+
+    // Fixture hygiene: invoice delete cascades actions → escalations; sequence
+    // delete cascades steps; then remove the customer.
+    await prisma.invoice.delete({ where: { id: invoice.id } });
+    await prisma.reminderSequence.delete({ where: { id: step.sequenceId } });
+    await prisma.customer.delete({ where: { id: invoice.customerId } });
+  });
+
+  it("every migration ships rollback guidance (forward-only convention, BRD 18)", () => {
+    const migrationsDir = fileURLToPath(new URL("../prisma/migrations", import.meta.url));
+    for (const entry of readdirSync(migrationsDir, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      expect(
+        existsSync(path.join(migrationsDir, entry.name, "ROLLBACK.md")),
+        `${entry.name} is missing ROLLBACK.md`,
+      ).toBe(true);
     }
   });
 
