@@ -355,6 +355,88 @@ describe("Schema conventions (BRD 10)", () => {
     await prisma.customer.delete({ where: { id: invoice.customerId } });
   });
 
+  it("list_active_organisations is SECURITY DEFINER, EXECUTE granted to eva_app only (migration 0010, plan §7.8)", async () => {
+    const fn = await prisma.$queryRaw<{ prosecdef: boolean; prorettype: string }[]>`
+      SELECT p.prosecdef, pg_catalog.pg_get_function_result(p.oid) AS prorettype
+      FROM pg_proc p
+      WHERE p.proname = 'list_active_organisations' AND p.pronargs = 0`;
+    expect(fn).toHaveLength(1);
+    expect(fn[0]?.prosecdef, "function must be SECURITY DEFINER").toBe(true);
+    expect(fn[0]?.prorettype).toBe("SETOF uuid");
+
+    const appGrant = await prisma.$queryRaw<{ has: boolean }[]>`
+      SELECT has_function_privilege('eva_app', 'list_active_organisations()', 'EXECUTE') AS has`;
+    expect(appGrant[0]?.has, "eva_app must hold EXECUTE").toBe(true);
+    // PUBLIC is a pseudo-role (aclexplode grantee 0), not checkable via
+    // has_function_privilege — inspect the function ACL directly.
+    const acl = await prisma.$queryRaw<{ grantee: number; privilege_type: string }[]>`
+      SELECT a.grantee::int AS grantee, a.privilege_type
+      FROM pg_proc p CROSS JOIN LATERAL aclexplode(p.proacl) a
+      WHERE p.proname = 'list_active_organisations' AND p.pronargs = 0`;
+    expect(
+      acl.some((entry) => entry.grantee === 0),
+      "PUBLIC must not appear in the function ACL",
+    ).toBe(false);
+  });
+
+  it("list_active_organisations returns only orgs with at least one live active invoice", async () => {
+    const suffix = randomUUID().slice(0, 8);
+    const orgNone = await prisma.organisation.create({ data: { name: `LAO-none-${suffix}` } });
+    const orgDraft = await prisma.organisation.create({ data: { name: `LAO-draft-${suffix}` } });
+    const orgActive = await prisma.organisation.create({ data: { name: `LAO-active-${suffix}` } });
+    const draftCustomer = await prisma.customer.create({
+      data: { organisationId: orgDraft.id, name: `LAO draft customer ${suffix}` },
+    });
+    const activeCustomer = await prisma.customer.create({
+      data: { organisationId: orgActive.id, name: `LAO active customer ${suffix}` },
+    });
+    // A draft invoice does NOT qualify the org.
+    await prisma.invoice.create({
+      data: {
+        organisationId: orgDraft.id,
+        customerId: draftCustomer.id,
+        invoiceNumber: `LAO-D-${suffix}`,
+        amountMinorUnits: 100,
+        issueDate: new Date(),
+        dueDate: new Date(),
+      },
+    });
+    const activeInvoice = await prisma.invoice.create({
+      data: {
+        organisationId: orgActive.id,
+        customerId: activeCustomer.id,
+        invoiceNumber: `LAO-A-${suffix}`,
+        amountMinorUnits: 100,
+        issueDate: new Date(),
+        dueDate: new Date(),
+        status: "active",
+      },
+    });
+
+    const listIds = async (): Promise<string[]> => {
+      const rows = await prisma.$queryRaw<{ list_active_organisations: string }[]>`
+        SELECT * FROM list_active_organisations()`;
+      return rows.map((row) => row.list_active_organisations);
+    };
+
+    const ids = await listIds();
+    expect(ids).toContain(orgActive.id);
+    expect(ids).not.toContain(orgNone.id);
+    expect(ids).not.toContain(orgDraft.id);
+
+    // A soft-deleted active invoice no longer qualifies the org.
+    await prisma.invoice.update({
+      where: { id: activeInvoice.id },
+      data: { deletedAt: new Date() },
+    });
+    expect(await listIds()).not.toContain(orgActive.id);
+
+    // Fixture hygiene: org deletes cascade customers/invoices.
+    await prisma.organisation.deleteMany({
+      where: { id: { in: [orgNone.id, orgDraft.id, orgActive.id] } },
+    });
+  });
+
   it("every migration ships rollback guidance (forward-only convention, BRD 18)", () => {
     const migrationsDir = fileURLToPath(new URL("../prisma/migrations", import.meta.url));
     for (const entry of readdirSync(migrationsDir, { withFileTypes: true })) {

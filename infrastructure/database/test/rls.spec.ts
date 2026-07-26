@@ -257,6 +257,15 @@ describe("RLS: cross-tenant attacks are refused by Postgres itself", () => {
   );
 });
 
+describe("RLS: list_active_organisations sweep enumeration (migration 0010, plan §7.8)", () => {
+  it("eva_app can EXECUTE the SECURITY DEFINER function without tenant context", async () => {
+    // The ONLY controlled cross-tenant enumeration path: returns org ids, not rows.
+    const rows = await prisma.$queryRaw<{ list_active_organisations: string }[]>`
+      SELECT * FROM list_active_organisations()`;
+    expect(Array.isArray(rows)).toBe(true);
+  });
+});
+
 describe("RLS: suppression list permanence (BRD hard rule)", () => {
   it("runtime role has UPDATE and DELETE revoked on suppression_list", async () => {
     await expect(
