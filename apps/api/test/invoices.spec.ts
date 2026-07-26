@@ -1,8 +1,9 @@
 import { randomUUID } from "node:crypto";
 import type { INestApplication } from "@nestjs/common";
 import request from "supertest";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { EvaPrismaClient } from "@eva/database";
+import type { scheduleInvoiceReminders } from "../src/modules/reminders/reminder-actions.js";
 import {
   createOrgWithMembers,
   createOwnerClient,
@@ -12,6 +13,33 @@ import {
   type FixtureOrg,
   type FixtureUser,
 } from "./support.js";
+
+/**
+ * Minimal module-boundary double (plan §6 transactionality binding — the ONLY
+ * mock in this file): when armed, `scheduleInvoiceReminders` rejects so the
+ * activation hook fails mid-transaction and the test can prove the status
+ * change rolls back with it. Disarmed it delegates to the real implementation,
+ * so every other test in this file exercises the genuine scheduling code.
+ */
+const reminderActionsMock = vi.hoisted(() => ({ failScheduling: false }));
+
+vi.mock("../src/modules/reminders/reminder-actions.js", async (importOriginal) => {
+  const actual = await importOriginal<{
+    scheduleInvoiceReminders: typeof scheduleInvoiceReminders;
+  }>();
+  return {
+    ...actual,
+    scheduleInvoiceReminders: (
+      tx: Parameters<typeof scheduleInvoiceReminders>[0],
+      input: Parameters<typeof scheduleInvoiceReminders>[1],
+    ): ReturnType<typeof scheduleInvoiceReminders> => {
+      if (reminderActionsMock.failScheduling) {
+        return Promise.reject(new Error("forced scheduling failure (test double)"));
+      }
+      return actual.scheduleInvoiceReminders(tx, input);
+    },
+  };
+});
 
 /**
  * Invoice records (Slice 1.2). Routes are nested under
@@ -789,5 +817,327 @@ describe("Invoices: due-date derivation unit boundaries (BRD 13 — DST)", () =>
     for (const status of ["draft", "paused", "cancelled", "paid", "disputed"]) {
       expect(deriveDisplayStatus({ status, dueDate: overdue }, "Europe/London", now)).toBe(status);
     }
+  });
+});
+
+describe("Invoices: reminder scheduling hooks (Slice 1.5 — plan §3 recompute triggers)", () => {
+  // The 1.2 PATCH is Draft-only (requireDraft), so no API path can change the
+  // due_date of an ACTIVE invoice — the plan §3 "due-date edit" recompute
+  // trigger has no live path to hook. What IS guaranteed here: a due-date
+  // edit before activation is honoured by schedule-at-activation.
+  let app: INestApplication;
+  let owner: EvaPrismaClient;
+  let org: FixtureOrg;
+  let customerId: string;
+  let financeMember: FixtureUser;
+  let financeToken: string;
+
+  const DAY_MS = 86_400_000;
+  const baseUrl = () => `/organisations/${org.id}/customers/${customerId}/invoices`;
+
+  /** The six BRD 4.1 default stages (order-independent assertions). */
+  const DEFAULT_STEPS: Record<string, { offsetDays: number; actionType: string }> = {
+    pre_due_3: { offsetDays: -3, actionType: "email" },
+    due_date: { offsetDays: 0, actionType: "email" },
+    overdue_7: { offsetDays: 7, actionType: "email" },
+    overdue_14: { offsetDays: 14, actionType: "email" },
+    overdue_30: { offsetDays: 30, actionType: "email" },
+    final_escalation: { offsetDays: 37, actionType: "internal_escalation" },
+  };
+
+  interface ScheduledRow {
+    id: string;
+    organisationId: string;
+    status: string;
+    actionType: string;
+    scheduledDate: Date;
+    createdBy: string | null;
+    reminderStep: { key: string; offsetDays: number };
+  }
+
+  /** YYYY-MM-DD of a UTC-midnight @db.Date value. */
+  function ymd(date: Date): string {
+    return date.toISOString().slice(0, 10);
+  }
+
+  /** Fresh contact per invoice so the 3-day per-contact spacing never interferes. */
+  async function createContact(email: string | null): Promise<string> {
+    const contact = await owner.contact.create({
+      data: {
+        id: randomUUID(),
+        organisationId: org.id,
+        customerId,
+        name: "Hook Contact",
+        email,
+        createdBy: financeMember.id,
+      },
+    });
+    return contact.id;
+  }
+
+  async function createDraft(
+    options: { contactId?: string; dueDate?: string } = {},
+  ): Promise<string> {
+    const response = await request(app.getHttpServer())
+      .post(baseUrl())
+      .set("Authorization", `Bearer ${financeToken}`)
+      .send({
+        invoiceNumber: `HOOK-${randomUUID().slice(0, 8)}`,
+        amountMinorUnits: 5000,
+        dueDate: options.dueDate ?? orgDate(14),
+        ...(options.contactId !== undefined ? { contactId: options.contactId } : {}),
+      })
+      .expect(201);
+    return response.body.id;
+  }
+
+  function transition(id: string, action: string): request.Test {
+    return request(app.getHttpServer())
+      .post(`${baseUrl()}/${id}/${action}`)
+      .set("Authorization", `Bearer ${financeToken}`);
+  }
+
+  async function actionsOf(invoiceId: string): Promise<ScheduledRow[]> {
+    return owner.scheduledAction.findMany({
+      where: { invoiceId },
+      include: { reminderStep: { select: { key: true, offsetDays: true } } },
+      orderBy: [{ scheduledDate: "asc" }, { createdAt: "asc" }],
+    });
+  }
+
+  beforeAll(async () => {
+    owner = createOwnerClient();
+    await seedTestDatabase(owner);
+    app = await createTestApp();
+    org = await createOrgWithMembers(owner, "invoices-hooks", ["owner", "finance"]);
+    financeMember = org.members.find((m) => m.roleKey === "finance")!;
+    financeToken = await signToken({ sub: financeMember.authUserId, email: financeMember.email });
+    customerId = (
+      await owner.customer.create({
+        data: {
+          id: randomUUID(),
+          organisationId: org.id,
+          name: "Reminder Hooks Customer",
+          createdBy: org.members.find((m) => m.roleKey === "owner")!.id,
+        },
+      })
+    ).id;
+  });
+
+  afterAll(async () => {
+    await app.close();
+    await owner.$disconnect();
+  });
+
+  it("activate schedules all six default steps at due-date offsets (future due → all pending)", async () => {
+    const contactId = await createContact(`hook-${randomUUID().slice(0, 8)}@example.test`);
+    const dueDate = orgDate(14);
+    const id = await createDraft({ contactId, dueDate });
+    await transition(id, "activate").expect(200);
+
+    const rows = await actionsOf(id);
+    expect(rows).toHaveLength(6);
+    const dueMs = new Date(dueDate).getTime();
+    for (const row of rows) {
+      const spec = DEFAULT_STEPS[row.reminderStep.key];
+      expect(spec, `unexpected step '${row.reminderStep.key}'`).toBeDefined();
+      expect(row.scheduledDate.getTime()).toBe(dueMs + spec!.offsetDays * DAY_MS);
+      expect(row.status).toBe("pending");
+      expect(row.actionType).toBe(spec!.actionType);
+      expect(row.organisationId).toBe(org.id);
+      expect(row.createdBy).toBe(financeMember.id);
+    }
+  });
+
+  it("activate marks a today-due row ready and future rows pending", async () => {
+    // Due in 3 days: pre_due_3 lands exactly today; every other step is ≥3
+    // days further out, so per-contact spacing never defers anything.
+    const contactId = await createContact(`hook-${randomUUID().slice(0, 8)}@example.test`);
+    const dueDate = orgDate(3);
+    const id = await createDraft({ contactId, dueDate });
+    await transition(id, "activate").expect(200);
+
+    const rows = await actionsOf(id);
+    expect(rows).toHaveLength(6);
+    const byKey = new Map(rows.map((row) => [row.reminderStep.key, row]));
+    expect(ymd(byKey.get("pre_due_3")!.scheduledDate)).toBe(orgDate(0));
+    expect(byKey.get("pre_due_3")!.status).toBe("ready");
+    const dueMs = new Date(dueDate).getTime();
+    for (const key of ["due_date", "overdue_7", "overdue_14", "overdue_30", "final_escalation"]) {
+      const row = byKey.get(key)!;
+      expect(row.status).toBe("pending");
+      expect(row.scheduledDate.getTime()).toBe(dueMs + row.reminderStep.offsetDays * DAY_MS);
+    }
+  });
+
+  it("activate of an overdue invoice collapses missed steps: only the latest, for today", async () => {
+    // Due 5 days ago: pre_due_3 (−8) and due_date (−5) are both missed — only
+    // the latest (due_date) survives, scheduled for today as ready; the
+    // earlier missed step gets NO row (plan §3 catch-up collapse).
+    const contactId = await createContact(`hook-${randomUUID().slice(0, 8)}@example.test`);
+    const id = await createDraft({ contactId, dueDate: orgDate(-5) });
+    await transition(id, "activate").expect(200);
+
+    const rows = await actionsOf(id);
+    const byKey = new Map(rows.map((row) => [row.reminderStep.key, row]));
+    expect(byKey.has("pre_due_3")).toBe(false);
+    expect(rows).toHaveLength(5);
+    const collapsed = byKey.get("due_date")!;
+    expect(ymd(collapsed.scheduledDate)).toBe(orgDate(0));
+    expect(collapsed.status).toBe("ready");
+    for (const key of ["overdue_7", "overdue_14", "overdue_30", "final_escalation"]) {
+      const row = byKey.get(key)!;
+      expect(row.status).toBe("pending");
+      expect(row.scheduledDate.getTime()).toBeGreaterThan(collapsed.scheduledDate.getTime());
+    }
+  });
+
+  it("a repeated activate is a 409 and never duplicates scheduled rows", async () => {
+    const contactId = await createContact(`hook-${randomUUID().slice(0, 8)}@example.test`);
+    const id = await createDraft({ contactId });
+    await transition(id, "activate").expect(200);
+    await transition(id, "activate").expect(409);
+
+    const rows = await actionsOf(id);
+    expect(rows).toHaveLength(6);
+    const slots = new Set(rows.map((row) => `${row.reminderStep.key}:${ymd(row.scheduledDate)}`));
+    expect(slots.size).toBe(6);
+  });
+
+  it("activate of ineligible invoices (no email / deleted contact / suppressed) schedules nothing", async () => {
+    // Contact without an email.
+    const noEmail = await createDraft({ contactId: await createContact(null) });
+    await transition(noEmail, "activate").expect(200);
+    expect(await actionsOf(noEmail)).toHaveLength(0);
+
+    // Contact soft-deleted after the draft was created (link stays — the 1.4 observation).
+    const deletedContactId = await createContact(
+      `hook-del-${randomUUID().slice(0, 8)}@example.test`,
+    );
+    const deletedContact = await createDraft({ contactId: deletedContactId });
+    await owner.contact.update({
+      where: { id: deletedContactId },
+      data: { deletedAt: new Date() },
+    });
+    await transition(deletedContact, "activate").expect(200);
+    expect(await actionsOf(deletedContact)).toHaveLength(0);
+
+    // Contact email on the permanent suppression list.
+    const suppressedEmail = `hook-sup-${randomUUID().slice(0, 8)}@example.test`;
+    await owner.suppressionEntry.create({
+      data: { organisationId: org.id, channel: "email", value: suppressedEmail },
+    });
+    const suppressed = await createDraft({ contactId: await createContact(suppressedEmail) });
+    await transition(suppressed, "activate").expect(200);
+    expect(await actionsOf(suppressed)).toHaveLength(0);
+
+    // Eligibility never blocks the state machine — all three still activated.
+    for (const id of [noEmail, deletedContact, suppressed]) {
+      const invoice = await owner.invoice.findUniqueOrThrow({ where: { id } });
+      expect(invoice.status).toBe("active");
+    }
+  });
+
+  it("pause cancels live rows; resume recomputes fresh rows; cancel leaves zero live", async () => {
+    const contactId = await createContact(`hook-${randomUUID().slice(0, 8)}@example.test`);
+    const id = await createDraft({ contactId });
+    await transition(id, "activate").expect(200);
+    const first = await actionsOf(id);
+    expect(first).toHaveLength(6);
+
+    await transition(id, "pause").expect(200);
+    const afterPause = await actionsOf(id);
+    expect(afterPause).toHaveLength(6);
+    expect(afterPause.every((row) => row.status === "cancelled")).toBe(true);
+
+    const pauseAudit = await owner.auditLog.findFirst({
+      where: { organisationId: org.id, entityId: id, action: "reminder_action.cancelled" },
+      orderBy: { createdAt: "desc" },
+    });
+    expect(pauseAudit?.actorUserId).toBe(financeMember.id);
+    expect(pauseAudit?.metadata).toMatchObject({ cancelledCount: 6, reason: "invoice_paused" });
+
+    await transition(id, "resume").expect(200);
+    const afterResume = await actionsOf(id);
+    expect(afterResume).toHaveLength(12);
+    const firstIds = new Set(first.map((row) => row.id));
+    const live = afterResume.filter((row) => row.status !== "cancelled");
+    // Migration 0011 semantics: fresh rows with new ids; cancelled stays history.
+    expect(live).toHaveLength(6);
+    expect(live.every((row) => !firstIds.has(row.id))).toBe(true);
+    expect(afterResume.filter((row) => row.status === "cancelled")).toHaveLength(6);
+
+    await transition(id, "cancel").expect(200);
+    const afterCancel = await actionsOf(id);
+    expect(afterCancel).toHaveLength(12);
+    expect(afterCancel.every((row) => row.status === "cancelled")).toBe(true);
+  });
+
+  it("a due-date edit before activation is honoured: the schedule follows the NEW due date", async () => {
+    const contactId = await createContact(`hook-${randomUUID().slice(0, 8)}@example.test`);
+    const id = await createDraft({ contactId, dueDate: orgDate(10) });
+    await request(app.getHttpServer())
+      .patch(`${baseUrl()}/${id}`)
+      .set("Authorization", `Bearer ${financeToken}`)
+      .send({ dueDate: orgDate(30) })
+      .expect(200);
+    await transition(id, "activate").expect(200);
+
+    const rows = await actionsOf(id);
+    expect(rows).toHaveLength(6);
+    const dueMs = new Date(orgDate(30)).getTime();
+    for (const row of rows) {
+      expect(row.scheduledDate.getTime()).toBe(dueMs + row.reminderStep.offsetDays * DAY_MS);
+    }
+  });
+
+  it("a scheduling failure rolls the activation back (invoice stays Draft, no actions, no audit)", async () => {
+    const contactId = await createContact(`hook-${randomUUID().slice(0, 8)}@example.test`);
+    const id = await createDraft({ contactId });
+    reminderActionsMock.failScheduling = true;
+    try {
+      await transition(id, "activate").expect(500);
+    } finally {
+      reminderActionsMock.failScheduling = false;
+    }
+
+    const invoice = await owner.invoice.findUniqueOrThrow({ where: { id } });
+    expect(invoice.status).toBe("draft");
+    expect(await actionsOf(id)).toHaveLength(0);
+    expect(
+      await owner.auditLog.count({
+        where: {
+          entityId: id,
+          action: { in: ["invoice.status_changed", "reminder_action.scheduled"] },
+        },
+      }),
+    ).toBe(0);
+
+    // The invoice recovers cleanly: a retry activates and schedules normally.
+    await transition(id, "activate").expect(200);
+    expect(await actionsOf(id)).toHaveLength(6);
+  });
+
+  it("reminder scheduling is audited with the acting user's id, after the status audit", async () => {
+    const contactId = await createContact(`hook-${randomUUID().slice(0, 8)}@example.test`);
+    const id = await createDraft({ contactId });
+    await transition(id, "activate").expect(200);
+
+    const scheduledAudit = await owner.auditLog.findFirst({
+      where: { organisationId: org.id, entityId: id, action: "reminder_action.scheduled" },
+    });
+    expect(scheduledAudit?.actorUserId).toBe(financeMember.id);
+    expect(scheduledAudit?.entityType).toBe("invoice");
+    expect(scheduledAudit?.metadata).toMatchObject({ scheduledCount: 6 });
+
+    // The existing invoice audit assertions are untouched: status_changed is
+    // still written, ordered before the reminder side-effect audit.
+    const statusAudit = await owner.auditLog.findFirst({
+      where: { organisationId: org.id, entityId: id, action: "invoice.status_changed" },
+    });
+    expect(statusAudit?.metadata).toMatchObject({ from: "draft", to: "active" });
+    expect(statusAudit!.createdAt.getTime()).toBeLessThanOrEqual(
+      scheduledAudit!.createdAt.getTime(),
+    );
   });
 });

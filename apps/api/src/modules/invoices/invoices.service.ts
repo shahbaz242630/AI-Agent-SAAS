@@ -20,6 +20,11 @@ import { writeAuditLog } from "../../common/audit/audit-log.js";
 import type { AuthUser } from "../authentication/current-auth-user.decorator.js";
 import { deriveDisplayStatus, todayInTimezone } from "./invoice-status.js";
 import { transitionInvoiceStatus, type InvoiceAction } from "./invoice-state-machine.js";
+import {
+  cancelInvoiceReminders,
+  recomputeInvoiceReminders,
+  scheduleInvoiceReminders,
+} from "../reminders/reminder-actions.js";
 
 export interface InvoiceSummary {
   id: string;
@@ -219,6 +224,9 @@ export class InvoicesService {
    * State-machine actions — invoices:write. activate: Draft→Active;
    * pause: Active→Paused; resume: Paused→Active; cancel: Draft/Active/
    * Paused→Cancelled. Everything else is rejected by the state machine (409).
+   * The Slice 1.5 reminder schedule is kept in lockstep INSIDE the same
+   * transaction (plan §3 recompute triggers; BRD 4.1) — a scheduling failure
+   * rolls the status change back with it.
    */
   async transition(
     authUser: AuthUser,
@@ -240,10 +248,53 @@ export class InvoicesService {
         entityId: invoiceId,
         metadata: { from: existing.status, to },
       });
-      const invoice = await tx.invoice.findUniqueOrThrow({ where: { id: invoiceId } });
       const timezone = await this.orgTimezone(tx, organisationId);
+      await this.syncReminderSchedule(tx, organisationId, invoiceId, action, timezone, user.id);
+      const invoice = await tx.invoice.findUniqueOrThrow({ where: { id: invoiceId } });
       return this.toSummary(invoice, timezone);
     });
+  }
+
+  /**
+   * Slice 1.5 (plan §3): the reminder-schedule side effect of each legal
+   * transition. activate schedules; pause/cancel cancel every live row;
+   * resume recomputes from today (cancel + fresh rows — migration 0011 keeps
+   * cancelled rows as history). Draft invoices carry no schedule, so a cancel
+   * from Draft is a no-op. The 1.2 PATCH is Draft-only, so no path can edit
+   * an Active invoice's due_date and there is no due-date recompute hook.
+   */
+  private async syncReminderSchedule(
+    tx: TenantTx,
+    organisationId: string,
+    invoiceId: string,
+    action: InvoiceAction,
+    timezone: string,
+    actorUserId: string,
+  ): Promise<void> {
+    switch (action) {
+      case "activate":
+        await scheduleInvoiceReminders(tx, { organisationId, invoiceId, timezone, actorUserId });
+        break;
+      case "resume":
+        await recomputeInvoiceReminders(tx, { organisationId, invoiceId, timezone, actorUserId });
+        break;
+      case "pause":
+        await cancelInvoiceReminders(tx, {
+          organisationId,
+          invoiceId,
+          reason: "invoice_paused",
+          actorUserId,
+        });
+        break;
+      case "cancel":
+        await cancelInvoiceReminders(tx, {
+          organisationId,
+          invoiceId,
+          reason: "invoice_cancelled",
+          actorUserId,
+        });
+        break;
+    }
   }
 
   /** Parent customer must exist live in the active tenant — else 404 (BRD 15). */
