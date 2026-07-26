@@ -20,6 +20,7 @@ const baseEnv: ApiEnv = {
   SUPABASE_ANON_KEY: "",
   APP_DATABASE_URL: "postgresql://eva_app:eva_app@localhost:5432/eva",
   SENTRY_DSN_API: "https://public@o0.ingest.de.sentry.io/0",
+  INTERNAL_API_SECRET: "test-internal-secret-0123456789abcdef",
 };
 
 describe("initSentry (BRD 14)", () => {

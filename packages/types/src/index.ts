@@ -52,6 +52,8 @@ export const PERMISSION_KEYS = [
   "imports:write",
   "permissions:read",
   "permissions:manage",
+  "reminders:read",
+  "reminders:write",
 ] as const;
 
 export type PermissionKey = (typeof PERMISSION_KEYS)[number];
@@ -74,10 +76,13 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<OrganisationRole, readonly Permiss
     "invoices:write",
     "imports:read",
     "imports:write",
+    // BRD §6: finance configures reminder sequences; everyone reads them.
+    "reminders:read",
+    "reminders:write",
   ],
-  sales: ["customers:read", "contacts:read", "invoices:read", "imports:read"],
-  reception: ["customers:read", "contacts:read", "invoices:read", "imports:read"],
-  read_only: ["customers:read", "contacts:read", "invoices:read", "imports:read"],
+  sales: ["customers:read", "contacts:read", "invoices:read", "imports:read", "reminders:read"],
+  reception: ["customers:read", "contacts:read", "invoices:read", "imports:read", "reminders:read"],
+  read_only: ["customers:read", "contacts:read", "invoices:read", "imports:read", "reminders:read"],
 };
 
 // --- Slice 1.2: invoice records ---

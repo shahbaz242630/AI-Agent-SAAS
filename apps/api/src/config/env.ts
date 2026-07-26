@@ -15,6 +15,10 @@ export const apiEnvSchema = z.object({
   APP_DATABASE_URL: z.string().url().default("postgresql://eva_app:eva_app@localhost:5432/eva"),
   // Sentry DSN (Slice 0.4) — empty disables Sentry; always disabled in tests.
   SENTRY_DSN_API: z.string().default(""),
+  // Shared secret for internal service-to-service endpoints (Slice 1.5, plan
+  // §7.8: the Trigger.dev reconcile sweep calls POST /internal/reminders/
+  // reconcile). Required, minimum 32 chars; compared in constant time.
+  INTERNAL_API_SECRET: z.string().min(32),
 });
 
 export type ApiEnv = z.infer<typeof apiEnvSchema>;

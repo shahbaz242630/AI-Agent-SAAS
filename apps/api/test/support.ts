@@ -21,6 +21,8 @@ export const TEST_APP_DATABASE_URL =
   process.env.APP_DATABASE_URL ?? "postgresql://eva_app:eva_app@localhost:5432/eva_test";
 export const TEST_SUPABASE_URL = process.env.SUPABASE_URL ?? "https://test.supabase.local";
 export const TEST_ISSUER = `${TEST_SUPABASE_URL}/auth/v1`;
+/** Shared secret for the Slice 1.5 internal endpoints (matches the guard's env). */
+export const TEST_INTERNAL_API_SECRET = "test-internal-secret-0123456789abcdef";
 
 const testEnv: ApiEnv = {
   NODE_ENV: "test",
@@ -31,6 +33,7 @@ const testEnv: ApiEnv = {
   SUPABASE_ANON_KEY: "",
   APP_DATABASE_URL: TEST_APP_DATABASE_URL,
   SENTRY_DSN_API: "",
+  INTERNAL_API_SECRET: TEST_INTERNAL_API_SECRET,
 };
 
 interface TestKeys {

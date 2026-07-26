@@ -11,7 +11,8 @@ export async function writeAuditLog(
   tx: TenantTx,
   entry: {
     organisationId: string;
-    actorUserId: string;
+    /** Null for system actions (e.g. the 1.5 reconcile sweep — schema comment). */
+    actorUserId: string | null;
     action: string;
     entityType: string;
     entityId?: string;
