@@ -4,7 +4,7 @@ import { apiEnvSchema } from "../src/config/env.js";
 
 const REQUIRED_ENV = {
   SUPABASE_URL: "https://test.supabase.local",
-  INTERNAL_API_SECRET: "test-internal-secret-0123456789abcdef",
+  INTERNAL_API_SECRET: "test-internal-secret-0123456789abcdef", // gitleaks:allow — fake test fixture
 };
 
 describe("api env validation", () => {

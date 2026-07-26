@@ -22,7 +22,7 @@ export const TEST_APP_DATABASE_URL =
 export const TEST_SUPABASE_URL = process.env.SUPABASE_URL ?? "https://test.supabase.local";
 export const TEST_ISSUER = `${TEST_SUPABASE_URL}/auth/v1`;
 /** Shared secret for the Slice 1.5 internal endpoints (matches the guard's env). */
-export const TEST_INTERNAL_API_SECRET = "test-internal-secret-0123456789abcdef";
+export const TEST_INTERNAL_API_SECRET = "test-internal-secret-0123456789abcdef"; // gitleaks:allow — fake test fixture
 
 const testEnv: ApiEnv = {
   NODE_ENV: "test",
