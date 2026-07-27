@@ -26,6 +26,27 @@ afterAll(async () => {
 });
 
 describe("withTenant — app-layer tenant context (BRD 15)", () => {
+  it("forwards transaction options (e.g. timeout) to $transaction", async () => {
+    // The 1.5 step-edit recompute needs >5s at cloud latency (staging 500,
+    // 2026-07-27) — withTenant must pass options through to Prisma.
+    const calls: unknown[] = [];
+    const stub = {
+      $transaction: (fn: (tx: unknown) => unknown, options?: unknown) => {
+        calls.push(options);
+        return fn({
+          $executeRaw: () => Promise.resolve(0),
+        });
+      },
+    } as unknown as EvaPrismaClient;
+    await withTenant(
+      stub,
+      { organisationId: DEMO_ORGANISATION_ID, userId: DEMO_USER_ID },
+      () => Promise.resolve("ok"),
+      { timeout: 30_000 },
+    );
+    expect(calls).toEqual([{ timeout: 30_000 }]);
+  });
+
   it("sees the active tenant's rows", async () => {
     const orgs = await withTenant(
       app,

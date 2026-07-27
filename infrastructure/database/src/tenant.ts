@@ -19,12 +19,13 @@ export async function withTenant<T>(
   prisma: EvaPrismaClient,
   context: TenantContext,
   fn: (tx: EvaPrismaClient) => Promise<T>,
+  options?: { timeout?: number },
 ): Promise<T> {
   return prisma.$transaction(async (tx) => {
     await tx.$executeRaw`SELECT set_config('app.current_org', ${context.organisationId}, true)`;
     await tx.$executeRaw`SELECT set_config('app.current_user', ${context.userId}, true)`;
     return fn(tx as unknown as EvaPrismaClient);
-  });
+  }, options);
 }
 
 /**
