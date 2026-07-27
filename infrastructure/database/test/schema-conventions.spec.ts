@@ -416,6 +416,24 @@ describe("Schema conventions (BRD 10)", () => {
     ).toBe(false);
   });
 
+  it("list_active_organisations EXECUTE is revoked from Supabase API roles (migration 0012)", async () => {
+    // Supabase default privileges auto-grant EXECUTE on new public functions
+    // to anon/authenticated/service_role; 0012 revokes them. Vacuous on plain
+    // Postgres (local/CI) where those roles do not exist.
+    const leaked = await prisma.$queryRaw<{ rolname: string }[]>`
+      SELECT r.rolname
+      FROM pg_proc p
+      CROSS JOIN LATERAL aclexplode(p.proacl) a
+      JOIN pg_roles r ON r.oid = a.grantee
+      WHERE p.proname = 'list_active_organisations' AND p.pronargs = 0
+        AND a.privilege_type = 'EXECUTE'
+        AND r.rolname IN ('anon', 'authenticated', 'service_role')`;
+    expect(
+      leaked,
+      "Supabase API roles must not hold EXECUTE on list_active_organisations()",
+    ).toHaveLength(0);
+  });
+
   it("list_active_organisations returns only orgs with at least one live active invoice", async () => {
     const suffix = randomUUID().slice(0, 8);
     const orgNone = await prisma.organisation.create({ data: { name: `LAO-none-${suffix}` } });
