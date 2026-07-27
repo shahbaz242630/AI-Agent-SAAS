@@ -57,7 +57,9 @@ export class RemindersService {
 
   /** PATCH .../reminder-sequence/steps/:stepId — reminders:write. Persists the
    *  edit, then recomputes every live active invoice org-wide in the SAME
-   *  transaction (plan §7.5). */
+   *  transaction (plan §7.5). The 30s transaction timeout (Prisma default is
+   *  5s) covers the org-wide recompute at cloud latency — staging 500'd on
+   *  2026-07-27 with just 3 active invoices (api US West ↔ Supabase London). */
   async updateStep(
     authUser: AuthUser,
     organisationId: string,
@@ -65,44 +67,49 @@ export class RemindersService {
     input: UpdateReminderStepInput,
   ): Promise<ReminderStepDto> {
     const user = await this.usersService.resolveOrProvision(authUser);
-    return withTenant(this.prisma.db, { organisationId, userId: user.id }, async (tx) => {
-      await requirePermission(tx, organisationId, user.id, "reminders:write");
-      const step = await tx.reminderStep.findFirst({ where: { id: stepId, deletedAt: null } });
-      if (!step) throw new NotFoundException("Reminder step not found");
-      const updated = await tx.reminderStep.update({
-        where: { id: step.id },
-        data: {
-          ...(input.enabled !== undefined ? { enabled: input.enabled } : {}),
-          ...(input.offsetDays !== undefined ? { offsetDays: input.offsetDays } : {}),
-        },
-      });
-      await writeAuditLog(tx, {
-        organisationId,
-        actorUserId: user.id,
-        action: "reminder_step.updated",
-        entityType: "reminder_step",
-        entityId: step.id,
-        metadata: {
-          changedFields: Object.keys(input).filter(
-            (key) => input[key as keyof UpdateReminderStepInput] !== undefined,
-          ),
-        },
-      });
-      const timezone = await this.orgTimezone(tx, organisationId);
-      const activeInvoices = await tx.invoice.findMany({
-        where: { status: "active", deletedAt: null },
-        select: { id: true },
-      });
-      for (const invoice of activeInvoices) {
-        await recomputeInvoiceReminders(tx, {
-          organisationId,
-          invoiceId: invoice.id,
-          timezone,
-          actorUserId: user.id,
+    return withTenant(
+      this.prisma.db,
+      { organisationId, userId: user.id },
+      async (tx) => {
+        await requirePermission(tx, organisationId, user.id, "reminders:write");
+        const step = await tx.reminderStep.findFirst({ where: { id: stepId, deletedAt: null } });
+        if (!step) throw new NotFoundException("Reminder step not found");
+        const updated = await tx.reminderStep.update({
+          where: { id: step.id },
+          data: {
+            ...(input.enabled !== undefined ? { enabled: input.enabled } : {}),
+            ...(input.offsetDays !== undefined ? { offsetDays: input.offsetDays } : {}),
+          },
         });
-      }
-      return toStepDto(updated);
-    });
+        await writeAuditLog(tx, {
+          organisationId,
+          actorUserId: user.id,
+          action: "reminder_step.updated",
+          entityType: "reminder_step",
+          entityId: step.id,
+          metadata: {
+            changedFields: Object.keys(input).filter(
+              (key) => input[key as keyof UpdateReminderStepInput] !== undefined,
+            ),
+          },
+        });
+        const timezone = await this.orgTimezone(tx, organisationId);
+        const activeInvoices = await tx.invoice.findMany({
+          where: { status: "active", deletedAt: null },
+          select: { id: true },
+        });
+        for (const invoice of activeInvoices) {
+          await recomputeInvoiceReminders(tx, {
+            organisationId,
+            invoiceId: invoice.id,
+            timezone,
+            actorUserId: user.id,
+          });
+        }
+        return toStepDto(updated);
+      },
+      { timeout: 30_000 },
+    );
   }
 
   /** GET .../invoices/:invoiceId/scheduled-actions — reminders:read. The
