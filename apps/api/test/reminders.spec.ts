@@ -741,8 +741,10 @@ describe("Contact spacing under concurrent activation (BRD 4.1)", () => {
       include: { reminderStep: { select: { key: true } } },
     });
     expect(rows).toHaveLength(12);
-    // Per step, the two invoices' dates must be ≥3 days apart (same raw date
-    // for both — spacing must have separated them).
+    // Per EMAIL step, the two invoices' dates must be ≥3 days apart (same raw
+    // date for both — spacing must have separated them). internal_escalation
+    // is exempt from contact spacing (founder ruling 2026-07-27 — internal
+    // handover, not a contact-facing reminder): both fire on the same day.
     const keys = [...new Set(rows.map((row) => row.reminderStep.key))];
     expect(keys).toHaveLength(6);
     for (const key of keys) {
@@ -750,9 +752,14 @@ describe("Contact spacing under concurrent activation (BRD 4.1)", () => {
         .filter((row) => row.reminderStep.key === key)
         .map((row) => row.scheduledDate.getTime());
       expect(dates).toHaveLength(2);
-      expect(Math.abs(dates[0]! - dates[1]!), `step ${key} dates too close`).toBeGreaterThanOrEqual(
-        3 * DAY_MS,
-      );
+      if (key === "final_escalation") {
+        expect(dates[0], "escalations are exempt from contact spacing").toBe(dates[1]);
+      } else {
+        expect(
+          Math.abs(dates[0]! - dates[1]!),
+          `step ${key} dates too close`,
+        ).toBeGreaterThanOrEqual(3 * DAY_MS);
+      }
     }
   });
 });

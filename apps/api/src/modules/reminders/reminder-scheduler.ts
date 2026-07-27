@@ -138,6 +138,12 @@ export function uuidv5(value: string, namespace: string = DNS_NAMESPACE): string
  * placed candidate (placed candidates join the occupied set). Dates only ever
  * shift forward, never backward. The input array is not mutated.
  *
+ * Only CONTACT-FACING actions (`email`) participate (founder ruling
+ * 2026-07-27): `internal_escalation` is a human handover, not a reminder to
+ * the contact, so it is never deferred and never occupies a date — plan
+ * §7.10's "a missed escalation fires too" means it fires TODAY alongside the
+ * collapsed catch-up email, not 3 days later.
+ *
  * When (and only when) a candidate's date shifts, its `status` and
  * `idempotencyKey` are re-derived from the FINAL date via the same
  * `deriveForDate` derivation computeInvoiceSchedule uses — so every returned
@@ -157,6 +163,7 @@ export function applyContactSpacing(
     (a, b) => a.scheduledDate.getTime() - b.scheduledDate.getTime(),
   );
   return ordered.map((candidate) => {
+    if (candidate.actionType !== "email") return candidate;
     let dateMs = candidate.scheduledDate.getTime();
     while (occupied.some((o) => Math.abs(dateMs - o) < gapMs)) {
       dateMs += DAY_MS;

@@ -344,6 +344,30 @@ describe("applyContactSpacing (BRD 4.1: minimum 3 days between reminders to the 
     expect(spaced.map((a) => a.scheduledDate)).toEqual([day("2026-03-12"), day("2026-03-15")]);
   });
 
+  // Founder ruling 2026-07-27: internal_escalation is not a contact-facing
+  // reminder, so BRD 4.1 spacing does not apply to it (plan §7.10's "missed
+  // escalation fires too" intent — the human handover is not deferred).
+  it("never defers an internal_escalation candidate, even onto an occupied date", () => {
+    const spaced = applyContactSpacing(
+      [action("esc", "2026-03-15", "internal_escalation")],
+      [day("2026-03-15")],
+      CONTEXT,
+    );
+    expect(spaced[0]!.scheduledDate).toEqual(day("2026-03-15"));
+  });
+
+  it("an internal_escalation candidate does not occupy a date for email spacing", () => {
+    const spaced = applyContactSpacing(
+      [action("esc", "2026-03-15", "internal_escalation"), action("a", "2026-03-15")],
+      [],
+      CONTEXT,
+    );
+    expect(spaced.find((a) => a.reminderStepId === "a")!.scheduledDate).toEqual(day("2026-03-15"));
+    expect(spaced.find((a) => a.reminderStepId === "esc")!.scheduledDate).toEqual(
+      day("2026-03-15"),
+    );
+  });
+
   it("defers a conflicting candidate day-by-day to the first clear day", () => {
     const spaced = applyContactSpacing([action("a", "2026-03-15")], [day("2026-03-15")], CONTEXT);
     expect(spaced[0]!.scheduledDate).toEqual(day("2026-03-18"));
