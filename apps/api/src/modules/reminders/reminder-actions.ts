@@ -115,7 +115,9 @@ export async function scheduleInvoiceReminders(
 
   // BRD 4.1: minimum 3 days between reminders to the same CONTACT — dates
   // already occupied by this contact's other invoices (pending/ready only,
-  // excluding the rows this call replaces) push candidates forward.
+  // excluding the rows this call replaces) push candidates forward. Only
+  // contact-facing (email) rows occupy dates (founder ruling 2026-07-27 —
+  // internal escalations neither defer nor block).
   const occupied =
     contact === null
       ? []
@@ -123,6 +125,7 @@ export async function scheduleInvoiceReminders(
           await tx.scheduledAction.findMany({
             where: {
               status: { in: ["pending", "ready"] },
+              actionType: "email",
               invoiceId: { not: invoice.id },
               invoice: { contactId: contact.id },
             },
