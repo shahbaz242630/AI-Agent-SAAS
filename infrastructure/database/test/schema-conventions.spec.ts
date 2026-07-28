@@ -75,7 +75,7 @@ async function scheduledActionFixture() {
 }
 
 describe("Schema conventions (BRD 10)", () => {
-  it("creates exactly the Phase 0 + Slice 1.1 + Slice 1.2 + Slice 1.3 + Slice 1.4 + Slice 1.5 tables", async () => {
+  it("creates exactly the Phase 0 + Slice 1.1 + Slice 1.2 + Slice 1.3 + Slice 1.4 + Slice 1.5 + Slice 1.6 tables", async () => {
     const rows = await prisma.$queryRaw<{ table_name: string }[]>`
       SELECT table_name FROM information_schema.tables
       WHERE table_schema = 'public' AND table_type = 'BASE TABLE'`;
@@ -84,6 +84,7 @@ describe("Schema conventions (BRD 10)", () => {
       "audit_logs",
       "contacts",
       "customers",
+      "email_accounts",
       "human_escalations",
       "import_rows",
       "imports",
@@ -118,6 +119,7 @@ describe("Schema conventions (BRD 10)", () => {
     "reminder_steps",
     "scheduled_actions",
     "human_escalations",
+    "email_accounts",
   ])("tenant-owned table %s has a non-nullable organisation_id", async (table) => {
     const cols = await columnsOf(table);
     const orgColumn = cols.find((c) => c.column_name === "organisation_id");
@@ -141,6 +143,7 @@ describe("Schema conventions (BRD 10)", () => {
     "reminder_steps",
     "scheduled_actions",
     "human_escalations",
+    "email_accounts",
   ])("mutable table %s carries created_at/updated_at/created_by", async (table) => {
     const names = (await columnsOf(table)).map((c) => c.column_name);
     for (const col of ["created_at", "updated_at", "created_by"]) {
@@ -273,6 +276,15 @@ describe("Schema conventions (BRD 10)", () => {
     for (const status of ["open", "resolved"]) {
       expect(statusCheck?.pg_get_constraintdef).toContain(`'${status}'`);
     }
+  });
+
+  it("email_accounts stores only valid provider + health_status values (CHECK constraints)", async () => {
+    const rows = await prisma.$queryRaw<{ conname: string }[]>`
+      SELECT conname FROM pg_constraint
+      WHERE conrelid = 'email_accounts'::regclass AND contype = 'c'`;
+    const names = rows.map((row) => row.conname).join(" ");
+    expect(names).toContain("provider");
+    expect(names).toContain("health_status");
   });
 
   it("one default reminder sequence per org among live rows (partial unique index)", async () => {
