@@ -23,6 +23,11 @@ export const TEST_SUPABASE_URL = process.env.SUPABASE_URL ?? "https://test.supab
 export const TEST_ISSUER = `${TEST_SUPABASE_URL}/auth/v1`;
 /** Shared secret for the Slice 1.5 internal endpoints (matches the guard's env). */
 export const TEST_INTERNAL_API_SECRET = "test-internal-secret-0123456789abcdef"; // gitleaks:allow — fake test fixture
+/** Slice 1.6 test fixtures — format-valid, non-secret. */
+export const TEST_TOKEN_ENCRYPTION_KEY = Buffer.from("0123456789abcdef0123456789abcdef").toString(
+  "base64",
+);
+export const TEST_OAUTH_STATE_SECRET = "test-oauth-state-secret-0123456789abcdef"; // gitleaks:allow — fake test fixture
 
 const testEnv: ApiEnv = {
   NODE_ENV: "test",
@@ -34,6 +39,12 @@ const testEnv: ApiEnv = {
   APP_DATABASE_URL: TEST_APP_DATABASE_URL,
   SENTRY_DSN_API: "",
   INTERNAL_API_SECRET: TEST_INTERNAL_API_SECRET,
+  TOKEN_ENCRYPTION_KEY: TEST_TOKEN_ENCRYPTION_KEY,
+  OAUTH_STATE_SECRET: TEST_OAUTH_STATE_SECRET,
+  MICROSOFT_CLIENT_ID: "test-microsoft-client-id",
+  MICROSOFT_CLIENT_SECRET: "test-microsoft-client-secret", // gitleaks:allow — fake test fixture
+  MICROSOFT_TENANT: "common",
+  MICROSOFT_OAUTH_REDIRECT_URI: "http://localhost:3001/integrations/microsoft/callback",
 };
 
 interface TestKeys {
