@@ -430,8 +430,9 @@ describe("Schema conventions (BRD 10)", () => {
 
   it("list_active_organisations EXECUTE is revoked from Supabase API roles (migration 0012)", async () => {
     // Supabase default privileges auto-grant EXECUTE on new public functions
-    // to anon/authenticated/service_role; 0012 revokes them. Vacuous on plain
-    // Postgres (local/CI) where those roles do not exist.
+    // to anon/authenticated/service_role; 0012 revokes them. Migration 0015
+    // creates those roles wherever they are absent, so this now bites on local
+    // Docker and in CI too — it used to be vacuous there.
     const leaked = await prisma.$queryRaw<{ rolname: string }[]>`
       SELECT r.rolname
       FROM pg_proc p
@@ -444,6 +445,117 @@ describe("Schema conventions (BRD 10)", () => {
       leaked,
       "Supabase API roles must not hold EXECUTE on list_active_organisations()",
     ).toHaveLength(0);
+  });
+
+  /**
+   * Guard for the three ACL assertions around it (0012 function EXECUTE, 0014
+   * table privileges, 0014 default privileges). Each one asks "do these roles
+   * hold anything?" — which answers "no" for free if the roles do not exist.
+   * They only exist on Supabase, so before migration 0015 created them locally
+   * every one of those assertions passed vacuously on Docker and in CI, and a
+   * migration granting to `anon` would have reached production unchallenged.
+   * If this test fails, treat the others as meaningless until it passes again.
+   */
+  it("the Supabase API roles exist here, so the ACL assertions are not vacuous (migration 0015)", async () => {
+    const roles = await prisma.$queryRaw<{ rolname: string; rolcanlogin: boolean }[]>`
+      SELECT rolname, rolcanlogin FROM pg_roles
+      WHERE rolname IN ('anon', 'authenticated', 'service_role')
+      ORDER BY rolname`;
+    expect(
+      roles.map((role) => role.rolname),
+      "migration 0015 must create these roles wherever they are absent",
+    ).toEqual(["anon", "authenticated", "service_role"]);
+    for (const role of roles) {
+      // Locally 0015 creates them NOLOGIN; on Supabase they are NOLOGIN too
+      // (PostgREST reaches them via SET ROLE). A LOGIN-capable anon would be a
+      // genuine finding.
+      expect(role.rolcanlogin, `${role.rolname} must not be able to log in`).toBe(false);
+    }
+  });
+
+  it("Supabase API roles hold NO privileges on any public table (migration 0014)", async () => {
+    // Supabase default privileges auto-grant arwdDxtm on every new public
+    // table to anon/authenticated/service_role — and `anon` is the PUBLIC api
+    // key. RLS blocked reads and writes, but TRUNCATE is not subject to RLS, so
+    // 0014 removes the grants outright. Read the ACL directly (relacl) rather
+    // than information_schema, which only shows grants the caller can see.
+    // Meaningful everywhere since 0015 mirrors the roles locally; hosted
+    // privilege drift is additionally covered by scripts/verify-supabase-acl.sql.
+    const leaked = await prisma.$queryRaw<{ relname: string; rolname: string }[]>`
+      SELECT c.relname, r.rolname
+      FROM pg_class c
+      JOIN pg_namespace n ON n.oid = c.relnamespace
+      CROSS JOIN LATERAL aclexplode(c.relacl) a
+      JOIN pg_roles r ON r.oid = a.grantee
+      WHERE n.nspname = 'public' AND c.relkind = 'r'
+        AND r.rolname IN ('anon', 'authenticated', 'service_role')
+      ORDER BY c.relname, r.rolname`;
+    expect(
+      leaked,
+      `Supabase API roles must hold no table privileges; leaked: ${leaked
+        .map((row) => `${row.rolname}->${row.relname}`)
+        .join(", ")}`,
+    ).toHaveLength(0);
+  });
+
+  it("no public function grants EXECUTE to PUBLIC or the API roles (migration 0016)", async () => {
+    // 0012 revoked EXECUTE from one function without removing the ALTER DEFAULT
+    // PRIVILEGES that granted it, and Postgres separately grants EXECUTE on new
+    // functions to PUBLIC. 0016 closed both. aclexplode reports PUBLIC as
+    // grantee 0, which has no pg_roles row — hence the LEFT JOIN.
+    const leaked = await prisma.$queryRaw<{ proname: string; grantee: string }[]>`
+      SELECT p.proname, COALESCE(r.rolname, 'PUBLIC') AS grantee
+      FROM pg_proc p
+      JOIN pg_namespace n ON n.oid = p.pronamespace
+      CROSS JOIN LATERAL aclexplode(p.proacl) a
+      LEFT JOIN pg_roles r ON r.oid = a.grantee
+      WHERE n.nspname = 'public' AND a.privilege_type = 'EXECUTE'
+        AND (a.grantee = 0 OR r.rolname IN ('anon', 'authenticated', 'service_role'))
+      ORDER BY p.proname`;
+    expect(
+      leaked,
+      `public functions must not grant EXECUTE to PUBLIC or the API roles; leaked: ${leaked
+        .map((row) => `${row.grantee}->${row.proname}`)
+        .join(", ")}`,
+    ).toHaveLength(0);
+  });
+
+  it("future public functions will not re-grant EXECUTE (migration 0016)", async () => {
+    const defaults = await prisma.$queryRaw<{ acl: string }[]>`
+      SELECT d.defaclacl::text AS acl
+      FROM pg_default_acl d
+      JOIN pg_namespace n ON n.oid = d.defaclnamespace
+      WHERE n.nspname = 'public' AND d.defaclobjtype = 'f'
+        AND d.defaclrole = (SELECT oid FROM pg_roles WHERE rolname = current_user)`;
+    for (const row of defaults) {
+      for (const apiRole of ["anon", "authenticated", "service_role"]) {
+        expect(row.acl, `function defaults must not name ${apiRole}`).not.toContain(apiRole);
+      }
+      // A bare `=X/owner` entry is the PUBLIC grant.
+      expect(row.acl, "function defaults must not grant EXECUTE to PUBLIC").not.toMatch(/(^|,)=/);
+    }
+  });
+
+  it("future public tables will not re-grant to Supabase API roles (migration 0014)", async () => {
+    // The grants above came from ALTER DEFAULT PRIVILEGES, so revoking the
+    // existing ones is not enough: without this, the next CREATE TABLE silently
+    // reinstates them. Only the CREATING role's defaults apply to a new object,
+    // and migrations run as the database owner — so check that role's defaults.
+    const defaults = await prisma.$queryRaw<{ obj_type: string; acl: string }[]>`
+      SELECT d.defaclobjtype::text AS obj_type, d.defaclacl::text AS acl
+      FROM pg_default_acl d
+      JOIN pg_namespace n ON n.oid = d.defaclnamespace
+      WHERE n.nspname = 'public'
+        AND d.defaclobjtype IN ('r', 'S')
+        AND d.defaclrole = (SELECT oid FROM pg_roles WHERE rolname = current_user)`;
+    for (const row of defaults) {
+      for (const apiRole of ["anon", "authenticated", "service_role"]) {
+        expect(
+          row.acl,
+          `default privileges for ${row.obj_type} must not name ${apiRole}`,
+        ).not.toContain(apiRole);
+      }
+    }
   });
 
   it("list_active_organisations returns only orgs with at least one live active invoice", async () => {
