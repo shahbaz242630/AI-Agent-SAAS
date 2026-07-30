@@ -8,6 +8,7 @@ import {
   type ExceptionFilter,
 } from "@nestjs/common";
 import type { Request, Response } from "express";
+import { stripCredentialQuery } from "../logging/log-redaction.js";
 import { ERROR_REPORTER, type ErrorReporter } from "../monitoring/error-reporter.js";
 
 /**
@@ -37,7 +38,9 @@ export class GlobalExceptionFilter implements ExceptionFilter {
     if (status >= 500) {
       this.errorReporter?.captureException(exception, {
         correlationId: request.headers["x-correlation-id"],
-        path: request.url,
+        // Not the raw URL: on the OAuth callback the query string carries a
+        // live authorization code + state JWT (Slice 1.6, BRD 14).
+        path: stripCredentialQuery(request.url),
       });
     }
 

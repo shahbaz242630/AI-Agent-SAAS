@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import {
   BadGatewayException,
   BadRequestException,
+  ForbiddenException,
   Inject,
   Injectable,
   NotFoundException,
@@ -26,7 +27,11 @@ import { PrismaService } from "../../common/database/prisma.service.js";
 import { UsersService } from "../users/users.service.js";
 import { requirePermission, type TenantTx } from "../../common/permissions/permissions.js";
 import { writeAuditLog } from "../../common/audit/audit-log.js";
-import { decryptToken, encryptToken } from "../../common/crypto/token-crypto.js";
+import {
+  decryptToken,
+  encryptToken,
+  TokenDecryptionError,
+} from "../../common/crypto/token-crypto.js";
 import type { AuthUser } from "../authentication/current-auth-user.decorator.js";
 import {
   GraphRequestError,
@@ -147,6 +152,29 @@ export class MailboxesService {
       return `${base}?error=invalid_state`;
     }
     if (!query.code) return `${base}?error=missing_code`;
+    // Re-check authorisation at the moment of the mutation. The state stays
+    // valid for 10 minutes and ruling 4 binds it to an ORGANISATION, not to a
+    // role — so the initiator can be removed from the org or demoted out of
+    // mailbox:manage in between. Nothing downstream would catch that: RLS only
+    // checks organisation_id, so the write would succeed and the audit row
+    // would credit a user who is no longer allowed to connect. Checked before
+    // the exchange so an unauthorised attempt never spends the code.
+    try {
+      await withTenant(
+        this.prisma.db,
+        { organisationId: claims.organisationId, userId: claims.userId },
+        async (tx) => {
+          await requirePermission(tx, claims.organisationId, claims.userId, "mailbox:manage");
+        },
+      );
+    } catch (error) {
+      if (error instanceof ForbiddenException || error instanceof NotFoundException) {
+        this.logger.info("mailbox callback rejected — initiator no longer authorised");
+        return `${base}?error=not_authorised`;
+      }
+      this.logger.error({ err: error }, "mailbox callback authorisation check failed");
+      return `${base}?error=connect_failed`;
+    }
     let tokens: OAuthTokens;
     let profile: MailboxProfile;
     try {
@@ -167,6 +195,10 @@ export class MailboxesService {
       scopes: tokens.scopes,
       healthStatus: "active",
       lastError: null,
+      // Reconnect reuses the row, so clear the previous connection's health
+      // stamp — otherwise a fresh mailbox shows a check time from before the
+      // outage that caused the reconnect.
+      lastHealthCheckAt: null,
       connectedBy: claims.userId,
     };
     let accountId: string;
@@ -194,10 +226,11 @@ export class MailboxesService {
         },
       );
     } catch (error) {
-      // The state stays valid for 10 minutes, so membership can be revoked
-      // mid-flow; a DB outage lands here too. Logged with the cause (the
-      // global filter would not) and redirected, because this route's
-      // contract is "always a redirect".
+      // A DB outage, or the org being deleted between consent and write.
+      // (Revoked membership is caught by the authorisation re-check above, not
+      // here — RLS alone would let that write through.) Logged with the cause,
+      // which the global filter would not do, then redirected, because this
+      // route's contract is "always a redirect".
       this.logger.error({ err: error }, "mailbox connection could not be persisted");
       return `${base}?error=connect_failed`;
     }
@@ -324,6 +357,11 @@ export class MailboxesService {
     userId: string,
     account: ConnectedAccount,
   ): Promise<string> {
+    if (account.organisationId !== organisationId) {
+      // Programmer error, not a tenancy hole (RLS would filter the row out and
+      // surface an opaque Prisma error instead). Fail loudly for 1.7's callers.
+      throw new Error("ensureAccessToken: account belongs to a different organisation");
+    }
     const key = this.env.TOKEN_ENCRYPTION_KEY;
     if (
       !account.accessTokenEncrypted ||
@@ -333,9 +371,11 @@ export class MailboxesService {
       throw new ReauthRequiredError();
     }
     if (account.tokenExpiresAt.getTime() - Date.now() > TOKEN_EXPIRY_BUFFER_MS) {
-      return decryptToken(account.accessTokenEncrypted, key);
+      return this.decryptStoredToken(account.accessTokenEncrypted, key);
     }
-    const tokens = await this.graph.refreshTokens(decryptToken(account.refreshTokenEncrypted, key));
+    const tokens = await this.graph.refreshTokens(
+      this.decryptStoredToken(account.refreshTokenEncrypted, key),
+    );
     await withTenant(this.prisma.db, { organisationId, userId }, async (tx) => {
       await tx.emailAccount.update({
         where: { id: account.id },
@@ -350,13 +390,50 @@ export class MailboxesService {
     return tokens.accessToken;
   }
 
+  /**
+   * Stored ciphertext that will not decrypt (TOKEN_ENCRYPTION_KEY rotated, row
+   * corrupted) is a dead grant from the user's point of view: the only fix is
+   * reconnecting. Mapping it to ReauthRequiredError makes health_status say so,
+   * instead of an opaque 500 beside a card still reading "Connected" — which
+   * would strand 1.7's sender permanently with no health signal.
+   */
+  private decryptStoredToken(ciphertext: string, key: string): string {
+    try {
+      return decryptToken(ciphertext, key);
+    } catch (error) {
+      if (error instanceof TokenDecryptionError) {
+        this.logger.error("stored mailbox token could not be decrypted — reconnect required");
+        throw new ReauthRequiredError();
+      }
+      throw error;
+    }
+  }
+
   /** Surfaces a dead grant to the UI (ruling 10): the status endpoint reads
-   *  health_status, so "reconnect needed" shows without another Graph call. */
+   *  health_status, so "reconnect needed" shows without another Graph call.
+   *  Audited in the same transaction like every other tenant mutation — "when
+   *  did this mailbox die, and why?" must be answerable from the audit trail,
+   *  not from a mutable column with no timestamp. */
   private async markAuthExpired(organisationId: string, userId: string): Promise<void> {
     await withTenant(this.prisma.db, { organisationId, userId }, async (tx) => {
-      await tx.emailAccount.updateMany({
-        where: { deletedAt: null },
-        data: { healthStatus: "auth_expired", lastError: AUTH_EXPIRED_MESSAGE },
+      const account = await tx.emailAccount.findFirst({ where: { deletedAt: null } });
+      if (!account) return;
+      await tx.emailAccount.update({
+        where: { id: account.id },
+        data: {
+          healthStatus: "auth_expired",
+          lastError: AUTH_EXPIRED_MESSAGE,
+          // A failed attempt is still an attempt (the DTO documents this field
+          // as "null until a test email / send attempt runs").
+          lastHealthCheckAt: new Date(),
+        },
+      });
+      await writeAuditLog(tx, {
+        organisationId,
+        actorUserId: userId,
+        action: "mailbox.auth_expired",
+        entityType: "email_account",
+        entityId: account.id,
       });
     });
   }

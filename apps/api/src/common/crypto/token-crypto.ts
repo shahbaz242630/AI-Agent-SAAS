@@ -43,8 +43,13 @@ export function encryptToken(plaintext: string, keyBase64: string): string {
 
 export function decryptToken(blob: string, keyBase64: string): string {
   try {
-    const [version, iv, tag, ciphertext] = blob.split(".");
-    if (version !== VERSION || !iv || !tag || !ciphertext) throw new Error("bad format");
+    const parts = blob.split(".");
+    const [version, iv, tag, ciphertext] = parts;
+    // Exactly four parts: GCM authenticates the four that matter, but accepting
+    // trailing junk would quietly bless a malformed blob.
+    if (parts.length !== 4 || version !== VERSION || !iv || !tag || !ciphertext) {
+      throw new Error("bad format");
+    }
     const decipher = createDecipheriv(
       "aes-256-gcm",
       decodeKey(keyBase64),

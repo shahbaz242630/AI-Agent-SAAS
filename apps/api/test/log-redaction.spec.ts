@@ -1,7 +1,12 @@
 import { Writable } from "node:stream";
 import { pino, type Logger } from "pino";
 import { describe, expect, it } from "vitest";
-import { LOG_REDACT_PATHS, serializeRequest } from "../src/common/logging/log-redaction.js";
+import {
+  isCredentialQueryUrl,
+  LOG_REDACT_PATHS,
+  serializeRequest,
+  stripCredentialQuery,
+} from "../src/common/logging/log-redaction.js";
 
 /**
  * PII-in-logs guard (BRD 14, Slice 0.4): credentials, tokens and personal
@@ -123,6 +128,40 @@ describe("log redaction (BRD 14)", () => {
     it("leaves other routes' query strings intact (debuggability)", () => {
       const serialized = serializeRequest(fakeRequest("/organisations?page=2"));
       expect(serialized.url).toBe("/organisations?page=2");
+    });
+
+    /**
+     * pino is not the only sink: the exception filter passes a path to Sentry
+     * and Sentry's own requestData integration always attaches request.url
+     * (query included — `sendDefaultPii: false` does not cover it). All of them
+     * share this one rule so the layers cannot drift apart.
+     */
+    describe("stripCredentialQuery (shared by the Sentry scrubber + exception filter)", () => {
+      it("drops the query on the callback path", () => {
+        expect(stripCredentialQuery("/integrations/microsoft/callback?code=abc&state=xyz")).toBe(
+          "/integrations/microsoft/callback",
+        );
+      });
+
+      it("handles the absolute URLs Sentry sends", () => {
+        expect(
+          stripCredentialQuery(
+            "https://api-staging-36aaa.up.railway.app/integrations/microsoft/callback?code=abc",
+          ),
+        ).toBe("/integrations/microsoft/callback");
+      });
+
+      it("matches case-insensitively — Express routes that way too", () => {
+        expect(stripCredentialQuery("/Integrations/Microsoft/Callback?code=abc")).toBe(
+          "/Integrations/Microsoft/Callback",
+        );
+        expect(isCredentialQueryUrl("/INTEGRATIONS/MICROSOFT/CALLBACK?code=abc")).toBe(true);
+      });
+
+      it("leaves ordinary URLs untouched", () => {
+        expect(stripCredentialQuery("/organisations?page=2")).toBe("/organisations?page=2");
+        expect(isCredentialQueryUrl("/organisations?page=2")).toBe(false);
+      });
     });
   });
 });

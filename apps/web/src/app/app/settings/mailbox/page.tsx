@@ -32,6 +32,8 @@ const ERROR_MESSAGES: Record<string, string> = {
   admin_consent_required:
     "Your Microsoft 365 administrator needs to approve Eva before this mailbox can be connected. Ask them to authorise it, then try again.",
   invalid_state: "The connection attempt expired or was invalid — please try again.",
+  not_authorised:
+    "Your access changed while you were connecting, so the mailbox wasn't linked. Ask an owner or administrator to connect it.",
   missing_code: "Microsoft did not return an authorisation code — please try again.",
   exchange_failed: "We couldn't complete the Microsoft connection — please try again.",
   connect_failed: "We couldn't start the Microsoft connection — please try again.",

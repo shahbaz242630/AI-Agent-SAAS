@@ -3,7 +3,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "../src/generated/client.js";
 import { createPrismaClient } from "../src/client.js";
-import { seed } from "../src/seed.js";
+import { DEMO_ORGANISATION_ID, seed } from "../src/seed.js";
 import { TEST_DATABASE_URL } from "./support.js";
 
 /**
@@ -36,6 +36,20 @@ beforeAll(async () => {
   // Suppression rows are permanent and may be left by earlier test runs; clean
   // the deterministic fixture orgs so cross-tenant SELECT assertions are sound.
   await owner.$executeRaw`DELETE FROM suppression_list WHERE organisation_id IN (${ORG_A}::uuid, ${ORG_B}::uuid)`;
+  // POSITIVE CONTROL for email_accounts (Slice 1.6): unlike customers/invoices,
+  // seed() creates no mailbox rows, so "tenant A cannot SELECT tenant B's
+  // email_accounts" would pass against an empty table whether the
+  // tenant_isolation policy existed or not. Give it a row to hide — owned by
+  // the DEMO org, which the ORG_A attacker context must not see.
+  // Deliberately SOFT-DELETED: the cross-tenant SELECT below is unfiltered so a
+  // soft-deleted row is an equally good control, and it occupies no slot in the
+  // one-live-connection-per-org partial index, so specs sharing eva_test (and
+  // running in parallel) cannot collide with it.
+  await owner.$executeRaw`DELETE FROM email_accounts WHERE email_address = 'rls-fixture@example.com'`;
+  // id and updated_at are NOT NULL with no database default (Prisma generates
+  // both client-side), so raw SQL must supply them.
+  await owner.$executeRaw`INSERT INTO email_accounts (id, organisation_id, provider, email_address, access_token_encrypted, refresh_token_encrypted, token_expires_at, scopes, updated_at, deleted_at)
+    VALUES (${randomUUID()}::uuid, ${DEMO_ORGANISATION_ID}::uuid, 'microsoft', 'rls-fixture@example.com', 'v1.aa.bb.cc', 'v1.aa.bb.cc', now() + interval '1 hour', ARRAY['Mail.Send'], now(), now())`;
   await owner.$disconnect();
 });
 
@@ -137,10 +151,10 @@ describe("RLS: cross-tenant attacks are refused by Postgres itself", () => {
       asTenant(
         ORG_A,
         async (tx) =>
-          tx.$executeRaw`INSERT INTO reminder_sequences (organisation_id, name)
-            VALUES (${ORG_B}::uuid, 'PWN')`,
+          tx.$executeRaw`INSERT INTO reminder_sequences (id, organisation_id, name, updated_at)
+            VALUES (${randomUUID()}::uuid, ${ORG_B}::uuid, 'PWN', now())`,
       ),
-    ).rejects.toThrow();
+    ).rejects.toThrow(/row-level security/i);
   });
 
   it("tenant A cannot INSERT a reminder step carrying tenant B's organisation_id", async () => {
@@ -148,10 +162,10 @@ describe("RLS: cross-tenant attacks are refused by Postgres itself", () => {
       asTenant(
         ORG_A,
         async (tx) =>
-          tx.$executeRaw`INSERT INTO reminder_steps (organisation_id, sequence_id, key, offset_days, action_type)
-            VALUES (${ORG_B}::uuid, ${randomUUID()}::uuid, 'due_date', 0, 'email')`,
+          tx.$executeRaw`INSERT INTO reminder_steps (id, organisation_id, sequence_id, key, offset_days, action_type, updated_at)
+            VALUES (${randomUUID()}::uuid, ${ORG_B}::uuid, ${randomUUID()}::uuid, 'due_date', 0, 'email', now())`,
       ),
-    ).rejects.toThrow();
+    ).rejects.toThrow(/row-level security/i);
   });
 
   it("tenant A cannot INSERT a scheduled action carrying tenant B's organisation_id", async () => {
@@ -159,10 +173,10 @@ describe("RLS: cross-tenant attacks are refused by Postgres itself", () => {
       asTenant(
         ORG_A,
         async (tx) =>
-          tx.$executeRaw`INSERT INTO scheduled_actions (organisation_id, invoice_id, reminder_step_id, action_type, scheduled_date, idempotency_key)
-            VALUES (${ORG_B}::uuid, ${randomUUID()}::uuid, ${randomUUID()}::uuid, 'email', CURRENT_DATE, ${randomUUID()})`,
+          tx.$executeRaw`INSERT INTO scheduled_actions (id, organisation_id, invoice_id, reminder_step_id, action_type, scheduled_date, idempotency_key, updated_at)
+            VALUES (${randomUUID()}::uuid, ${ORG_B}::uuid, ${randomUUID()}::uuid, ${randomUUID()}::uuid, 'email', CURRENT_DATE, ${randomUUID()}, now())`,
       ),
-    ).rejects.toThrow();
+    ).rejects.toThrow(/row-level security/i);
   });
 
   it("tenant A cannot INSERT a human escalation carrying tenant B's organisation_id", async () => {
@@ -170,21 +184,31 @@ describe("RLS: cross-tenant attacks are refused by Postgres itself", () => {
       asTenant(
         ORG_A,
         async (tx) =>
-          tx.$executeRaw`INSERT INTO human_escalations (organisation_id, invoice_id, scheduled_action_id, reason)
-            VALUES (${ORG_B}::uuid, ${randomUUID()}::uuid, ${randomUUID()}::uuid, 'final_reminder_escalation')`,
+          tx.$executeRaw`INSERT INTO human_escalations (id, organisation_id, invoice_id, scheduled_action_id, reason, updated_at)
+            VALUES (${randomUUID()}::uuid, ${ORG_B}::uuid, ${randomUUID()}::uuid, ${randomUUID()}::uuid, 'final_reminder_escalation', now())`,
       ),
-    ).rejects.toThrow();
+    ).rejects.toThrow(/row-level security/i);
   });
 
-  it("cross-tenant INSERT into email_accounts is refused", async () => {
+  /**
+   * `id` and `updated_at` are NOT NULL with no database default (Prisma
+   * generates both client-side), so an INSERT omitting them dies on a 23502
+   * not-null violation BEFORE Postgres evaluates the RLS policy — and
+   * `rejects.toThrow()` cannot tell the two apart. Supplying every such column
+   * is what makes this a real RLS test; asserting the message proves which
+   * check refused us. Every INSERT attack in this describe was corrected the
+   * same way in slice 1.6 — before that they all passed on the not-null
+   * violation, so none of them actually exercised a policy.
+   */
+  it("cross-tenant INSERT into email_accounts is refused BY THE RLS POLICY", async () => {
     await expect(
       asTenant(
         ORG_A,
         (tx) =>
-          tx.$executeRaw`INSERT INTO email_accounts (organisation_id, provider, email_address, access_token_encrypted, refresh_token_encrypted, token_expires_at, scopes)
-        VALUES (${ORG_B}::uuid, 'microsoft', 'attacker@example.com', 'x', 'x', now(), ARRAY['Mail.Send'])`,
+          tx.$executeRaw`INSERT INTO email_accounts (id, organisation_id, provider, email_address, access_token_encrypted, refresh_token_encrypted, token_expires_at, scopes, updated_at)
+        VALUES (${randomUUID()}::uuid, ${ORG_B}::uuid, 'microsoft', 'attacker@example.com', 'x', 'x', now(), ARRAY['Mail.Send'], now())`,
       ),
-    ).rejects.toThrow();
+    ).rejects.toThrow(/row-level security/i);
   });
 
   it("tenant A cannot INSERT an invoice carrying tenant B's organisation_id", async () => {
@@ -192,10 +216,10 @@ describe("RLS: cross-tenant attacks are refused by Postgres itself", () => {
       asTenant(
         ORG_A,
         async (tx) =>
-          tx.$executeRaw`INSERT INTO invoices (organisation_id, customer_id, invoice_number, amount_minor_units, issue_date, due_date)
-            VALUES (${ORG_B}::uuid, ${randomUUID()}::uuid, 'PWN-1', 100, CURRENT_DATE, CURRENT_DATE)`,
+          tx.$executeRaw`INSERT INTO invoices (id, organisation_id, customer_id, invoice_number, amount_minor_units, issue_date, due_date, updated_at)
+            VALUES (${randomUUID()}::uuid, ${ORG_B}::uuid, ${randomUUID()}::uuid, 'PWN-1', 100, CURRENT_DATE, CURRENT_DATE, now())`,
       ),
-    ).rejects.toThrow();
+    ).rejects.toThrow(/row-level security/i);
   });
 
   it("tenant A cannot INSERT an import carrying tenant B's organisation_id", async () => {
@@ -203,10 +227,10 @@ describe("RLS: cross-tenant attacks are refused by Postgres itself", () => {
       asTenant(
         ORG_A,
         async (tx) =>
-          tx.$executeRaw`INSERT INTO imports (organisation_id, original_filename, file_type, mapping)
-            VALUES (${ORG_B}::uuid, 'pwn.csv', 'csv', '{}'::jsonb)`,
+          tx.$executeRaw`INSERT INTO imports (id, organisation_id, original_filename, file_type, mapping, updated_at)
+            VALUES (${randomUUID()}::uuid, ${ORG_B}::uuid, 'pwn.csv', 'csv', '{}'::jsonb, now())`,
       ),
-    ).rejects.toThrow();
+    ).rejects.toThrow(/row-level security/i);
   });
 
   it("tenant A cannot INSERT an invoice document carrying tenant B's organisation_id", async () => {
@@ -214,10 +238,10 @@ describe("RLS: cross-tenant attacks are refused by Postgres itself", () => {
       asTenant(
         ORG_A,
         async (tx) =>
-          tx.$executeRaw`INSERT INTO invoice_documents (organisation_id, original_filename, size_bytes, content)
-            VALUES (${ORG_B}::uuid, 'pwn.pdf', 4, '\\x25504446'::bytea)`,
+          tx.$executeRaw`INSERT INTO invoice_documents (id, organisation_id, original_filename, size_bytes, content, updated_at)
+            VALUES (${randomUUID()}::uuid, ${ORG_B}::uuid, 'pwn.pdf', 4, '\\x25504446'::bytea, now())`,
       ),
-    ).rejects.toThrow();
+    ).rejects.toThrow(/row-level security/i);
   });
 
   it("tenant A cannot INSERT a row carrying tenant B's organisation_id", async () => {
@@ -225,9 +249,10 @@ describe("RLS: cross-tenant attacks are refused by Postgres itself", () => {
       asTenant(
         ORG_A,
         async (tx) =>
-          tx.$executeRaw`INSERT INTO customers (organisation_id, name) VALUES (${ORG_B}::uuid, 'ACME')`,
+          tx.$executeRaw`INSERT INTO customers (id, organisation_id, name, updated_at)
+            VALUES (${randomUUID()}::uuid, ${ORG_B}::uuid, 'ACME', now())`,
       ),
-    ).rejects.toThrow();
+    ).rejects.toThrow(/row-level security/i);
   });
 
   it("tenant A cannot UPDATE tenant B's rows", async () => {

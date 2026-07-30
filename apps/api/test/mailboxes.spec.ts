@@ -34,6 +34,9 @@ import {
 
 const SANDBOX_EMAIL = "sandbox@example.com";
 
+/** A DIFFERENT 32-byte key — stands in for a rotated TOKEN_ENCRYPTION_KEY. */
+const OTHER_TOKEN_KEY = Buffer.from("fedcba9876543210fedcba9876543210").toString("base64");
+
 const DEFAULT_TOKENS: OAuthTokens = {
   accessToken: "stub-access-token-PLAINTEXT",
   refreshToken: "stub-refresh-token-PLAINTEXT",
@@ -317,6 +320,49 @@ describe("Mailboxes (Slice 1.6)", () => {
       expect(audit.entityId).toBe(account.id);
     });
 
+    /**
+     * The state is valid for 10 minutes and ruling 4 binds it to an
+     * ORGANISATION, not a role — so the initiator can lose mailbox:manage
+     * between clicking Connect and finishing consent. RLS would not stop the
+     * write (it only checks organisation_id), so the callback re-checks the
+     * permission itself and must refuse without spending the code.
+     */
+    it("refuses a state minted by a user who has since lost mailbox:manage", async () => {
+      const financeMember = org.members.find((member) => member.roleKey === "finance")!;
+      const state = await signOAuthState(TEST_OAUTH_STATE_SECRET, {
+        organisationId: org.id,
+        userId: financeMember.id,
+        nonce: randomUUID(),
+      });
+      const response = await request(app.getHttpServer())
+        .get(`/integrations/microsoft/callback?code=fake&state=${state}`)
+        .expect(302);
+      expect(response.headers.location).toBe(
+        "http://localhost:3000/app/settings/mailbox?error=not_authorised",
+      );
+      expect(graphStub.exchangeCode).not.toHaveBeenCalled();
+    });
+
+    it("refuses a state naming an organisation the user does not belong to", async () => {
+      const ownerMember = org.members.find((member) => member.roleKey === "owner")!;
+      const state = await signOAuthState(TEST_OAUTH_STATE_SECRET, {
+        organisationId: otherOrg.id,
+        userId: ownerMember.id,
+        nonce: randomUUID(),
+      });
+      const response = await request(app.getHttpServer())
+        .get(`/integrations/microsoft/callback?code=fake&state=${state}`)
+        .expect(302);
+      expect(response.headers.location).toBe(
+        "http://localhost:3000/app/settings/mailbox?error=not_authorised",
+      );
+      expect(graphStub.exchangeCode).not.toHaveBeenCalled();
+      const live = await owner.emailAccount.findMany({
+        where: { organisationId: otherOrg.id, deletedAt: null },
+      });
+      expect(live).toEqual([]);
+    });
+
     it("reconnect replaces the single live connection (partial unique index, ruling 6)", async () => {
       // Start disconnected so the first callback INSERTs and the second
       // UPDATEs: a soft-deleted row must block neither (ruling 6).
@@ -435,6 +481,34 @@ describe("Mailboxes (Slice 1.6)", () => {
       const after = await owner.emailAccount.findUniqueOrThrow({ where: { id: account.id } });
       expect(after.healthStatus).toBe("auth_expired");
       expect(after.lastError).toContain("reconnect");
+      // A failed attempt is still an attempt, and the transition is a tenant
+      // mutation like any other — it must be timestamped and audited, or
+      // "when did this mailbox die?" is unanswerable.
+      expect(after.lastHealthCheckAt).not.toBeNull();
+      await owner.auditLog.findFirstOrThrow({
+        where: { organisationId: org.id, action: "mailbox.auth_expired", entityId: account.id },
+      });
+    });
+
+    /**
+     * TOKEN_ENCRYPTION_KEY rotation is an explicitly supported future operation
+     * (that is why the ciphertext carries a `v1` prefix), and plan §8 risk 3
+     * names key mishandling. Undecryptable stored tokens must present as a dead
+     * grant — otherwise the caller gets an opaque 500 while the settings card
+     * still says "Connected", and 1.7's sender fails forever with no signal.
+     */
+    it("undecryptable stored tokens are treated as a dead grant, not a 500", async () => {
+      const account = await insertConnectedMailbox(owner, org.id, {
+        accessTokenEncrypted: encryptToken("token-under-a-different-key", OTHER_TOKEN_KEY),
+      });
+      const response = await request(app.getHttpServer())
+        .post(`/organisations/${org.id}/mailbox/test-email`)
+        .set("Authorization", `Bearer ${tokenFor("owner")}`)
+        .expect(400);
+      expect(response.body.message).toContain("reconnect");
+      expect(graphStub.sendMail).not.toHaveBeenCalled();
+      const after = await owner.emailAccount.findUniqueOrThrow({ where: { id: account.id } });
+      expect(after.healthStatus).toBe("auth_expired");
     });
 
     it("Graph failure → 502", async () => {

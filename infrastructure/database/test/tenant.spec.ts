@@ -257,6 +257,50 @@ describe("withTenant — app-layer tenant context (BRD 15)", () => {
       },
     );
   });
+
+  /** Slice 1.6: the app layer, as required alongside the direct-RLS attack in
+   *  rls.spec.ts. A connected mailbox is the highest-value row in the schema —
+   *  it holds the OAuth tokens Eva sends mail with. */
+  it("scopes email_accounts to the current organisation", async () => {
+    const created = await withTenant(
+      app,
+      { organisationId: DEMO_ORGANISATION_ID, userId: DEMO_USER_ID },
+      async (tx) =>
+        tx.emailAccount.create({
+          data: {
+            organisationId: DEMO_ORGANISATION_ID,
+            provider: "microsoft",
+            emailAddress: "tenant-scope-fixture@example.com",
+            accessTokenEncrypted: "v1.aa.bb.cc",
+            refreshTokenEncrypted: "v1.aa.bb.cc",
+            tokenExpiresAt: new Date(Date.now() + 3_600_000),
+            scopes: ["Mail.Send"],
+          },
+        }),
+    );
+
+    const visibleToSecond = await withTenant(
+      app,
+      { organisationId: SECOND_ORG_ID, userId: DEMO_USER_ID },
+      async (tx) => tx.emailAccount.findMany(),
+    );
+    expect(visibleToSecond).toEqual([]);
+
+    const visibleToDemo = await withTenant(
+      app,
+      { organisationId: DEMO_ORGANISATION_ID, userId: DEMO_USER_ID },
+      async (tx) => tx.emailAccount.findMany({ where: { id: created.id } }),
+    );
+    expect(visibleToDemo).toHaveLength(1);
+
+    // Hard delete, not soft: the one-live-connection-per-org partial index
+    // would otherwise block later specs from connecting a mailbox.
+    await withTenant(
+      app,
+      { organisationId: DEMO_ORGANISATION_ID, userId: DEMO_USER_ID },
+      async (tx) => tx.emailAccount.delete({ where: { id: created.id } }),
+    );
+  });
 });
 
 describe("withUser — login path (resolve my memberships before picking an org)", () => {
