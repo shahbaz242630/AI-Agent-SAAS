@@ -7,6 +7,10 @@ import { AppModule } from "../src/app.module.js";
 import { API_ENV } from "../src/config/config.module.js";
 import type { ApiEnv } from "../src/config/env.js";
 import { JwksService } from "../src/modules/authentication/jwks.service.js";
+import {
+  MICROSOFT_GRAPH_PROVIDER,
+  type MicrosoftGraphProvider,
+} from "../src/modules/integrations/microsoft-graph/microsoft-graph-provider.js";
 
 /**
  * Shared API test support (BRD 13): the app boots for real against the real
@@ -102,15 +106,27 @@ export function unsignedToken(claims: { sub: string; email: string }): string {
   })}.`;
 }
 
-/** Boots the real AppModule with test env + local JWKS override. */
-export async function createTestApp(): Promise<INestApplication> {
+/**
+ * Boots the real AppModule with test env + local JWKS override.
+ *
+ * `graphProvider` substitutes the Microsoft Graph adapter at the DI boundary
+ * (Slice 1.6) — the invoice-documents §7.4 exception: a REAL external provider
+ * cannot run in tests. Everything else stays real (Postgres as eva_app, RLS,
+ * permissions, crypto, state JWTs).
+ */
+export async function createTestApp(
+  options: { graphProvider?: MicrosoftGraphProvider } = {},
+): Promise<INestApplication> {
   const { getKey } = await testKeys();
-  const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
+  let builder = Test.createTestingModule({ imports: [AppModule] })
     .overrideProvider(API_ENV)
     .useValue(testEnv)
     .overrideProvider(JwksService)
-    .useValue({ getKey: () => getKey })
-    .compile();
+    .useValue({ getKey: () => getKey });
+  if (options.graphProvider) {
+    builder = builder.overrideProvider(MICROSOFT_GRAPH_PROVIDER).useValue(options.graphProvider);
+  }
+  const moduleRef = await builder.compile();
   const app = moduleRef.createNestApplication();
   await app.init();
   return app;
