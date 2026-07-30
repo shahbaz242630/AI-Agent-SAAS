@@ -53,5 +53,10 @@ Details/
 # agent guidance + internal business/project documents — LOCAL ONLY
 AGENTS.md
 
+# agent MCP server wiring — LOCAL ONLY. Holds no secrets (tokens come from the
+# OS environment), but it does name our Supabase/Trigger.dev project refs, and
+# infrastructure identifiers stay out of the public repo (founder rule 2026-07-22).
+.mcp.json
+
 # NOTE: README.md and SECURITY.md stay tracked — they are GitHub-facing
 # (repo landing page + vulnerability-reporting policy), not internal docs.
