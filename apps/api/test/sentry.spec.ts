@@ -21,6 +21,12 @@ const baseEnv: ApiEnv = {
   APP_DATABASE_URL: "postgresql://eva_app:eva_app@localhost:5432/eva",
   SENTRY_DSN_API: "https://public@o0.ingest.de.sentry.io/0",
   INTERNAL_API_SECRET: "test-internal-secret-0123456789abcdef", // gitleaks:allow — fake test fixture
+  TOKEN_ENCRYPTION_KEY: Buffer.from("0123456789abcdef0123456789abcdef").toString("base64"),
+  OAUTH_STATE_SECRET: "test-oauth-state-secret-0123456789abcdef", // gitleaks:allow — fake test fixture
+  MICROSOFT_CLIENT_ID: "test-microsoft-client-id",
+  MICROSOFT_CLIENT_SECRET: "test-microsoft-client-secret", // gitleaks:allow — fake test fixture
+  MICROSOFT_TENANT: "common",
+  MICROSOFT_OAUTH_REDIRECT_URI: "http://localhost:3001/integrations/microsoft/callback",
 };
 
 describe("initSentry (BRD 14)", () => {

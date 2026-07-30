@@ -54,6 +54,8 @@ export const PERMISSION_KEYS = [
   "permissions:manage",
   "reminders:read",
   "reminders:write",
+  "mailbox:read",
+  "mailbox:manage",
 ] as const;
 
 export type PermissionKey = (typeof PERMISSION_KEYS)[number];
@@ -79,6 +81,8 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<OrganisationRole, readonly Permiss
     // BRD §6: finance configures reminder sequences; everyone reads them.
     "reminders:read",
     "reminders:write",
+    // BRD §6 adjacency: finance lives with mailbox connection health day-to-day.
+    "mailbox:read",
   ],
   sales: ["customers:read", "contacts:read", "invoices:read", "imports:read", "reminders:read"],
   reception: ["customers:read", "contacts:read", "invoices:read", "imports:read", "reminders:read"],
@@ -371,4 +375,47 @@ export interface HumanEscalationDto {
   notes: string | null;
   /** ISO-8601 UTC timestamp. */
   createdAt: string;
+}
+
+// --- Slice 1.6: Outlook connection ---
+
+/** Mailbox providers (plan §3; CHECK constraint in migration 0013). */
+export const EMAIL_ACCOUNT_PROVIDERS = ["microsoft"] as const;
+
+export type EmailAccountProvider = (typeof EMAIL_ACCOUNT_PROVIDERS)[number];
+
+/** Connection health (plan §7.10; CHECK constraint in migration 0013). */
+export const EMAIL_ACCOUNT_HEALTH_STATUSES = ["active", "auth_expired", "error"] as const;
+
+export type EmailAccountHealthStatus = (typeof EMAIL_ACCOUNT_HEALTH_STATUSES)[number];
+
+/**
+ * GET .../mailbox — the sanitized connection status (plan §3). Tokens are
+ * NEVER exposed; `connected: false` collapses every other field to null.
+ */
+export interface MailboxStatusDto {
+  connected: boolean;
+  provider: EmailAccountProvider | null;
+  emailAddress: string | null;
+  displayName: string | null;
+  healthStatus: EmailAccountHealthStatus | null;
+  /** ISO-8601 UTC timestamp; null until a test email / send attempt runs. */
+  lastHealthCheckAt: string | null;
+  /** Sanitized, actionable message (e.g. "reconnect the mailbox"); null when healthy. */
+  lastError: string | null;
+  /** Connecting user's id; null when not connected. */
+  connectedBy: string | null;
+  /** ISO-8601 UTC timestamp; null when not connected. */
+  connectedAt: string | null;
+}
+
+/** POST .../mailbox/connect — the Microsoft authorize URL to redirect the browser to. */
+export interface MailboxConnectDto {
+  authorizeUrl: string;
+}
+
+/** POST .../mailbox/test-email — self-addressed send (ruling 7). */
+export interface MailboxTestEmailResultDto {
+  sent: true;
+  to: string;
 }

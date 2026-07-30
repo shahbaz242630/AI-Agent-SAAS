@@ -3,3 +3,8 @@ pnpm-lock.yaml
 
 # agent workflow scratch (subagent-driven development briefs/reports)
 .superpowers/
+
+# agent-local tooling config — never committed (ignored via the global git
+# ignore), so the format gate must not fail on it either
+.claude/
+.mcp.json

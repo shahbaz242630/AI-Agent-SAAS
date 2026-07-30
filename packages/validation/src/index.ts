@@ -310,3 +310,19 @@ export const updateReminderStepSchema = z
   });
 
 export type UpdateReminderStepInput = z.infer<typeof updateReminderStepSchema>;
+
+// --- Slice 1.6: Outlook connection ---
+
+/**
+ * GET /integrations/microsoft/callback query (Slice 1.6, ruling 4). Microsoft
+ * returns either `code`+`state` (consent given) or `error`(+`error_description`)
+ * (consent declined); `state` is always present on a legitimate redirect.
+ */
+export const microsoftCallbackQuerySchema = z.object({
+  code: z.string().min(1).optional(),
+  state: z.string().min(1),
+  error: z.string().optional(),
+  error_description: z.string().optional(),
+});
+
+export type MicrosoftCallbackQuery = z.infer<typeof microsoftCallbackQuerySchema>;

@@ -38,6 +38,7 @@ model Organisation {
   reminderSteps     ReminderStep[]
   scheduledActions  ScheduledAction[]
   humanEscalations  HumanEscalation[]
+  emailAccounts   EmailAccount[]
 
   @@map("organisations")
 }
@@ -49,8 +50,11 @@ model OrganisationSettings {
   /// All business logic runs in this timezone (BRD 18.1).
   timezone       String       @default("Europe/London")
   locale         String       @default("en-GB")
-  /// Shapes refined when the modules that consume them land (Phases 1-4);
-  /// calling hours are always clamped to 08:00-21:00 UK (BRD hard rule).
+  /// Shapes refined when the modules that consume them land (Phases 1-4).
+  /// Calling hours default to the UK 08:00-21:00 rule (BRD 17) but are per-org
+  /// CONFIGURATION, not a code constant — BRD 18.7 (jurisdiction-as-config)
+  /// supersedes any hard UK clamp, since the launch market is UK but GCC and
+  /// US follow (18.7.1). Phase 2 must read these, never hardcode a country.
   businessHours  Json?        @map("business_hours")
   callingHours   Json?        @map("calling_hours")
   createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
@@ -476,4 +480,34 @@ model HumanEscalation {
 
   @@index([organisationId])
   @@map("human_escalations")
+}
+
+/// A connected Microsoft 365 mailbox (Slice 1.6; BRD §8 email_accounts).
+/// OAuth tokens are AES-256-GCM ciphertext (v1.<iv>.<tag>.<ct> base64 — see
+/// apps/api common/crypto), NEVER plaintext; both are nulled on disconnect
+/// (ruling 8). health_status is active | auth_expired | error (CHECK in
+/// migration 0013). One LIVE connection per organisation: partial unique
+/// index WHERE deleted_at IS NULL (ruling 6, the 0011 precedent).
+model EmailAccount {
+  id                    String       @id @default(uuid()) @db.Uuid
+  organisationId        String       @map("organisation_id") @db.Uuid
+  provider              String       @default("microsoft")
+  emailAddress          String       @map("email_address")
+  displayName           String?      @map("display_name")
+  accessTokenEncrypted  String?      @map("access_token_encrypted")
+  refreshTokenEncrypted String?      @map("refresh_token_encrypted")
+  tokenExpiresAt        DateTime?    @map("token_expires_at") @db.Timestamptz(6)
+  scopes                String[]
+  healthStatus          String       @default("active") @map("health_status")
+  lastHealthCheckAt     DateTime?    @map("last_health_check_at") @db.Timestamptz(6)
+  lastError             String?      @map("last_error")
+  connectedBy           String?      @map("connected_by") @db.Uuid
+  createdAt             DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt             DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy             String?      @map("created_by") @db.Uuid
+  deletedAt             DateTime?    @map("deleted_at") @db.Timestamptz(6)
+  organisation          Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+
+  @@index([organisationId])
+  @@map("email_accounts")
 }
