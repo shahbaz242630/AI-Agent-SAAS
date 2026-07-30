@@ -50,8 +50,11 @@ model OrganisationSettings {
   /// All business logic runs in this timezone (BRD 18.1).
   timezone       String       @default("Europe/London")
   locale         String       @default("en-GB")
-  /// Shapes refined when the modules that consume them land (Phases 1-4);
-  /// calling hours are always clamped to 08:00-21:00 UK (BRD hard rule).
+  /// Shapes refined when the modules that consume them land (Phases 1-4).
+  /// Calling hours default to the UK 08:00-21:00 rule (BRD 17) but are per-org
+  /// CONFIGURATION, not a code constant — BRD 18.7 (jurisdiction-as-config)
+  /// supersedes any hard UK clamp, since the launch market is UK but GCC and
+  /// US follow (18.7.1). Phase 2 must read these, never hardcode a country.
   businessHours  Json?        @map("business_hours")
   callingHours   Json?        @map("calling_hours")
   createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
