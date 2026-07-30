@@ -84,12 +84,20 @@ export default async function AppHomePage() {
       <section className="flex w-full max-w-2xl flex-col gap-4">
         <div className="flex items-center justify-between">
           <h2 className="text-lg font-semibold">Your organisations</h2>
-          <Link
-            href="/app/organisations/new"
-            className="rounded-[var(--radius-card)] bg-primary px-4 py-2 text-sm font-medium text-primary-foreground"
-          >
-            New organisation
-          </Link>
+          <div className="flex gap-2">
+            <Link
+              href="/app/organisations/new"
+              className="rounded-[var(--radius-card)] bg-primary px-4 py-2 text-sm font-medium text-primary-foreground"
+            >
+              New organisation
+            </Link>
+            <Link
+              href="/app/settings/mailbox"
+              className="rounded-[var(--radius-card)] bg-muted px-4 py-2 text-sm font-medium hover:opacity-80"
+            >
+              Mailbox settings
+            </Link>
+          </div>
         </div>
         {organisations.length === 0 ? (
           <p className="rounded-[var(--radius-card)] bg-muted px-6 py-4 text-sm text-muted-foreground">
