@@ -4,15 +4,23 @@
 [extend]
 useDefault = true
 
-# Allowlist ONLY the two fake, publicly-documented placeholder values used in
-# test fixtures and .env.example (both also carry inline `gitleaks:allow`
-# comments, but gitleaks-action scans full branch history, so old commits need
-# this value-level suppression). regexTarget = "secret" matches the detected
-# secret value itself, not surrounding code.
+# Allowlist ONLY fake, publicly-documented placeholder values used in test
+# fixtures and .env.example (these also carry inline `gitleaks:allow` comments,
+# but gitleaks-action scans full branch history, so old commits need this
+# value-level suppression). regexTarget = "secret" matches the detected secret
+# value itself, not surrounding code — so each entry suppresses exactly one
+# known-fake string and nothing else.
 [allowlist]
 description = "Fake test/placeholder secrets only — never real credentials"
 regexTarget = "secret"
 regexes = [
   '''^test-internal-secret-0123456789abcdef$''',
   '''^local-dev-only-internal-secret-change-me$''',
+  # Slice 1.6. base64("too-short") — the deliberately invalid key the env spec
+  # feeds TOKEN_ENCRYPTION_KEY to prove the 32-byte check rejects it.
+  '''^dG9vLXNob3J0$''',
+  # Slice 1.6 .env.example placeholders. Self-evidently not credentials; they
+  # exist so `pnpm dev` fails loudly with a readable message when unset.
+  '''^replace-me-min-32-chars$''',
+  '''^replace-me-base64-32-bytes$''',
 ]
