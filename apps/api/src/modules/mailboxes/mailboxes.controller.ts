@@ -1,5 +1,5 @@
 import { Controller, Get, HttpCode, Param, ParseUUIDPipe, Post } from "@nestjs/common";
-import type { MailboxConnectDto, MailboxStatusDto } from "@eva/types";
+import type { MailboxConnectDto, MailboxStatusDto, MailboxTestEmailResultDto } from "@eva/types";
 import { CurrentAuthUser, type AuthUser } from "../authentication/current-auth-user.decorator.js";
 // eslint-disable-next-line @typescript-eslint/consistent-type-imports
 import { MailboxesService } from "./mailboxes.service.js";
@@ -30,5 +30,23 @@ export class MailboxesController {
     @Param("organisationId", ParseUUIDPipe) organisationId: string,
   ): Promise<MailboxConnectDto> {
     return this.mailboxesService.connect(authUser, organisationId);
+  }
+
+  @Post("disconnect")
+  @HttpCode(204)
+  disconnect(
+    @CurrentAuthUser() authUser: AuthUser,
+    @Param("organisationId", ParseUUIDPipe) organisationId: string,
+  ): Promise<void> {
+    return this.mailboxesService.disconnect(authUser, organisationId);
+  }
+
+  @Post("test-email")
+  @HttpCode(200)
+  sendTestEmail(
+    @CurrentAuthUser() authUser: AuthUser,
+    @Param("organisationId", ParseUUIDPipe) organisationId: string,
+  ): Promise<MailboxTestEmailResultDto> {
+    return this.mailboxesService.sendTestEmail(authUser, organisationId);
   }
 }

@@ -10,5 +10,8 @@ import { MicrosoftOAuthController } from "./microsoft-oauth.controller.js";
   imports: [UsersModule],
   controllers: [MailboxesController, MicrosoftOAuthController],
   providers: [MailboxesService, { provide: MICROSOFT_GRAPH_PROVIDER, useClass: GraphMailProvider }],
+  // Exported for 1.7: the reminder sender injects this to reach
+  // ensureAccessToken (refresh-on-use) before each send.
+  exports: [MailboxesService],
 })
 export class MailboxesModule {}

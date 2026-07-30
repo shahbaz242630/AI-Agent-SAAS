@@ -1,11 +1,22 @@
 import { randomUUID } from "node:crypto";
-import { Inject, Injectable } from "@nestjs/common";
+import {
+  BadGatewayException,
+  BadRequestException,
+  Inject,
+  Injectable,
+  NotFoundException,
+} from "@nestjs/common";
 // Value import is intentional: NestJS DI reads design:paramtypes metadata,
 // which requires the class reference at runtime (not a type-only import).
 // eslint-disable-next-line @typescript-eslint/consistent-type-imports
 import { PinoLogger } from "nestjs-pino";
 import { withTenant } from "@eva/database";
-import type { EmailAccountHealthStatus, MailboxConnectDto, MailboxStatusDto } from "@eva/types";
+import type {
+  EmailAccountHealthStatus,
+  MailboxConnectDto,
+  MailboxStatusDto,
+  MailboxTestEmailResultDto,
+} from "@eva/types";
 import type { MicrosoftCallbackQuery } from "@eva/validation";
 import { API_ENV } from "../../config/config.module.js";
 import type { ApiEnv } from "../../config/env.js";
@@ -13,11 +24,15 @@ import type { ApiEnv } from "../../config/env.js";
 import { PrismaService } from "../../common/database/prisma.service.js";
 // eslint-disable-next-line @typescript-eslint/consistent-type-imports
 import { UsersService } from "../users/users.service.js";
-import { requirePermission } from "../../common/permissions/permissions.js";
+import { requirePermission, type TenantTx } from "../../common/permissions/permissions.js";
 import { writeAuditLog } from "../../common/audit/audit-log.js";
-import { encryptToken } from "../../common/crypto/token-crypto.js";
+import { decryptToken, encryptToken } from "../../common/crypto/token-crypto.js";
 import type { AuthUser } from "../authentication/current-auth-user.decorator.js";
-import { MICROSOFT_GRAPH_PROVIDER } from "../integrations/microsoft-graph/microsoft-graph-provider.js";
+import {
+  GraphRequestError,
+  MICROSOFT_GRAPH_PROVIDER,
+  ReauthRequiredError,
+} from "../integrations/microsoft-graph/microsoft-graph-provider.js";
 import type {
   MailboxProfile,
   MicrosoftGraphProvider,
@@ -34,6 +49,15 @@ import { signOAuthState, verifyOAuthState, type OAuthStateClaims } from "./oauth
  * a distinct, actionable message rather than "you cancelled".
  */
 const ADMIN_CONSENT_CODES = /AADSTS90094|AADSTS90095/;
+
+/** Buffer before token_expires_at within which refresh-on-use kicks in (ruling 10). */
+const TOKEN_EXPIRY_BUFFER_MS = 5 * 60 * 1000;
+
+const AUTH_EXPIRED_MESSAGE = "Microsoft authorisation expired — reconnect the mailbox";
+
+/** The live email_accounts row as findFirst returns it (inferred — avoids
+ *  wrestling Prisma's GetPayload generics under exactOptionalPropertyTypes). */
+type ConnectedAccount = NonNullable<Awaited<ReturnType<TenantTx["emailAccount"]["findFirst"]>>>;
 
 /** GET .../mailbox payload when nothing is connected (plan §3). */
 const EMPTY_STATUS: MailboxStatusDto = {
@@ -179,5 +203,161 @@ export class MailboxesService {
     }
     this.logger.info({ emailAccountId: accountId }, "mailbox connected");
     return `${base}?connected=1`;
+  }
+
+  /** POST .../mailbox/disconnect — mailbox:manage. Tokens hard-gone
+   *  (columns nulled) + soft delete in ONE transaction (ruling 8); the row
+   *  stays as audit history and does not block reconnect (partial index). */
+  async disconnect(authUser: AuthUser, organisationId: string): Promise<void> {
+    const user = await this.usersService.resolveOrProvision(authUser);
+    await withTenant(this.prisma.db, { organisationId, userId: user.id }, async (tx) => {
+      await requirePermission(tx, organisationId, user.id, "mailbox:manage");
+      const account = await tx.emailAccount.findFirst({ where: { deletedAt: null } });
+      if (!account) throw new NotFoundException("No connected mailbox");
+      await tx.emailAccount.update({
+        where: { id: account.id },
+        data: {
+          accessTokenEncrypted: null,
+          refreshTokenEncrypted: null,
+          tokenExpiresAt: null,
+          deletedAt: new Date(),
+        },
+      });
+      await writeAuditLog(tx, {
+        organisationId,
+        actorUserId: user.id,
+        action: "mailbox.disconnected",
+        entityType: "email_account",
+        entityId: account.id,
+      });
+    });
+    this.logger.info({ organisationId }, "mailbox disconnected");
+  }
+
+  /**
+   * POST .../mailbox/test-email — mailbox:manage. Self-addressed send
+   * (ruling 7) proving the full path: valid token → Graph → Sent Items.
+   *
+   * FOUR independently committed steps, deliberately NOT one transaction
+   * (founder ruling 2026-07-30). Sending mail and rotating tokens are both
+   * irreversible: a single transaction that failed at COMMIT would leave
+   * Microsoft's state ahead of ours — mail sent with nothing recorded. That is
+   * not hypothetical, 1.5's PR #36 fixed a transaction timing out at
+   * transatlantic latency after its work had succeeded. No network call runs
+   * inside a transaction here, which is also why the 30s timeout that guarded
+   * the old shape is gone.
+   *
+   * 1.7 MUST follow this shape per reminder: claim in a committed transaction
+   * BEFORE sending, then record the outcome after. Steps 3→4 stay
+   * non-atomic — irreducible for any external send — so a crash between them
+   * leaves a claimed row that must never be auto-retried.
+   */
+  async sendTestEmail(
+    authUser: AuthUser,
+    organisationId: string,
+  ): Promise<MailboxTestEmailResultDto> {
+    const user = await this.usersService.resolveOrProvision(authUser);
+    // 1. Authorize + load. Read-only, so nothing to lose on rollback.
+    const account = await withTenant(
+      this.prisma.db,
+      { organisationId, userId: user.id },
+      async (tx) => {
+        await requirePermission(tx, organisationId, user.id, "mailbox:manage");
+        const found = await tx.emailAccount.findFirst({ where: { deletedAt: null } });
+        if (!found) throw new NotFoundException("No connected mailbox");
+        return found;
+      },
+    );
+    try {
+      // 2. Token. Any rotation is committed before we send (see below).
+      const accessToken = await this.ensureAccessToken(organisationId, user.id, account);
+      // 3. Send. No transaction open.
+      await this.graph.sendMail(accessToken, {
+        to: account.emailAddress,
+        subject: "Eva test email",
+        bodyText:
+          "This is a test email from Eva, sent to confirm your Outlook mailbox is connected correctly. You can ignore it.",
+      });
+    } catch (error) {
+      if (error instanceof ReauthRequiredError) {
+        await this.markAuthExpired(organisationId, user.id);
+        throw new BadRequestException(AUTH_EXPIRED_MESSAGE);
+      }
+      if (error instanceof GraphRequestError) {
+        throw new BadGatewayException(
+          "Microsoft Graph could not send the test email — try again shortly",
+        );
+      }
+      throw error;
+    }
+    // 4. Record the outcome.
+    await withTenant(this.prisma.db, { organisationId, userId: user.id }, async (tx) => {
+      await tx.emailAccount.update({
+        where: { id: account.id },
+        data: { healthStatus: "active", lastHealthCheckAt: new Date(), lastError: null },
+      });
+      await writeAuditLog(tx, {
+        organisationId,
+        actorUserId: user.id,
+        action: "mailbox.test_email_sent",
+        entityType: "email_account",
+        entityId: account.id,
+      });
+    });
+    return { sent: true, to: account.emailAddress };
+  }
+
+  /**
+   * Refresh-on-use (ruling 10) — THE seam 1.7's sender calls before every
+   * send. Returns a usable access token, refreshing first when inside the
+   * 5-minute expiry buffer, and throwing ReauthRequiredError when Microsoft
+   * has revoked the grant.
+   *
+   * The rotated pair is persisted in its OWN transaction and COMMITTED before
+   * this returns. Microsoft has already moved on by then, so the new pair must
+   * not be able to roll back with whatever the caller does next. Callers
+   * therefore call this BEFORE opening their own transaction — never inside
+   * one. A still-valid token opens no transaction at all.
+   */
+  async ensureAccessToken(
+    organisationId: string,
+    userId: string,
+    account: ConnectedAccount,
+  ): Promise<string> {
+    const key = this.env.TOKEN_ENCRYPTION_KEY;
+    if (
+      !account.accessTokenEncrypted ||
+      !account.refreshTokenEncrypted ||
+      !account.tokenExpiresAt
+    ) {
+      throw new ReauthRequiredError();
+    }
+    if (account.tokenExpiresAt.getTime() - Date.now() > TOKEN_EXPIRY_BUFFER_MS) {
+      return decryptToken(account.accessTokenEncrypted, key);
+    }
+    const tokens = await this.graph.refreshTokens(decryptToken(account.refreshTokenEncrypted, key));
+    await withTenant(this.prisma.db, { organisationId, userId }, async (tx) => {
+      await tx.emailAccount.update({
+        where: { id: account.id },
+        data: {
+          accessTokenEncrypted: encryptToken(tokens.accessToken, key),
+          refreshTokenEncrypted: encryptToken(tokens.refreshToken, key),
+          tokenExpiresAt: new Date(Date.now() + tokens.expiresInSeconds * 1000),
+          scopes: tokens.scopes,
+        },
+      });
+    });
+    return tokens.accessToken;
+  }
+
+  /** Surfaces a dead grant to the UI (ruling 10): the status endpoint reads
+   *  health_status, so "reconnect needed" shows without another Graph call. */
+  private async markAuthExpired(organisationId: string, userId: string): Promise<void> {
+    await withTenant(this.prisma.db, { organisationId, userId }, async (tx) => {
+      await tx.emailAccount.updateMany({
+        where: { deletedAt: null },
+        data: { healthStatus: "auth_expired", lastError: AUTH_EXPIRED_MESSAGE },
+      });
+    });
   }
 }

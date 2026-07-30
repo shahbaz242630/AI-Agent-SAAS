@@ -3,7 +3,11 @@ import type { INestApplication } from "@nestjs/common";
 import request from "supertest";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { EvaPrismaClient } from "@eva/database";
-import { encryptToken } from "../src/common/crypto/token-crypto.js";
+import { decryptToken, encryptToken } from "../src/common/crypto/token-crypto.js";
+import {
+  GraphRequestError,
+  ReauthRequiredError,
+} from "../src/modules/integrations/microsoft-graph/microsoft-graph-provider.js";
 import type {
   MicrosoftGraphProvider,
   OAuthTokens,
@@ -330,6 +334,180 @@ describe("Mailboxes (Slice 1.6)", () => {
         where: { organisationId: org.id, deletedAt: null },
       });
       expect(live).toHaveLength(1);
+    });
+  });
+
+  describe("POST .../mailbox/disconnect", () => {
+    it("wipes tokens + soft-deletes in one transaction, audited (ruling 8)", async () => {
+      const account = await insertConnectedMailbox(owner, org.id);
+      await request(app.getHttpServer())
+        .post(`/organisations/${org.id}/mailbox/disconnect`)
+        .set("Authorization", `Bearer ${tokenFor("owner")}`)
+        .expect(204);
+      const after = await owner.emailAccount.findUniqueOrThrow({ where: { id: account.id } });
+      expect(after.deletedAt).not.toBeNull();
+      expect(after.accessTokenEncrypted).toBeNull();
+      expect(after.refreshTokenEncrypted).toBeNull();
+      expect(after.tokenExpiresAt).toBeNull();
+      await owner.auditLog.findFirstOrThrow({
+        where: { organisationId: org.id, action: "mailbox.disconnected", entityId: account.id },
+      });
+    });
+
+    it("404s when nothing is connected", async () => {
+      await owner.emailAccount.updateMany({
+        where: { organisationId: org.id, deletedAt: null },
+        data: { deletedAt: new Date() },
+      });
+      await request(app.getHttpServer())
+        .post(`/organisations/${org.id}/mailbox/disconnect`)
+        .set("Authorization", `Bearer ${tokenFor("owner")}`)
+        .expect(404);
+    });
+
+    it("403s for finance (read-only), 404s cross-tenant", async () => {
+      await insertConnectedMailbox(owner, org.id);
+      await request(app.getHttpServer())
+        .post(`/organisations/${org.id}/mailbox/disconnect`)
+        .set("Authorization", `Bearer ${tokenFor("finance")}`)
+        .expect(403);
+      await request(app.getHttpServer())
+        .post(`/organisations/${otherOrg.id}/mailbox/disconnect`)
+        .set("Authorization", `Bearer ${tokenFor("owner")}`)
+        .expect(404);
+    });
+  });
+
+  describe("POST .../mailbox/test-email (self-addressed, ruling 7)", () => {
+    it("sends with the stored token, stamps health, audits", async () => {
+      const account = await insertConnectedMailbox(owner, org.id);
+      const response = await request(app.getHttpServer())
+        .post(`/organisations/${org.id}/mailbox/test-email`)
+        .set("Authorization", `Bearer ${tokenFor("owner")}`)
+        .expect(200);
+      expect(response.body).toEqual({ sent: true, to: SANDBOX_EMAIL });
+      expect(graphStub.sendMail).toHaveBeenCalledWith(
+        "fixture-access-token",
+        expect.objectContaining({ to: SANDBOX_EMAIL }),
+      );
+      expect(graphStub.refreshTokens).not.toHaveBeenCalled();
+      const after = await owner.emailAccount.findUniqueOrThrow({ where: { id: account.id } });
+      expect(after.lastHealthCheckAt).not.toBeNull();
+      expect(after.healthStatus).toBe("active");
+      await owner.auditLog.findFirstOrThrow({
+        where: { organisationId: org.id, action: "mailbox.test_email_sent", entityId: account.id },
+      });
+    });
+
+    it("refresh-on-use: expired access token refreshes, persists ciphertext, sends with the new token (ruling 10)", async () => {
+      const account = await insertConnectedMailbox(owner, org.id, {
+        tokenExpiresAt: new Date(Date.now() - 60_000),
+      });
+      await request(app.getHttpServer())
+        .post(`/organisations/${org.id}/mailbox/test-email`)
+        .set("Authorization", `Bearer ${tokenFor("owner")}`)
+        .expect(200);
+      expect(graphStub.refreshTokens).toHaveBeenCalledWith("fixture-refresh-token");
+      expect(graphStub.sendMail).toHaveBeenCalledWith(
+        "stub-access-token-REFRESHED",
+        expect.objectContaining({ to: SANDBOX_EMAIL }),
+      );
+      const after = await owner.emailAccount.findUniqueOrThrow({ where: { id: account.id } });
+      expect(after.tokenExpiresAt!.getTime()).toBeGreaterThan(Date.now());
+      expect(decryptToken(after.accessTokenEncrypted!, TEST_TOKEN_ENCRYPTION_KEY)).toBe(
+        "stub-access-token-REFRESHED",
+      );
+      expect(decryptToken(after.refreshTokenEncrypted!, TEST_TOKEN_ENCRYPTION_KEY)).toBe(
+        "stub-refresh-token-REFRESHED",
+      );
+    });
+
+    it("invalid_grant on refresh → 400 + health stamped auth_expired", async () => {
+      const account = await insertConnectedMailbox(owner, org.id, {
+        tokenExpiresAt: new Date(Date.now() - 60_000),
+      });
+      graphStub.refreshTokens.mockRejectedValueOnce(new ReauthRequiredError());
+      const response = await request(app.getHttpServer())
+        .post(`/organisations/${org.id}/mailbox/test-email`)
+        .set("Authorization", `Bearer ${tokenFor("owner")}`)
+        .expect(400);
+      expect(response.body.message).toContain("reconnect");
+      const after = await owner.emailAccount.findUniqueOrThrow({ where: { id: account.id } });
+      expect(after.healthStatus).toBe("auth_expired");
+      expect(after.lastError).toContain("reconnect");
+    });
+
+    it("Graph failure → 502", async () => {
+      await insertConnectedMailbox(owner, org.id);
+      graphStub.sendMail.mockRejectedValueOnce(new GraphRequestError("nope", 500));
+      await request(app.getHttpServer())
+        .post(`/organisations/${org.id}/mailbox/test-email`)
+        .set("Authorization", `Bearer ${tokenFor("owner")}`)
+        .expect(502);
+    });
+
+    /**
+     * The reason the send path is four committed steps rather than one
+     * transaction (founder ruling 2026-07-30): Microsoft rotates the refresh
+     * token when it is redeemed, so a rotation must NEVER be undone by a later
+     * failure. Here the refresh succeeds and the send then fails — the stored
+     * pair must still be the new one. One transaction would roll it back and
+     * leave us holding a pair Microsoft has moved past.
+     */
+    it("keeps a rotated token pair after a later send failure (no rollback of the refresh)", async () => {
+      const account = await insertConnectedMailbox(owner, org.id, {
+        tokenExpiresAt: new Date(Date.now() - 60_000),
+      });
+      graphStub.sendMail.mockRejectedValueOnce(new GraphRequestError("nope", 500));
+      await request(app.getHttpServer())
+        .post(`/organisations/${org.id}/mailbox/test-email`)
+        .set("Authorization", `Bearer ${tokenFor("owner")}`)
+        .expect(502);
+      expect(graphStub.refreshTokens).toHaveBeenCalledWith("fixture-refresh-token");
+      const after = await owner.emailAccount.findUniqueOrThrow({ where: { id: account.id } });
+      expect(decryptToken(after.accessTokenEncrypted!, TEST_TOKEN_ENCRYPTION_KEY)).toBe(
+        "stub-access-token-REFRESHED",
+      );
+      expect(decryptToken(after.refreshTokenEncrypted!, TEST_TOKEN_ENCRYPTION_KEY)).toBe(
+        "stub-refresh-token-REFRESHED",
+      );
+      expect(after.tokenExpiresAt!.getTime()).toBeGreaterThan(Date.now());
+    });
+
+    it("404s when nothing is connected; 403s for finance", async () => {
+      await owner.emailAccount.updateMany({
+        where: { organisationId: org.id, deletedAt: null },
+        data: { deletedAt: new Date() },
+      });
+      await request(app.getHttpServer())
+        .post(`/organisations/${org.id}/mailbox/test-email`)
+        .set("Authorization", `Bearer ${tokenFor("owner")}`)
+        .expect(404);
+      await insertConnectedMailbox(owner, org.id);
+      await request(app.getHttpServer())
+        .post(`/organisations/${org.id}/mailbox/test-email`)
+        .set("Authorization", `Bearer ${tokenFor("finance")}`)
+        .expect(403);
+    });
+
+    /** The status endpoint is how the UI learns a reconnect is needed
+     *  (ruling 10) — prove the auth_expired stamp actually surfaces. */
+    it("surfaces auth_expired through the status endpoint after a dead grant", async () => {
+      await insertConnectedMailbox(owner, org.id, {
+        tokenExpiresAt: new Date(Date.now() - 60_000),
+      });
+      graphStub.refreshTokens.mockRejectedValueOnce(new ReauthRequiredError());
+      await request(app.getHttpServer())
+        .post(`/organisations/${org.id}/mailbox/test-email`)
+        .set("Authorization", `Bearer ${tokenFor("owner")}`)
+        .expect(400);
+      const status = await request(app.getHttpServer())
+        .get(`/organisations/${org.id}/mailbox`)
+        .set("Authorization", `Bearer ${tokenFor("owner")}`)
+        .expect(200);
+      expect(status.body.healthStatus).toBe("auth_expired");
+      expect(status.body.lastError).toContain("reconnect");
+      expect(JSON.stringify(status.body)).not.toContain("fixture-refresh-token");
     });
   });
 });
