@@ -1,5 +1,5 @@
-import { Controller, Get, Param, ParseUUIDPipe } from "@nestjs/common";
-import type { MailboxStatusDto } from "@eva/types";
+import { Controller, Get, HttpCode, Param, ParseUUIDPipe, Post } from "@nestjs/common";
+import type { MailboxConnectDto, MailboxStatusDto } from "@eva/types";
 import { CurrentAuthUser, type AuthUser } from "../authentication/current-auth-user.decorator.js";
 // eslint-disable-next-line @typescript-eslint/consistent-type-imports
 import { MailboxesService } from "./mailboxes.service.js";
@@ -19,5 +19,16 @@ export class MailboxesController {
     @Param("organisationId", ParseUUIDPipe) organisationId: string,
   ): Promise<MailboxStatusDto> {
     return this.mailboxesService.getMailboxStatus(authUser, organisationId);
+  }
+
+  // Mints a state JWT and returns a URL; it creates no resource, so 200 not
+  // 201 (the repo's action-POST convention — imports/invoices controllers).
+  @Post("connect")
+  @HttpCode(200)
+  connect(
+    @CurrentAuthUser() authUser: AuthUser,
+    @Param("organisationId", ParseUUIDPipe) organisationId: string,
+  ): Promise<MailboxConnectDto> {
+    return this.mailboxesService.connect(authUser, organisationId);
   }
 }

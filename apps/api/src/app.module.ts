@@ -15,7 +15,7 @@ import { MonitoringModule } from "./modules/monitoring/monitoring.module.js";
 import { OrganisationsModule } from "./modules/organisations/organisations.module.js";
 import { RemindersModule } from "./modules/reminders/reminders.module.js";
 import { UsersModule } from "./modules/users/users.module.js";
-import { LOG_REDACT_PATHS } from "./common/logging/log-redaction.js";
+import { LOG_REDACT_PATHS, serializeRequest } from "./common/logging/log-redaction.js";
 import { GlobalExceptionFilter } from "./common/filters/global-exception.filter.js";
 import { ERROR_REPORTER } from "./common/monitoring/error-reporter.js";
 import { sentryErrorReporter } from "./common/monitoring/sentry.js";
@@ -49,6 +49,14 @@ import { sentryErrorReporter } from "./common/monitoring/sentry.js";
         },
         // Never log credentials or personal contact details (BRD 14 — no tokens in logs).
         redact: LOG_REDACT_PATHS,
+        // The OAuth callback URL carries the authorization code + state
+        // (Slice 1.6, BRD 14). Two layers: the serializer strips the query
+        // from EVERY line the request emits (nestjs-pino attaches `req` to all
+        // of them), and autoLogging skips the completion line entirely.
+        serializers: { req: serializeRequest },
+        autoLogging: {
+          ignore: (req) => (req.url ?? "").startsWith("/integrations/microsoft/callback"),
+        },
         ...(process.env.NODE_ENV === "development" ? { transport: { target: "pino-pretty" } } : {}),
       },
     }),

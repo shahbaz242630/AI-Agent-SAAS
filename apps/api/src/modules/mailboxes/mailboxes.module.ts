@@ -4,10 +4,11 @@ import { MICROSOFT_GRAPH_PROVIDER } from "../integrations/microsoft-graph/micros
 import { GraphMailProvider } from "../integrations/microsoft-graph/graph-mail-provider.js";
 import { MailboxesController } from "./mailboxes.controller.js";
 import { MailboxesService } from "./mailboxes.service.js";
+import { MicrosoftOAuthController } from "./microsoft-oauth.controller.js";
 
 @Module({
   imports: [UsersModule],
-  controllers: [MailboxesController],
+  controllers: [MailboxesController, MicrosoftOAuthController],
   providers: [MailboxesService, { provide: MICROSOFT_GRAPH_PROVIDER, useClass: GraphMailProvider }],
 })
 export class MailboxesModule {}
