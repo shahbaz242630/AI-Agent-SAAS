@@ -6,9 +6,11 @@ import type { EvaPrismaClient } from "@eva/database";
 import { decryptToken, encryptToken } from "../src/common/crypto/token-crypto.js";
 import {
   GraphRequestError,
+  MailboxUnavailableError,
   ReauthRequiredError,
 } from "../src/modules/integrations/microsoft-graph/microsoft-graph-provider.js";
 import type {
+  AuthorizeUrlOptions,
   MicrosoftGraphProvider,
   OAuthTokens,
 } from "../src/modules/integrations/microsoft-graph/microsoft-graph-provider.js";
@@ -55,21 +57,33 @@ const DEFAULT_PROFILE = { emailAddress: SANDBOX_EMAIL, displayName: "Sandbox Mai
 
 /** vi.fn-backed stub; reset to these defaults in beforeEach. */
 const graphStub = {
-  buildAuthorizeUrl: vi.fn((state: string) => `https://stub.test/authorize?state=${state}`),
+  buildAuthorizeUrl: vi.fn(
+    (state: string, options?: AuthorizeUrlOptions) =>
+      `https://stub.test/authorize?state=${state}${
+        options?.loginHint ? `&login_hint=${encodeURIComponent(options.loginHint)}` : ""
+      }`,
+  ),
   exchangeCode: vi.fn(async (): Promise<OAuthTokens> => DEFAULT_TOKENS),
   refreshTokens: vi.fn(async (): Promise<OAuthTokens> => REFRESHED_TOKENS),
   getProfile: vi.fn(async () => DEFAULT_PROFILE),
   sendMail: vi.fn(async (): Promise<void> => undefined),
+  probeMailbox: vi.fn(async (): Promise<void> => undefined),
 };
 
 function resetGraphStub(): void {
   graphStub.buildAuthorizeUrl
     .mockClear()
-    .mockImplementation((state: string) => `https://stub.test/authorize?state=${state}`);
+    .mockImplementation(
+      (state: string, options?: AuthorizeUrlOptions) =>
+        `https://stub.test/authorize?state=${state}${
+          options?.loginHint ? `&login_hint=${encodeURIComponent(options.loginHint)}` : ""
+        }`,
+    );
   graphStub.exchangeCode.mockClear().mockResolvedValue(DEFAULT_TOKENS);
   graphStub.refreshTokens.mockClear().mockResolvedValue(REFRESHED_TOKENS);
   graphStub.getProfile.mockClear().mockResolvedValue(DEFAULT_PROFILE);
   graphStub.sendMail.mockClear().mockResolvedValue(undefined);
+  graphStub.probeMailbox.mockClear().mockResolvedValue(undefined);
 }
 
 /** Inserts a live connection with VALID encrypted fixture tokens (1h expiry).
@@ -295,6 +309,39 @@ describe("Mailboxes (Slice 1.6)", () => {
       expect(response.headers.location).toBe(
         "http://localhost:3000/app/settings/mailbox?error=exchange_failed",
       );
+    });
+
+    /**
+     * Defect F3: an account with no Exchange licence used to be stored as a
+     * healthy connection and only failed at the first send — reported as
+     * "authorisation expired", advice that can never work. Catch it while the
+     * user is still watching, and store nothing.
+     */
+    it("redirects ?error=mailbox_unavailable and stores NOTHING for an account with no mailbox", async () => {
+      graphStub.probeMailbox.mockRejectedValueOnce(new MailboxUnavailableError());
+      // Counted rather than compared to []: earlier specs in this describe
+      // leave live and soft-deleted rows on the same org, and the property
+      // under test is "this call wrote nothing", not "the table is empty".
+      const before = await owner.emailAccount.count({ where: { organisationId: org.id } });
+
+      const response = await request(app.getHttpServer())
+        .get(`/integrations/microsoft/callback?code=fake&state=${await mintState()}`)
+        .expect(302);
+
+      expect(response.headers.location).toBe(
+        "http://localhost:3000/app/settings/mailbox?error=mailbox_unavailable",
+      );
+      const after = await owner.emailAccount.count({ where: { organisationId: org.id } });
+      expect(after).toBe(before);
+    });
+
+    it("probes every connect, so a dead mailbox cannot be stored unchecked", async () => {
+      await request(app.getHttpServer())
+        .get(`/integrations/microsoft/callback?code=fake&state=${await mintState()}`)
+        .expect(302);
+
+      expect(graphStub.probeMailbox).toHaveBeenCalledTimes(1);
+      expect(graphStub.probeMailbox).toHaveBeenCalledWith(DEFAULT_TOKENS.accessToken);
     });
 
     it("happy path: 302 ?connected=1, row upserted with CIPHERTEXT tokens, audit written", async () => {

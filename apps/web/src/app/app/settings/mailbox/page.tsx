@@ -21,16 +21,25 @@ interface MailboxStatus {
 }
 
 /**
- * Callback error codes from the API (mailboxes service). `admin_consent_required`
- * is the one most real customers will meet: Microsoft's default consent policy
- * blocks Mail scopes for an unverified publisher, and it arrives looking exactly
- * like a cancellation — so it gets its own actionable message rather than
- * "you cancelled" (founder ruling 2026-07-30).
+ * Callback error codes from the API (mailboxes service).
+ *
+ * `consent_denied` carries the weight, and deliberately names BOTH causes.
+ * Microsoft reports "your admin must approve this" and "you pressed cancel"
+ * identically — proven on live staging 2026-07-30, defect F1 — so any message
+ * that picks one is wrong half the time, and picking "you cancelled" strands
+ * every customer who is not their own administrator.
+ *
+ * `admin_consent_required` is kept because the classifier is still correct if
+ * Microsoft ever does send AADSTS90094, but it must never be relied on: that
+ * code goes to Entra's sign-in log, not to the application.
  */
 const ERROR_MESSAGES: Record<string, string> = {
-  consent_denied: "The Microsoft connection was cancelled or declined.",
+  consent_denied:
+    "We couldn't connect that mailbox. Either the connection was cancelled, or your Microsoft 365 administrator needs to approve Eva first.",
   admin_consent_required:
     "Your Microsoft 365 administrator needs to approve Eva before this mailbox can be connected. Ask them to authorise it, then try again.",
+  mailbox_unavailable:
+    "That Microsoft account doesn't have a mailbox — it may not have an Exchange Online licence. Connect the account you actually send email from.",
   invalid_state: "The connection attempt expired or was invalid — please try again.",
   not_authorised:
     "Your access changed while you were connecting, so the mailbox wasn't linked. Ask an owner or administrator to connect it.",

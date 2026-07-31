@@ -35,6 +35,7 @@ import {
 import type { AuthUser } from "../authentication/current-auth-user.decorator.js";
 import {
   GraphRequestError,
+  MailboxUnavailableError,
   MICROSOFT_GRAPH_PROVIDER,
   ReauthRequiredError,
 } from "../integrations/microsoft-graph/microsoft-graph-provider.js";
@@ -180,7 +181,17 @@ export class MailboxesService {
     try {
       tokens = await this.graph.exchangeCode(query.code);
       profile = await this.graph.getProfile(tokens.accessToken);
+      // Defect F3: an account with no Exchange licence consents perfectly
+      // happily and only fails at the first send — where it surfaced as
+      // "authorisation expired", advice that can never work, so the user
+      // looped forever. Prove there is a mailbox BEFORE storing anything:
+      // a dead connection stored here is one 1.7 would try to send through.
+      await this.graph.probeMailbox(tokens.accessToken);
     } catch (error) {
+      if (error instanceof MailboxUnavailableError) {
+        this.logger.info("mailbox connection rejected — account has no mailbox");
+        return `${base}?error=mailbox_unavailable`;
+      }
       this.logger.warn({ err: error }, "mailbox token exchange/profile failed");
       return `${base}?error=exchange_failed`;
     }
@@ -312,8 +323,23 @@ export class MailboxesService {
           "This is a test email from Eva, sent to confirm your Outlook mailbox is connected correctly. You can ignore it.",
       });
     } catch (error) {
+      // The licence was removed after connecting (connect itself now probes,
+      // F3). Not auth_expired — reconnecting cannot conjure a mailbox — so it
+      // gets health 'error' and its own advice.
+      if (error instanceof MailboxUnavailableError) {
+        await this.markUnhealthy(organisationId, user.id, {
+          healthStatus: "error",
+          lastError: error.message,
+          auditAction: "mailbox.mailbox_unavailable",
+        });
+        throw new BadRequestException(error.message);
+      }
       if (error instanceof ReauthRequiredError) {
-        await this.markAuthExpired(organisationId, user.id);
+        await this.markUnhealthy(organisationId, user.id, {
+          healthStatus: "auth_expired",
+          lastError: AUTH_EXPIRED_MESSAGE,
+          auditAction: "mailbox.auth_expired",
+        });
         throw new BadRequestException(AUTH_EXPIRED_MESSAGE);
       }
       if (error instanceof GraphRequestError) {
@@ -409,20 +435,24 @@ export class MailboxesService {
     }
   }
 
-  /** Surfaces a dead grant to the UI (ruling 10): the status endpoint reads
-   *  health_status, so "reconnect needed" shows without another Graph call.
+  /** Surfaces a broken mailbox to the UI (ruling 10): the status endpoint reads
+   *  health_status, so the right advice shows without another Graph call.
    *  Audited in the same transaction like every other tenant mutation — "when
    *  did this mailbox die, and why?" must be answerable from the audit trail,
    *  not from a mutable column with no timestamp. */
-  private async markAuthExpired(organisationId: string, userId: string): Promise<void> {
+  private async markUnhealthy(
+    organisationId: string,
+    userId: string,
+    outcome: { healthStatus: EmailAccountHealthStatus; lastError: string; auditAction: string },
+  ): Promise<void> {
     await withTenant(this.prisma.db, { organisationId, userId }, async (tx) => {
       const account = await tx.emailAccount.findFirst({ where: { deletedAt: null } });
       if (!account) return;
       await tx.emailAccount.update({
         where: { id: account.id },
         data: {
-          healthStatus: "auth_expired",
-          lastError: AUTH_EXPIRED_MESSAGE,
+          healthStatus: outcome.healthStatus,
+          lastError: outcome.lastError,
           // A failed attempt is still an attempt (the DTO documents this field
           // as "null until a test email / send attempt runs").
           lastHealthCheckAt: new Date(),
@@ -431,7 +461,7 @@ export class MailboxesService {
       await writeAuditLog(tx, {
         organisationId,
         actorUserId: userId,
-        action: "mailbox.auth_expired",
+        action: outcome.auditAction,
         entityType: "email_account",
         entityId: account.id,
       });

@@ -2,12 +2,17 @@ import { Inject, Injectable } from "@nestjs/common";
 import { API_ENV } from "../../../config/config.module.js";
 import type { ApiEnv } from "../../../config/env.js";
 import type {
+  AuthorizeUrlOptions,
   MailboxProfile,
   MicrosoftGraphProvider,
   OAuthTokens,
   SendMailInput,
 } from "./microsoft-graph-provider.js";
-import { GraphRequestError, ReauthRequiredError } from "./microsoft-graph-provider.js";
+import {
+  GraphRequestError,
+  MailboxUnavailableError,
+  ReauthRequiredError,
+} from "./microsoft-graph-provider.js";
 
 /**
  * Hand-rolled Microsoft identity platform + Graph client (Slice 1.6,
@@ -21,6 +26,29 @@ const GRAPH_BASE = "https://graph.microsoft.com/v1.0";
 /** Minimal delegated scopes (plan §10). `offline_access` is what yields a refresh token. */
 const SCOPES = "offline_access User.Read Mail.Read Mail.Send";
 
+/** Graph error codes meaning "the grant is fine, this account has no mailbox"
+ *  rather than "the grant is dead" (F3). Lower-cased for comparison. */
+const MAILBOX_MISSING_CODES = new Set([
+  "mailboxnotenabledforrestapi",
+  "mailboxnothostedinexchangeonline",
+  "restapinotenabledforuser",
+]);
+
+/**
+ * Reads ONLY Graph's `error.code` enum from a 401 body. A body we cannot parse
+ * deliberately answers false: mistaking a real expired grant for "you have no
+ * mailbox" would tell a user with a perfectly good mailbox to go and buy one.
+ */
+async function isMailboxMissing(response: Response): Promise<boolean> {
+  try {
+    const payload = (await response.clone().json()) as { error?: { code?: unknown } };
+    const code = payload.error?.code;
+    return typeof code === "string" && MAILBOX_MISSING_CODES.has(code.toLowerCase());
+  } catch {
+    return false;
+  }
+}
+
 @Injectable()
 export class GraphMailProvider implements MicrosoftGraphProvider {
   constructor(@Inject(API_ENV) private readonly env: ApiEnv) {}
@@ -30,15 +58,27 @@ export class GraphMailProvider implements MicrosoftGraphProvider {
     return `https://login.microsoftonline.com/${this.env.MICROSOFT_TENANT}/oauth2/v2.0`;
   }
 
-  buildAuthorizeUrl(state: string): string {
+  /**
+   * Defect F5: this used to send neither `login_hint` nor `prompt`, so
+   * Microsoft silently reused whatever session existed and a user signed into
+   * two accounts could connect the wrong mailbox without ever seeing a picker.
+   *
+   * `login_hint` is the reliable mechanism (verified against real Microsoft
+   * 2026-07-30). `prompt=select_account` is belt and braces only — it was
+   * IGNORED once a session context existed, so nothing may depend on it. The
+   * actual guarantee is showing the connected address back to the user.
+   */
+  buildAuthorizeUrl(state: string, options: AuthorizeUrlOptions = {}): string {
     const params = new URLSearchParams({
       client_id: this.env.MICROSOFT_CLIENT_ID,
       response_type: "code",
       redirect_uri: this.env.MICROSOFT_OAUTH_REDIRECT_URI,
       response_mode: "query",
       scope: SCOPES,
+      prompt: "select_account",
       state,
     });
+    if (options.loginHint) params.set("login_hint", options.loginHint);
     return `${this.loginBase}/authorize?${params.toString()}`;
   }
 
@@ -119,6 +159,16 @@ export class GraphMailProvider implements MicrosoftGraphProvider {
     });
   }
 
+  /**
+   * "Does this account actually have a mailbox?" — one cheap read, run at
+   * connect time so a licensing problem is caught while the user is watching,
+   * not at the first customer reminder in slice 1.7 (defect F3). The inbox
+   * folder is the smallest thing Mail.Read can ask for.
+   */
+  async probeMailbox(accessToken: string): Promise<void> {
+    await this.graphRequest(accessToken, `${GRAPH_BASE}/me/mailFolders/inbox?$select=id`);
+  }
+
   private async graphRequest<T = unknown>(
     accessToken: string,
     url: string,
@@ -131,7 +181,15 @@ export class GraphMailProvider implements MicrosoftGraphProvider {
         "Content-Type": "application/json",
       },
     });
-    if (response.status === 401) throw new ReauthRequiredError();
+    if (response.status === 401) {
+      // Not every 401 is a dead grant: an account with no Exchange licence is
+      // refused with 401 too, and telling that user to "reconnect" loops them
+      // forever (F3). Read Microsoft's own error code to tell them apart —
+      // one known enum field, never the free-text message, so the no-echo rule
+      // (Microsoft bodies can quote request material back) still holds.
+      if (await isMailboxMissing(response)) throw new MailboxUnavailableError();
+      throw new ReauthRequiredError();
+    }
     if (!response.ok) {
       const retryAfter = Number.parseInt(response.headers.get("Retry-After") ?? "", 10);
       throw new GraphRequestError(

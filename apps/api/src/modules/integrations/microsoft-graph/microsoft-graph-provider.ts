@@ -33,9 +33,16 @@ export interface SendMailInput {
   bodyText: string;
 }
 
+/** Optional targeting for the authorize URL (Slice onboarding Part A, F5). */
+export interface AuthorizeUrlOptions {
+  /** The address the user typed in Eva, passed to Microsoft as `login_hint` so
+   *  someone signed into two accounts lands on the right one. */
+  loginHint?: string;
+}
+
 export interface MicrosoftGraphProvider {
   /** The https://login.microsoftonline.com authorize URL for one state value. */
-  buildAuthorizeUrl(state: string): string;
+  buildAuthorizeUrl(state: string, options?: AuthorizeUrlOptions): string;
   /** authorization_code → tokens. Throws ReauthRequiredError on invalid_grant. */
   exchangeCode(code: string): Promise<OAuthTokens>;
   /** refresh_token → fresh tokens. Throws ReauthRequiredError on invalid_grant. */
@@ -44,6 +51,10 @@ export interface MicrosoftGraphProvider {
   getProfile(accessToken: string): Promise<MailboxProfile>;
   /** POST /me/sendMail (saveToSentItems). */
   sendMail(accessToken: string, input: SendMailInput): Promise<void>;
+  /** Cheap "does this account actually have a mailbox?" check, so a licensing
+   *  problem is caught at connect rather than at the first customer reminder
+   *  (F3). Throws MailboxUnavailableError when there is no mailbox. */
+  probeMailbox(accessToken: string): Promise<void>;
 }
 
 /**
@@ -55,6 +66,24 @@ export class ReauthRequiredError extends Error {
   constructor() {
     super("Microsoft authorisation expired — reconnect the mailbox");
     this.name = "ReauthRequiredError";
+  }
+}
+
+/**
+ * The grant is fine — the account has no mailbox to use (no Exchange Online
+ * licence, or mailbox not hosted in Exchange Online). Graph reports this as a
+ * 401, which is why it used to be mistaken for a dead grant (defect F3): the
+ * user was told to reconnect, which can never fix it, so they looped forever.
+ *
+ * Distinct from ReauthRequiredError because the remedy is completely
+ * different — connect a different account, or buy a licence.
+ */
+export class MailboxUnavailableError extends Error {
+  constructor() {
+    super(
+      "This Microsoft account doesn't have a mailbox — it may not have an Exchange Online licence",
+    );
+    this.name = "MailboxUnavailableError";
   }
 }
 
