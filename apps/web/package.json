@@ -11,6 +11,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@eva/configuration": "workspace:*",
     "@eva/design-system": "workspace:*",
     "@eva/ui": "workspace:*",
     "@sentry/nextjs": "^10.67.0",
