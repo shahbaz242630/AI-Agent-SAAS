@@ -126,9 +126,12 @@ export function AdminConsentHelp({ accountKind, url, organisationName, attempted
               </div>
             </details>
           </div>
+          {/* Deliberately no inline <em> here: it rendered as "arethe" — the
+              space next to the element was swallowed. Plain text is safer and
+              reads better anyway. */}
           <p className="text-sm text-muted-foreground">
-            If you <em>are</em> the administrator, just try again and tick &ldquo;Consent on behalf
-            of your organisation&rdquo;.
+            If you administer Microsoft 365 yourself, just try again and tick &ldquo;Consent on
+            behalf of your organisation&rdquo;.
           </p>
         </div>
       ) : null}
