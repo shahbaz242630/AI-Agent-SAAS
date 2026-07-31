@@ -50,6 +50,7 @@ const ERROR_MESSAGES: Record<string, string> = {
   invalid_state: "The connection attempt expired or was invalid — please try again.",
   not_authorised:
     "Your access changed while you were connecting, so the mailbox wasn't linked. Ask an owner or administrator to connect it.",
+  invalid_address: "That doesn't look like an email address — check it and try again.",
   missing_code: "Microsoft did not return an authorisation code — please try again.",
   exchange_failed: "We couldn't complete the Microsoft connection — please try again.",
   connect_failed: "We couldn't start the Microsoft connection — please try again.",
@@ -199,6 +200,7 @@ export default async function MailboxSettingsPage({
             organisationId={organisation.id}
             connected={status.connected}
             reconnectNeeded={status.healthStatus === "auth_expired"}
+            defaultAddress={attemptedAddress}
           />
         </section>
       ) : null}

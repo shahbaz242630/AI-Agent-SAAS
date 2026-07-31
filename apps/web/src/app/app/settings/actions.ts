@@ -32,29 +32,48 @@ async function getAccessToken(): Promise<string | null> {
  * so a redirect inside the try would be swallowed by our own catch (Next.js 16
  * redirect docs, "Behavior").
  */
-async function resolveConnectTarget(organisationId: string, accessToken: string): Promise<string> {
+async function resolveConnectTarget(
+  organisationId: string,
+  accessToken: string,
+  emailAddress: string,
+): Promise<string> {
   try {
     const response = await apiFetch(
       `/organisations/${organisationId}/mailbox/connect`,
       accessToken,
       {
         method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(emailAddress ? { emailAddress } : {}),
       },
     );
     const { authorizeUrl } = (await response.json()) as { authorizeUrl: string };
     return authorizeUrl;
   } catch (error) {
     if (error instanceof ApiError && error.status === 401) return "/sign-in";
-    return `${MAILBOX_PATH}?error=connect_failed`;
+    // A malformed address is a 400 with the API's own message, which now
+    // survives apiFetch (F4) — but this action can only redirect, so it goes
+    // back as a code the page already knows how to render.
+    return `${MAILBOX_PATH}?error=${error instanceof ApiError && error.status === 400 ? "invalid_address" : "connect_failed"}`;
   }
 }
 
-/** Connect: fetch the Microsoft authorize URL, then send the browser there. */
+/**
+ * Connect: fetch the Microsoft authorize URL, then send the browser there.
+ *
+ * The address is optional and is only ever a hint — it becomes Microsoft's
+ * `login_hint` so someone signed into two accounts lands on the right one
+ * (defect F5), and its domain tells us whether an administrator can even exist
+ * if consent is declined (F1). Eva never asks for the password; that happens at
+ * Microsoft, and asking here would train people into exactly the behaviour
+ * phishing relies on.
+ */
 export async function connectMailbox(formData: FormData): Promise<void> {
   const organisationId = String(formData.get("organisationId") ?? "");
+  const emailAddress = String(formData.get("emailAddress") ?? "").trim();
   const accessToken = await getAccessToken();
   if (!accessToken) redirect("/sign-in");
-  redirect(await resolveConnectTarget(organisationId, accessToken));
+  redirect(await resolveConnectTarget(organisationId, accessToken, emailAddress));
 }
 
 export async function disconnectMailbox(

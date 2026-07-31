@@ -21,11 +21,15 @@ export function MailboxControls({
   organisationId,
   connected,
   reconnectNeeded,
+  defaultAddress,
 }: {
   organisationId: string;
   connected: boolean;
   /** healthStatus === 'auth_expired' — surface Connect as the fix. */
   reconnectNeeded: boolean;
+  /** Pre-fills the address after a failed attempt, so a customer who has just
+   *  been sent to ask their administrator does not retype it. */
+  defaultAddress?: string | null;
 }) {
   const [disconnectState, disconnectAction, disconnectPending] = useActionState(
     disconnectMailbox,
@@ -43,11 +47,31 @@ export function MailboxControls({
   return (
     <div className="flex flex-col gap-4">
       {(!connected || reconnectNeeded) && (
-        <form action={connectMailbox}>
+        <form action={connectMailbox} className="flex flex-col gap-3">
           <input type="hidden" name="organisationId" value={organisationId} />
-          <button type="submit" className={BUTTON_CLASS}>
-            {reconnectNeeded ? "Reconnect Outlook mailbox" : "Connect Outlook mailbox"}
-          </button>
+          <div className="flex flex-col gap-1">
+            <label htmlFor="emailAddress" className="text-sm font-medium">
+              Which mailbox?
+            </label>
+            <input
+              id="emailAddress"
+              name="emailAddress"
+              type="email"
+              autoComplete="email"
+              defaultValue={defaultAddress ?? ""}
+              placeholder="you@yourcompany.co.uk"
+              className="w-full max-w-sm rounded-[var(--radius-card)] border border-muted-foreground/30 bg-background px-3 py-2 text-sm outline-none focus:border-primary"
+            />
+            <p className="text-xs text-muted-foreground">
+              Personal Outlook and Hotmail addresses work too. You&apos;ll sign in at Microsoft —
+              Eva never sees your password.
+            </p>
+          </div>
+          <div>
+            <button type="submit" className={BUTTON_CLASS}>
+              {reconnectNeeded ? "Reconnect Outlook mailbox" : "Connect Outlook mailbox"}
+            </button>
+          </div>
         </form>
       )}
 
