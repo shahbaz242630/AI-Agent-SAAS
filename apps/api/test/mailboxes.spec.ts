@@ -14,6 +14,8 @@ import type {
   MicrosoftGraphProvider,
   OAuthTokens,
 } from "../src/modules/integrations/microsoft-graph/microsoft-graph-provider.js";
+import { UNKNOWN_DOMAIN } from "../src/modules/integrations/microsoft-graph/microsoft-discovery.js";
+import type { DomainDiscovery } from "../src/modules/integrations/microsoft-graph/microsoft-discovery.js";
 import { signOAuthState, verifyOAuthState } from "../src/modules/mailboxes/oauth-state.js";
 import {
   createOrgWithMembers,
@@ -70,7 +72,15 @@ const graphStub = {
   probeMailbox: vi.fn(async (): Promise<void> => undefined),
 };
 
+/** Discovery is stubbed like the Graph provider: it reaches Microsoft's
+ *  unauthenticated endpoints, and its real implementation fails open to
+ *  "unknown", which would quietly weaken every assertion below. */
+const discoveryStub = {
+  describeDomain: vi.fn(async (): Promise<DomainDiscovery> => UNKNOWN_DOMAIN),
+};
+
 function resetGraphStub(): void {
+  discoveryStub.describeDomain.mockClear().mockResolvedValue(UNKNOWN_DOMAIN);
   graphStub.buildAuthorizeUrl
     .mockClear()
     .mockImplementation(
@@ -130,7 +140,10 @@ describe("Mailboxes (Slice 1.6)", () => {
     await seedTestDatabase(owner);
     org = await createOrgWithMembers(owner, "mailbox", ["owner", "finance", "sales"]);
     otherOrg = await createOrgWithMembers(owner, "mailbox-other", ["owner"]);
-    app = await createTestApp({ graphProvider: graphStub as MicrosoftGraphProvider });
+    app = await createTestApp({
+      graphProvider: graphStub as MicrosoftGraphProvider,
+      discovery: discoveryStub,
+    });
     for (const member of org.members) {
       tokens.set(member.roleKey, await signToken({ sub: member.authUserId, email: member.email }));
     }
@@ -228,15 +241,238 @@ describe("Mailboxes (Slice 1.6)", () => {
     });
   });
 
+  /**
+   * Defect F1: `admin_consent_required` never fires, because Microsoft reports
+   * the "Need admin approval" wall as an ordinary decline. The UI therefore has
+   * to offer BOTH readings of a decline, and this endpoint supplies the
+   * administrator half — the link the customer forwards to their IT contact.
+   */
+  describe("GET .../mailbox/admin-consent (F1)", () => {
+    const adminConsentUrl = (email?: string) =>
+      `/organisations/${org.id}/mailbox/admin-consent${email ? `?email=${encodeURIComponent(email)}` : ""}`;
+
+    it("builds a TENANT-SPECIFIC link and names the customer's own organisation", async () => {
+      discoveryStub.describeDomain.mockResolvedValueOnce({
+        kind: "work",
+        tenantId: "b6ae81d6-90c0-4114-a1a0-dc674c5900a9",
+        organisationName: "Acme Ltd",
+      });
+
+      const response = await request(app.getHttpServer())
+        .get(adminConsentUrl("sara@acme.example"))
+        .set("Authorization", `Bearer ${tokenFor("owner")}`)
+        .expect(200);
+
+      const url = new URL(response.body.url);
+      // The tenant-specific form renders the org-wide screen ("No one else will
+      // be prompted"); `organizations` is only the fallback.
+      expect(url.pathname).toBe("/b6ae81d6-90c0-4114-a1a0-dc674c5900a9/adminconsent");
+      expect(url.origin).toBe("https://login.microsoftonline.com");
+      expect(url.searchParams.get("client_id")).toBeTruthy();
+      expect(response.body.organisationName).toBe("Acme Ltd");
+      expect(response.body.accountKind).toBe("work");
+      expect(discoveryStub.describeDomain).toHaveBeenCalledWith("acme.example");
+    });
+
+    it("carries a SEVEN-DAY admin_consent state, because the link gets forwarded", async () => {
+      discoveryStub.describeDomain.mockResolvedValueOnce({
+        kind: "work",
+        tenantId: randomUUID(),
+        organisationName: "Acme Ltd",
+      });
+
+      const response = await request(app.getHttpServer())
+        .get(adminConsentUrl("sara@acme.example"))
+        .set("Authorization", `Bearer ${tokenFor("owner")}`)
+        .expect(200);
+
+      const state = new URL(response.body.url).searchParams.get("state")!;
+      const claims = await verifyOAuthState(TEST_OAUTH_STATE_SECRET, state, "admin_consent");
+      expect(claims.organisationId).toBe(org.id);
+      // A ten-minute token would expire before an IT contact ever opened it.
+      await expect(verifyOAuthState(TEST_OAUTH_STATE_SECRET, state)).rejects.toThrow();
+    });
+
+    it("offers NO link for a personal account — there is no administrator to ask", async () => {
+      discoveryStub.describeDomain.mockResolvedValueOnce({
+        kind: "personal",
+        tenantId: null,
+        organisationName: null,
+      });
+
+      const response = await request(app.getHttpServer())
+        .get(adminConsentUrl("sara@hotmail.co.uk"))
+        .set("Authorization", `Bearer ${tokenFor("owner")}`)
+        .expect(200);
+
+      expect(response.body).toEqual({
+        accountKind: "personal",
+        url: null,
+        organisationName: null,
+      });
+    });
+
+    it("falls back to the generic form when the tenant is unknown", async () => {
+      const response = await request(app.getHttpServer())
+        .get(adminConsentUrl())
+        .set("Authorization", `Bearer ${tokenFor("owner")}`)
+        .expect(200);
+
+      expect(new URL(response.body.url).pathname).toBe("/organizations/adminconsent");
+      expect(response.body.accountKind).toBe("unknown");
+    });
+
+    it("403s for a member without mailbox:manage (finance)", async () => {
+      await request(app.getHttpServer())
+        .get(adminConsentUrl("sara@acme.example"))
+        .set("Authorization", `Bearer ${tokenFor("finance")}`)
+        .expect(403);
+    });
+
+    it("404s for a non-member (cross-tenant is invisible, BRD 15)", async () => {
+      await request(app.getHttpServer())
+        .get(`/organisations/${otherOrg.id}/mailbox/admin-consent`)
+        .set("Authorization", `Bearer ${tokenFor("owner")}`)
+        .expect(404);
+    });
+  });
+
+  describe("POST .../mailbox/connect — login_hint (F5)", () => {
+    it("passes the address to Microsoft and records it on the state", async () => {
+      const response = await request(app.getHttpServer())
+        .post(`/organisations/${org.id}/mailbox/connect`)
+        .set("Authorization", `Bearer ${tokenFor("owner")}`)
+        .send({ emailAddress: "sara@acme.example" })
+        .expect(200);
+
+      expect(graphStub.buildAuthorizeUrl).toHaveBeenCalledWith(expect.any(String), {
+        loginHint: "sara@acme.example",
+      });
+      const state = new URL(response.body.authorizeUrl).searchParams.get("state")!;
+      expect((await verifyOAuthState(TEST_OAUTH_STATE_SECRET, state)).loginHint).toBe(
+        "sara@acme.example",
+      );
+    });
+
+    it("rejects a malformed address rather than passing it to Microsoft", async () => {
+      await request(app.getHttpServer())
+        .post(`/organisations/${org.id}/mailbox/connect`)
+        .set("Authorization", `Bearer ${tokenFor("owner")}`)
+        .send({ emailAddress: "not-an-email" })
+        .expect(400);
+    });
+
+    it("still works with no address at all", async () => {
+      await request(app.getHttpServer())
+        .post(`/organisations/${org.id}/mailbox/connect`)
+        .set("Authorization", `Bearer ${tokenFor("owner")}`)
+        .expect(200);
+    });
+  });
+
   describe("GET /integrations/microsoft/callback (@Public)", () => {
-    async function mintState(organisationId = org.id): Promise<string> {
+    async function mintState(
+      organisationId = org.id,
+      extra: { purpose?: "connect" | "admin_consent"; loginHint?: string } = {},
+    ): Promise<string> {
       const ownerMember = org.members.find((member) => member.roleKey === "owner")!;
       return signOAuthState(TEST_OAUTH_STATE_SECRET, {
         organisationId,
         userId: ownerMember.id,
         nonce: randomUUID(),
+        ...extra,
       });
     }
+
+    /**
+     * Defect F2: the /adminconsent return carries `admin_consent=True&tenant=`
+     * with NO code and NO state of its own, and `state` used to be required —
+     * so the customer's IT administrator finished approving Eva and landed on
+     * `{"statusCode":400,"message":"Invalid request body — state: ..."}`.
+     */
+    describe("the /adminconsent return (F2)", () => {
+      it("does NOT 400 when Microsoft sends admin_consent with no state at all", async () => {
+        const response = await request(app.getHttpServer())
+          .get("/integrations/microsoft/callback?admin_consent=True&tenant=" + randomUUID())
+          .expect(302);
+
+        expect(response.headers.location).toBe(
+          "http://localhost:3000/app/settings/mailbox?admin_consent=granted",
+        );
+      });
+
+      it("attributes and audits the approval when our state came back", async () => {
+        const tenantId = randomUUID();
+        const state = await mintState(org.id, { purpose: "admin_consent" });
+
+        const response = await request(app.getHttpServer())
+          .get(
+            `/integrations/microsoft/callback?admin_consent=True&tenant=${tenantId}&state=${state}`,
+          )
+          .expect(302);
+
+        expect(response.headers.location).toBe(
+          "http://localhost:3000/app/settings/mailbox?admin_consent=granted",
+        );
+        const audit = await owner.auditLog.findFirst({
+          where: { organisationId: org.id, action: "mailbox.admin_consent_granted" },
+          orderBy: { createdAt: "desc" },
+        });
+        expect(audit).not.toBeNull();
+        expect(audit?.metadata).toMatchObject({ tenant: tenantId });
+      });
+
+      it("refuses a CONNECT state at the admin-consent return", async () => {
+        // The admin-consent token lives seven days; the connect token is the
+        // ten-minute CSRF defence. Purpose-scoping is what makes the long life
+        // affordable, so it is asserted in both directions.
+        const response = await request(app.getHttpServer())
+          .get(`/integrations/microsoft/callback?admin_consent=True&state=${await mintState()}`)
+          .expect(302);
+
+        expect(response.headers.location).toBe(
+          "http://localhost:3000/app/settings/mailbox?error=invalid_state",
+        );
+      });
+
+      it("refuses an ADMIN_CONSENT state when completing a connect", async () => {
+        const state = await mintState(org.id, { purpose: "admin_consent" });
+
+        const response = await request(app.getHttpServer())
+          .get(`/integrations/microsoft/callback?code=fake&state=${state}`)
+          .expect(302);
+
+        expect(response.headers.location).toBe(
+          "http://localhost:3000/app/settings/mailbox?error=invalid_state",
+        );
+        expect(graphStub.exchangeCode).not.toHaveBeenCalled();
+      });
+
+      it("still REDIRECTS for a callback carrying nothing at all", async () => {
+        // The whole point of F2 is that this route owes the browser a redirect
+        // in every case. Tightening the schema to reject unrecognised shapes
+        // would reintroduce the raw-JSON 400 by a different door.
+        const response = await request(app.getHttpServer())
+          .get("/integrations/microsoft/callback")
+          .expect(302);
+
+        expect(response.headers.location).toBe(
+          "http://localhost:3000/app/settings/mailbox?error=invalid_state",
+        );
+      });
+    });
+
+    it("carries the attempted address through a decline, so the UI can name it (F1)", async () => {
+      const state = await mintState(org.id, { loginHint: "sara@acme.example" });
+
+      const response = await request(app.getHttpServer())
+        .get(`/integrations/microsoft/callback?error=access_denied&state=${state}`)
+        .expect(302);
+
+      expect(response.headers.location).toBe(
+        "http://localhost:3000/app/settings/mailbox?error=consent_denied&hint=sara%40acme.example",
+      );
+    });
 
     it("redirects ?error=consent_denied when Microsoft returns an error", async () => {
       const response = await request(app.getHttpServer())

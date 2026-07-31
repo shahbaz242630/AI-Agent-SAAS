@@ -2,6 +2,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { ApiError, apiFetch } from "@/lib/api";
 import { createClient } from "@/lib/supabase/server";
+import { AdminConsentHelp } from "./admin-consent-help";
 import { MailboxControls } from "./mailbox-controls";
 
 // Response shapes mirror the API contracts (apps/api modules/mailboxes).
@@ -18,6 +19,12 @@ interface MailboxStatus {
   healthStatus: "active" | "auth_expired" | "error" | null;
   lastHealthCheckAt: string | null;
   lastError: string | null;
+}
+
+interface AdminConsent {
+  accountKind: "work" | "personal" | "unknown";
+  url: string | null;
+  organisationName: string | null;
 }
 
 /**
@@ -81,11 +88,37 @@ export default async function MailboxSettingsPage({
     }
   }
 
-  const flashError =
-    typeof params.error === "string"
-      ? (ERROR_MESSAGES[params.error] ?? "Something went wrong — please try again.")
-      : null;
+  const errorCode = typeof params.error === "string" ? params.error : null;
   const flashConnected = params.connected === "1";
+  const flashAdminConsent = params.admin_consent === "granted";
+  const attemptedAddress = typeof params.hint === "string" ? params.hint : null;
+
+  // A declined consent is genuinely ambiguous (F1), so it gets a whole section
+  // rather than a one-line flash: the customer may need to involve their
+  // administrator, and that is the moment to hand them the link.
+  const showConsentHelp = errorCode === "consent_denied" || errorCode === "admin_consent_required";
+  let adminConsent: AdminConsent | null = null;
+  if (showConsentHelp && organisation && !forbidden) {
+    try {
+      const query = attemptedAddress ? `?email=${encodeURIComponent(attemptedAddress)}` : "";
+      adminConsent = (await (
+        await apiFetch(
+          `/organisations/${organisation.id}/mailbox/admin-consent${query}`,
+          accessToken,
+        )
+      ).json()) as AdminConsent;
+    } catch (error) {
+      // The help is an enhancement; the message below still explains the
+      // situation without it. Never turn a failed connection into a crash.
+      if (error instanceof ApiError && error.status === 401) redirect("/sign-in");
+      adminConsent = null;
+    }
+  }
+
+  const flashError =
+    errorCode && !showConsentHelp
+      ? (ERROR_MESSAGES[errorCode] ?? "Something went wrong — please try again.")
+      : null;
 
   return (
     <main className="flex flex-1 flex-col items-center gap-6 p-8">
@@ -104,6 +137,18 @@ export default async function MailboxSettingsPage({
           Mailbox connected successfully.
         </p>
       )}
+      {/* The approver is usually the customer's IT contact and not an Eva user
+          at all, so this must never claim a mailbox is now connected —
+          somebody else still has to do that. */}
+      {flashAdminConsent && (
+        <p
+          role="status"
+          className="w-full max-w-2xl rounded-[var(--radius-card)] bg-muted px-6 py-3 text-sm text-success"
+        >
+          Eva is approved for your organisation. Whoever asked for this approval can now connect
+          their mailbox.
+        </p>
+      )}
       {flashError && (
         <p
           role="alert"
@@ -111,6 +156,14 @@ export default async function MailboxSettingsPage({
         >
           {flashError}
         </p>
+      )}
+      {showConsentHelp && (
+        <AdminConsentHelp
+          accountKind={adminConsent?.accountKind ?? "unknown"}
+          url={adminConsent?.url ?? null}
+          organisationName={adminConsent?.organisationName ?? null}
+          attemptedAddress={attemptedAddress}
+        />
       )}
 
       {!organisation ? (

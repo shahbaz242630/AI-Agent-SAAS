@@ -1,5 +1,12 @@
-import { Controller, Get, HttpCode, Param, ParseUUIDPipe, Post } from "@nestjs/common";
-import type { MailboxConnectDto, MailboxStatusDto, MailboxTestEmailResultDto } from "@eva/types";
+import { Body, Controller, Get, HttpCode, Param, ParseUUIDPipe, Post, Query } from "@nestjs/common";
+import type {
+  MailboxAdminConsentDto,
+  MailboxConnectDto,
+  MailboxStatusDto,
+  MailboxTestEmailResultDto,
+} from "@eva/types";
+import { mailboxConnectSchema, type MailboxConnectInput } from "@eva/validation";
+import { ZodValidationPipe } from "../../common/validation/zod-validation.pipe.js";
 import { CurrentAuthUser, type AuthUser } from "../authentication/current-auth-user.decorator.js";
 // eslint-disable-next-line @typescript-eslint/consistent-type-imports
 import { MailboxesService } from "./mailboxes.service.js";
@@ -28,8 +35,20 @@ export class MailboxesController {
   connect(
     @CurrentAuthUser() authUser: AuthUser,
     @Param("organisationId", ParseUUIDPipe) organisationId: string,
+    @Body(new ZodValidationPipe(mailboxConnectSchema)) body: MailboxConnectInput,
   ): Promise<MailboxConnectDto> {
-    return this.mailboxesService.connect(authUser, organisationId);
+    return this.mailboxesService.connect(authUser, organisationId, body);
+  }
+
+  /** The administrator half of a declined connection (defect F1). Read-only —
+   *  it mints an approval link, it does not change anything. */
+  @Get("admin-consent")
+  getAdminConsent(
+    @CurrentAuthUser() authUser: AuthUser,
+    @Param("organisationId", ParseUUIDPipe) organisationId: string,
+    @Query("email") email?: string,
+  ): Promise<MailboxAdminConsentDto> {
+    return this.mailboxesService.getAdminConsent(authUser, organisationId, email);
   }
 
   @Post("disconnect")

@@ -14,11 +14,12 @@ import { PinoLogger } from "nestjs-pino";
 import { withTenant } from "@eva/database";
 import type {
   EmailAccountHealthStatus,
+  MailboxAdminConsentDto,
   MailboxConnectDto,
   MailboxStatusDto,
   MailboxTestEmailResultDto,
 } from "@eva/types";
-import type { MicrosoftCallbackQuery } from "@eva/validation";
+import type { MailboxConnectInput, MicrosoftCallbackQuery } from "@eva/validation";
 import { API_ENV } from "../../config/config.module.js";
 import type { ApiEnv } from "../../config/env.js";
 // eslint-disable-next-line @typescript-eslint/consistent-type-imports
@@ -44,6 +45,11 @@ import type {
   MicrosoftGraphProvider,
   OAuthTokens,
 } from "../integrations/microsoft-graph/microsoft-graph-provider.js";
+import {
+  MICROSOFT_DISCOVERY,
+  UNKNOWN_DOMAIN,
+} from "../integrations/microsoft-graph/microsoft-discovery.js";
+import type { MicrosoftDiscovery } from "../integrations/microsoft-graph/microsoft-discovery.js";
 import { signOAuthState, verifyOAuthState, type OAuthStateClaims } from "./oauth-state.js";
 
 /**
@@ -86,6 +92,7 @@ export class MailboxesService {
     private readonly logger: PinoLogger,
     @Inject(API_ENV) private readonly env: ApiEnv,
     @Inject(MICROSOFT_GRAPH_PROVIDER) private readonly graph: MicrosoftGraphProvider,
+    @Inject(MICROSOFT_DISCOVERY) private readonly discovery: MicrosoftDiscovery,
   ) {
     this.logger.setContext(MailboxesService.name);
   }
@@ -114,8 +121,14 @@ export class MailboxesService {
 
   /** POST .../mailbox/connect — mailbox:manage. Mints the 10-minute state
    *  JWT (ruling 4) and returns the Microsoft authorize URL; the web app
-   *  redirects the browser there. */
-  async connect(authUser: AuthUser, organisationId: string): Promise<MailboxConnectDto> {
+   *  redirects the browser there. The optional address becomes Microsoft's
+   *  `login_hint` (F5) and is carried on the state so a declined callback can
+   *  still say which account was attempted — Microsoft tells us nothing. */
+  async connect(
+    authUser: AuthUser,
+    organisationId: string,
+    input: MailboxConnectInput = {},
+  ): Promise<MailboxConnectDto> {
     const user = await this.usersService.resolveOrProvision(authUser);
     await withTenant(this.prisma.db, { organisationId, userId: user.id }, async (tx) => {
       await requirePermission(tx, organisationId, user.id, "mailbox:manage");
@@ -124,8 +137,60 @@ export class MailboxesService {
       organisationId,
       userId: user.id,
       nonce: randomUUID(),
+      ...(input.emailAddress ? { loginHint: input.emailAddress } : {}),
     });
-    return { authorizeUrl: this.graph.buildAuthorizeUrl(state) };
+    return {
+      authorizeUrl: this.graph.buildAuthorizeUrl(state, {
+        ...(input.emailAddress ? { loginHint: input.emailAddress } : {}),
+      }),
+    };
+  }
+
+  /**
+   * GET .../mailbox/admin-consent — mailbox:manage. The administrator half of
+   * the declined-consent screen (defect F1).
+   *
+   * The state carried into the approval link lives for SEVEN DAYS, not ten
+   * minutes, because this journey is asynchronous by design: the customer
+   * forwards the link to whoever runs their IT, who opens it whenever they get
+   * to it. It is purpose-scoped so it cannot be used to complete a connect.
+   */
+  async getAdminConsent(
+    authUser: AuthUser,
+    organisationId: string,
+    emailAddress?: string,
+  ): Promise<MailboxAdminConsentDto> {
+    const user = await this.usersService.resolveOrProvision(authUser);
+    await withTenant(this.prisma.db, { organisationId, userId: user.id }, async (tx) => {
+      await requirePermission(tx, organisationId, user.id, "mailbox:manage");
+    });
+    const domain = emailAddress?.split("@")[1] ?? "";
+    const discovery = domain ? await this.discovery.describeDomain(domain) : UNKNOWN_DOMAIN;
+    // No administrator exists for a personal Microsoft account. Offering a
+    // consent link would send a sole trader hunting for an IT department.
+    if (discovery.kind === "personal") {
+      return { accountKind: "personal", url: null, organisationName: null };
+    }
+    const state = await signOAuthState(this.env.OAUTH_STATE_SECRET, {
+      organisationId,
+      userId: user.id,
+      nonce: randomUUID(),
+      purpose: "admin_consent",
+    });
+    const params = new URLSearchParams({
+      client_id: this.env.MICROSOFT_CLIENT_ID,
+      redirect_uri: this.env.MICROSOFT_OAUTH_REDIRECT_URI,
+      state,
+    });
+    // Tenant-specific where known: 1.6's evidence showed it renders the correct
+    // org-wide screen ("No one else will be prompted"), where the generic
+    // `organizations` form is only a fallback.
+    const tenant = discovery.tenantId ?? "organizations";
+    return {
+      accountKind: discovery.kind,
+      url: `https://login.microsoftonline.com/${tenant}/adminconsent?${params.toString()}`,
+      organisationName: discovery.organisationName,
+    };
   }
 
   /**
@@ -139,13 +204,26 @@ export class MailboxesService {
   async handleCallback(query: MicrosoftCallbackQuery): Promise<string> {
     const base = `${this.env.WEB_ORIGIN}/app/settings/mailbox`;
     if (query.error) {
+      // The belt-and-braces branch. The classifier is correct — fed AADSTS90094
+      // it returns admin_consent_required, verified against deployed staging —
+      // but Microsoft does NOT send that code to the application (defect F1).
+      // At the "Need admin approval" wall the only route back is "Return to the
+      // application without granting consent", which arrives as an ordinary
+      // decline; 90094 goes to Entra's sign-in log instead. Nothing may depend
+      // on this firing.
       if (ADMIN_CONSENT_CODES.test(query.error_description ?? "")) {
         this.logger.info("mailbox connection needs Microsoft 365 admin approval");
         return `${base}?error=admin_consent_required`;
       }
+      // So a decline is genuinely ambiguous, and the UI has to offer both
+      // readings. Carrying the attempted address through lets it do that
+      // properly: the domain decides whether an administrator can even exist.
       this.logger.info("mailbox connection declined at Microsoft");
-      return `${base}?error=consent_denied`;
+      const hint = await this.recoverLoginHint(query.state);
+      return `${base}?error=consent_denied${hint ? `&hint=${encodeURIComponent(hint)}` : ""}`;
     }
+    if (query.admin_consent) return this.handleAdminConsentReturn(query, base);
+    if (!query.state) return `${base}?error=invalid_state`;
     let claims: OAuthStateClaims;
     try {
       claims = await verifyOAuthState(this.env.OAUTH_STATE_SECRET, query.state);
@@ -247,6 +325,71 @@ export class MailboxesService {
     }
     this.logger.info({ emailAccountId: accountId }, "mailbox connected");
     return `${base}?connected=1`;
+  }
+
+  /**
+   * The `/adminconsent` return (defect F2). Microsoft sends
+   * `admin_consent=True&tenant=<guid>` with no `code` and no `state` of its
+   * own, so the schema used to reject it and the administrator who had just
+   * approved Eva landed on raw validation JSON.
+   *
+   * This person is usually NOT an Eva user — they are the customer's IT
+   * contact, following a forwarded link — so the page must never claim a
+   * mailbox is now connected. Somebody else still has to do that.
+   */
+  private async handleAdminConsentReturn(
+    query: MicrosoftCallbackQuery,
+    base: string,
+  ): Promise<string> {
+    if (!query.state) {
+      // A link that lost its state, or one older than seven days. Still a
+      // successful approval as far as Microsoft is concerned — say so, and let
+      // the customer discover the rest by retrying.
+      this.logger.info("admin consent granted; no state to attribute it to");
+      return `${base}?admin_consent=granted`;
+    }
+    let claims: OAuthStateClaims;
+    try {
+      claims = await verifyOAuthState(this.env.OAUTH_STATE_SECRET, query.state, "admin_consent");
+    } catch {
+      return `${base}?error=invalid_state`;
+    }
+    try {
+      await withTenant(
+        this.prisma.db,
+        { organisationId: claims.organisationId, userId: claims.userId },
+        async (tx) => {
+          await writeAuditLog(tx, {
+            organisationId: claims.organisationId,
+            // The initiating Eva user, not the approver — the approving admin
+            // has no Eva account. The state proves who started the journey.
+            actorUserId: claims.userId,
+            action: "mailbox.admin_consent_granted",
+            entityType: "organisation",
+            entityId: claims.organisationId,
+            metadata: { tenant: query.tenant ?? null, approvedBy: "microsoft_tenant_admin" },
+          });
+        },
+      );
+    } catch (error) {
+      // Microsoft has already granted consent; failing to record it must not
+      // present that success as a failure to the administrator.
+      this.logger.error({ err: error }, "admin consent granted but could not be audited");
+    }
+    this.logger.info("admin consent granted for organisation");
+    return `${base}?admin_consent=granted`;
+  }
+
+  /** The address the user typed, recovered from a signed state. Returns null
+   *  rather than throwing: a decline still has to render even if the state has
+   *  expired, and this only decides how helpful the copy can be. */
+  private async recoverLoginHint(state?: string): Promise<string | null> {
+    if (!state) return null;
+    try {
+      return (await verifyOAuthState(this.env.OAUTH_STATE_SECRET, state)).loginHint ?? null;
+    } catch {
+      return null;
+    }
   }
 
   /** POST .../mailbox/disconnect — mailbox:manage. Tokens hard-gone

@@ -325,9 +325,14 @@ describe("Imports: confirm and cancel", () => {
       .mockRejectedValueOnce(new Error("boom"));
     try {
       const response = await confirm(staged.id).expect(500);
-      // 5xx messages are sanitised by the global filter (BRD 14) — the client
-      // sees the generic message; the import record carries the outcome.
-      expect(response.body.message).toBe("Internal server error");
+      // The service catches the raw failure and rethrows a deliberate
+      // InternalServerErrorException, so the client reads the message WE wrote.
+      // The global filter passes HttpException messages through precisely
+      // because they are written for a person; what it still blanks is
+      // everything that is not an HttpException, which is where stack text and
+      // connection strings live. So "boom" must not appear here.
+      expect(response.body.message).toBe("Import failed — no rows were applied");
+      expect(JSON.stringify(response.body)).not.toContain("boom");
     } finally {
       spy.mockRestore();
     }

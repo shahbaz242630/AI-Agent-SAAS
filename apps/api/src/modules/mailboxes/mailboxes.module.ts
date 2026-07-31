@@ -2,6 +2,8 @@ import { Module } from "@nestjs/common";
 import { UsersModule } from "../users/users.module.js";
 import { MICROSOFT_GRAPH_PROVIDER } from "../integrations/microsoft-graph/microsoft-graph-provider.js";
 import { GraphMailProvider } from "../integrations/microsoft-graph/graph-mail-provider.js";
+import { MICROSOFT_DISCOVERY } from "../integrations/microsoft-graph/microsoft-discovery.js";
+import { MicrosoftDiscoveryService } from "../integrations/microsoft-graph/microsoft-discovery.service.js";
 import { MailboxesController } from "./mailboxes.controller.js";
 import { MailboxesService } from "./mailboxes.service.js";
 import { MicrosoftOAuthController } from "./microsoft-oauth.controller.js";
@@ -9,7 +11,11 @@ import { MicrosoftOAuthController } from "./microsoft-oauth.controller.js";
 @Module({
   imports: [UsersModule],
   controllers: [MailboxesController, MicrosoftOAuthController],
-  providers: [MailboxesService, { provide: MICROSOFT_GRAPH_PROVIDER, useClass: GraphMailProvider }],
+  providers: [
+    MailboxesService,
+    { provide: MICROSOFT_GRAPH_PROVIDER, useClass: GraphMailProvider },
+    { provide: MICROSOFT_DISCOVERY, useClass: MicrosoftDiscoveryService },
+  ],
   // Exported for 1.7: the reminder sender injects this to reach
   // ensureAccessToken (refresh-on-use) before each send.
   exports: [MailboxesService],

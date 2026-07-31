@@ -419,3 +419,30 @@ export interface MailboxTestEmailResultDto {
   sent: true;
   to: string;
 }
+
+/** What kind of Microsoft account an address belongs to (onboarding Part A). */
+export const MICROSOFT_ACCOUNT_KINDS = ["work", "personal", "unknown"] as const;
+
+export type MicrosoftAccountKind = (typeof MICROSOFT_ACCOUNT_KINDS)[number];
+
+/**
+ * GET .../mailbox/admin-consent — what to show someone whose connection was
+ * declined (defect F1).
+ *
+ * Microsoft reports "your administrator must approve this" and "you pressed
+ * cancel" identically, so the callback cannot tell them apart and the UI must
+ * offer both readings. This endpoint supplies the administrator half.
+ *
+ * `url` is null for a `personal` account: there is no administrator to ask, and
+ * sending a sole trader looking for an IT department is worse than saying
+ * nothing. The URL is always built server-side from constants — never echoed
+ * back from a query parameter — so it cannot be steered at a hostile host.
+ */
+export interface MailboxAdminConsentDto {
+  accountKind: MicrosoftAccountKind;
+  /** Tenant-specific approval link where the tenant is known, the generic
+   *  `organizations` form otherwise, null when no administrator can exist. */
+  url: string | null;
+  /** The customer's own organisation name, for copy that names them. */
+  organisationName: string | null;
+}

@@ -10,9 +10,58 @@ const CLAIMS = {
 };
 
 describe("OAuth state JWT (Slice 1.6, ruling 4)", () => {
-  it("round-trips the claims", async () => {
+  it("round-trips the claims, defaulting to the connect purpose", async () => {
     const state = await signOAuthState(SECRET, CLAIMS);
-    await expect(verifyOAuthState(SECRET, state)).resolves.toEqual(CLAIMS);
+    await expect(verifyOAuthState(SECRET, state)).resolves.toEqual({
+      ...CLAIMS,
+      purpose: "connect",
+    });
+  });
+
+  it("round-trips the login hint when one was given", async () => {
+    const state = await signOAuthState(SECRET, { ...CLAIMS, loginHint: "sara@acme.example" });
+    await expect(verifyOAuthState(SECRET, state)).resolves.toMatchObject({
+      loginHint: "sara@acme.example",
+    });
+  });
+
+  /**
+   * The admin-consent token lives SEVEN DAYS, because the approval link gets
+   * forwarded to an IT contact who opens it whenever they get to it. That is
+   * only affordable because the two purposes are not interchangeable — asserted
+   * in both directions, since the long-lived one is the dangerous one.
+   */
+  describe("purpose scoping", () => {
+    it("refuses an admin_consent token where a connect token is expected", async () => {
+      const state = await signOAuthState(SECRET, { ...CLAIMS, purpose: "admin_consent" });
+      await expect(verifyOAuthState(SECRET, state)).rejects.toBeInstanceOf(InvalidOAuthStateError);
+    });
+
+    it("refuses a connect token where an admin_consent token is expected", async () => {
+      const state = await signOAuthState(SECRET, CLAIMS);
+      await expect(verifyOAuthState(SECRET, state, "admin_consent")).rejects.toBeInstanceOf(
+        InvalidOAuthStateError,
+      );
+    });
+
+    it("accepts an admin_consent token for its own purpose", async () => {
+      const state = await signOAuthState(SECRET, { ...CLAIMS, purpose: "admin_consent" });
+      await expect(verifyOAuthState(SECRET, state, "admin_consent")).resolves.toMatchObject({
+        purpose: "admin_consent",
+        organisationId: CLAIMS.organisationId,
+      });
+    });
+
+    it("reads a token with no purpose claim as connect, for tokens in flight across a deploy", async () => {
+      const legacy = await new SignJWT(CLAIMS)
+        .setProtectedHeader({ alg: "HS256", typ: "JWT" })
+        .setIssuedAt()
+        .setExpirationTime("10m")
+        .sign(new TextEncoder().encode(SECRET));
+      await expect(verifyOAuthState(SECRET, legacy)).resolves.toMatchObject({
+        purpose: "connect",
+      });
+    });
   });
 
   it("rejects a state signed with a different secret", async () => {

@@ -11,6 +11,11 @@ import {
   MICROSOFT_GRAPH_PROVIDER,
   type MicrosoftGraphProvider,
 } from "../src/modules/integrations/microsoft-graph/microsoft-graph-provider.js";
+import {
+  MICROSOFT_DISCOVERY,
+  UNKNOWN_DOMAIN,
+  type MicrosoftDiscovery,
+} from "../src/modules/integrations/microsoft-graph/microsoft-discovery.js";
 
 /**
  * Shared API test support (BRD 13): the app boots for real against the real
@@ -115,7 +120,7 @@ export function unsignedToken(claims: { sub: string; email: string }): string {
  * permissions, crypto, state JWTs).
  */
 export async function createTestApp(
-  options: { graphProvider?: MicrosoftGraphProvider } = {},
+  options: { graphProvider?: MicrosoftGraphProvider; discovery?: MicrosoftDiscovery } = {},
 ): Promise<INestApplication> {
   const { getKey } = await testKeys();
   let builder = Test.createTestingModule({ imports: [AppModule] })
@@ -126,6 +131,12 @@ export async function createTestApp(
   if (options.graphProvider) {
     builder = builder.overrideProvider(MICROSOFT_GRAPH_PROVIDER).useValue(options.graphProvider);
   }
+  // Discovery reaches unauthenticated Microsoft endpoints, so it is stubbed by
+  // default: no spec may depend on the network, and the real service fails open
+  // to "unknown" anyway, which would silently weaken assertions.
+  builder = builder
+    .overrideProvider(MICROSOFT_DISCOVERY)
+    .useValue(options.discovery ?? { describeDomain: async () => UNKNOWN_DOMAIN });
   const moduleRef = await builder.compile();
   const app = moduleRef.createNestApplication();
   await app.init();
