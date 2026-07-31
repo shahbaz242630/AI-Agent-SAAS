@@ -39,14 +39,18 @@ const MAILBOX_MISSING_CODES = new Set([
  * deliberately answers false: mistaking a real expired grant for "you have no
  * mailbox" would tell a user with a perfectly good mailbox to go and buy one.
  */
-async function isMailboxMissing(response: Response): Promise<boolean> {
+async function readGraphErrorCode(response: Response): Promise<string | null> {
   try {
     const payload = (await response.clone().json()) as { error?: { code?: unknown } };
     const code = payload.error?.code;
-    return typeof code === "string" && MAILBOX_MISSING_CODES.has(code.toLowerCase());
+    return typeof code === "string" ? code : null;
   } catch {
-    return false;
+    return null;
   }
+}
+
+function isMailboxMissing(code: string | null): boolean {
+  return code !== null && MAILBOX_MISSING_CODES.has(code.toLowerCase());
 }
 
 @Injectable()
@@ -164,18 +168,32 @@ export class GraphMailProvider implements MicrosoftGraphProvider {
    * connect time so a licensing problem is caught while the user is watching,
    * not at the first customer reminder in slice 1.7 (defect F3). The inbox
    * folder is the smallest thing Mail.Read can ask for.
+   *
+   * A 401 HERE means "no mailbox", not "dead grant", and the ordering is what
+   * makes that sound: connect calls getProfile FIRST, so /me has already
+   * answered 200 with this very token. The grant is provably alive; only the
+   * mailbox can be missing.
+   *
+   * That ordering argument is load-bearing rather than decorative. Observed
+   * against a real licence-less account on 2026-07-31, Graph answers this
+   * endpoint with a bare 401 — **no WWW-Authenticate header and an empty
+   * body** — so there is no error code to match on. Detection by error code
+   * alone silently fails, which is exactly what it did.
    */
   async probeMailbox(accessToken: string): Promise<void> {
-    await this.graphRequest(accessToken, `${GRAPH_BASE}/me/mailFolders/inbox?$select=id`);
+    await this.graphRequest(accessToken, `${GRAPH_BASE}/me/mailFolders/inbox?$select=id`, {
+      unauthorizedMeans: "mailbox_missing",
+    });
   }
 
   private async graphRequest<T = unknown>(
     accessToken: string,
     url: string,
-    init: { method?: string; body?: string } = {},
+    init: { method?: string; body?: string; unauthorizedMeans?: "reauth" | "mailbox_missing" } = {},
   ): Promise<T> {
+    const { unauthorizedMeans = "reauth", ...requestInit } = init;
     const response = await fetch(url, {
-      ...init,
+      ...requestInit,
       headers: {
         Authorization: `Bearer ${accessToken}`,
         "Content-Type": "application/json",
@@ -184,10 +202,19 @@ export class GraphMailProvider implements MicrosoftGraphProvider {
     if (response.status === 401) {
       // Not every 401 is a dead grant: an account with no Exchange licence is
       // refused with 401 too, and telling that user to "reconnect" loops them
-      // forever (F3). Read Microsoft's own error code to tell them apart —
-      // one known enum field, never the free-text message, so the no-echo rule
-      // (Microsoft bodies can quote request material back) still holds.
-      if (await isMailboxMissing(response)) throw new MailboxUnavailableError();
+      // forever (F3).
+      //
+      // Two ways to tell them apart, because Microsoft is not consistent:
+      // 1. The caller knows. probeMailbox runs straight after a successful
+      //    /me, so the grant cannot be dead — see its doc comment. This is the
+      //    reliable one.
+      // 2. Graph sometimes names the reason in error.code. Read only that enum
+      //    field, never the free-text message — Microsoft bodies can quote
+      //    request material back, so the no-echo rule still holds.
+      if (unauthorizedMeans === "mailbox_missing") throw new MailboxUnavailableError();
+      if (isMailboxMissing(await readGraphErrorCode(response))) {
+        throw new MailboxUnavailableError();
+      }
       throw new ReauthRequiredError();
     }
     if (!response.ok) {

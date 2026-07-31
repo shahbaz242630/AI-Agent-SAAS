@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+﻿import { randomUUID } from "node:crypto";
 import {
   BadGatewayException,
   BadRequestException,
@@ -54,7 +54,7 @@ import { signOAuthState, verifyOAuthState, type OAuthStateClaims } from "./oauth
 
 /**
  * Microsoft reports "your admin must approve this app" as a plain
- * error=access_denied — indistinguishable from a user clicking Cancel except
+ * error=access_denied â€” indistinguishable from a user clicking Cancel except
  * for the AADSTS code in error_description. It is the DEFAULT outcome for an
  * unverified publisher requesting Mail scopes, so most real customers meet
  * it, and most are not their own admin (founder ruling 2026-07-30): they get
@@ -65,13 +65,13 @@ const ADMIN_CONSENT_CODES = /AADSTS90094|AADSTS90095/;
 /** Buffer before token_expires_at within which refresh-on-use kicks in (ruling 10). */
 const TOKEN_EXPIRY_BUFFER_MS = 5 * 60 * 1000;
 
-const AUTH_EXPIRED_MESSAGE = "Microsoft authorisation expired — reconnect the mailbox";
+const AUTH_EXPIRED_MESSAGE = "Microsoft authorisation expired â€” reconnect the mailbox";
 
-/** The live email_accounts row as findFirst returns it (inferred — avoids
+/** The live email_accounts row as findFirst returns it (inferred â€” avoids
  *  wrestling Prisma's GetPayload generics under exactOptionalPropertyTypes). */
 type ConnectedAccount = NonNullable<Awaited<ReturnType<TenantTx["emailAccount"]["findFirst"]>>>;
 
-/** GET .../mailbox payload when nothing is connected (plan §3). */
+/** GET .../mailbox payload when nothing is connected (plan Â§3). */
 const EMPTY_STATUS: MailboxStatusDto = {
   connected: false,
   provider: null,
@@ -97,8 +97,8 @@ export class MailboxesService {
     this.logger.setContext(MailboxesService.name);
   }
 
-  /** GET .../mailbox — mailbox:read. Sanitized status; tokens NEVER leave
-   *  the database (plan §8 risk 1). Reads are not audited. */
+  /** GET .../mailbox â€” mailbox:read. Sanitized status; tokens NEVER leave
+   *  the database (plan Â§8 risk 1). Reads are not audited. */
   async getMailboxStatus(authUser: AuthUser, organisationId: string): Promise<MailboxStatusDto> {
     const user = await this.usersService.resolveOrProvision(authUser);
     return withTenant(this.prisma.db, { organisationId, userId: user.id }, async (tx) => {
@@ -119,11 +119,11 @@ export class MailboxesService {
     });
   }
 
-  /** POST .../mailbox/connect — mailbox:manage. Mints the 10-minute state
+  /** POST .../mailbox/connect â€” mailbox:manage. Mints the 30-minute state
    *  JWT (ruling 4) and returns the Microsoft authorize URL; the web app
    *  redirects the browser there. The optional address becomes Microsoft's
    *  `login_hint` (F5) and is carried on the state so a declined callback can
-   *  still say which account was attempted — Microsoft tells us nothing. */
+   *  still say which account was attempted â€” Microsoft tells us nothing. */
   async connect(
     authUser: AuthUser,
     organisationId: string,
@@ -147,7 +147,7 @@ export class MailboxesService {
   }
 
   /**
-   * GET .../mailbox/admin-consent — mailbox:manage. The administrator half of
+   * GET .../mailbox/admin-consent â€” mailbox:manage. The administrator half of
    * the declined-consent screen (defect F1).
    *
    * The state carried into the approval link lives for SEVEN DAYS, not ten
@@ -195,7 +195,7 @@ export class MailboxesService {
 
   /**
    * GET /integrations/microsoft/callback (@Public, ruling 4). ALWAYS returns
-   * the web redirect URL — ?connected=1 on success, else ?error=<code> — so a
+   * the web redirect URL â€” ?connected=1 on success, else ?error=<code> â€” so a
    * browser arriving from Microsoft never sees a raw JSON error. Network calls
    * (exchange, profile) run BEFORE the tenant transaction so a slow Microsoft
    * never holds a DB connection; the upsert + audit commit together.
@@ -204,8 +204,8 @@ export class MailboxesService {
   async handleCallback(query: MicrosoftCallbackQuery): Promise<string> {
     const base = `${this.env.WEB_ORIGIN}/app/settings/mailbox`;
     if (query.error) {
-      // The belt-and-braces branch. The classifier is correct — fed AADSTS90094
-      // it returns admin_consent_required, verified against deployed staging —
+      // The belt-and-braces branch. The classifier is correct â€” fed AADSTS90094
+      // it returns admin_consent_required, verified against deployed staging â€”
       // but Microsoft does NOT send that code to the application (defect F1).
       // At the "Need admin approval" wall the only route back is "Return to the
       // application without granting consent", which arrives as an ordinary
@@ -232,8 +232,8 @@ export class MailboxesService {
     }
     if (!query.code) return `${base}?error=missing_code`;
     // Re-check authorisation at the moment of the mutation. The state stays
-    // valid for 10 minutes and ruling 4 binds it to an ORGANISATION, not to a
-    // role — so the initiator can be removed from the org or demoted out of
+    // valid for 30 minutes and ruling 4 binds it to an ORGANISATION, not to a
+    // role â€” so the initiator can be removed from the org or demoted out of
     // mailbox:manage in between. Nothing downstream would catch that: RLS only
     // checks organisation_id, so the write would succeed and the audit row
     // would credit a user who is no longer allowed to connect. Checked before
@@ -248,7 +248,7 @@ export class MailboxesService {
       );
     } catch (error) {
       if (error instanceof ForbiddenException || error instanceof NotFoundException) {
-        this.logger.info("mailbox callback rejected — initiator no longer authorised");
+        this.logger.info("mailbox callback rejected â€” initiator no longer authorised");
         return `${base}?error=not_authorised`;
       }
       this.logger.error({ err: error }, "mailbox callback authorisation check failed");
@@ -260,14 +260,14 @@ export class MailboxesService {
       tokens = await this.graph.exchangeCode(query.code);
       profile = await this.graph.getProfile(tokens.accessToken);
       // Defect F3: an account with no Exchange licence consents perfectly
-      // happily and only fails at the first send — where it surfaced as
+      // happily and only fails at the first send â€” where it surfaced as
       // "authorisation expired", advice that can never work, so the user
       // looped forever. Prove there is a mailbox BEFORE storing anything:
       // a dead connection stored here is one 1.7 would try to send through.
       await this.graph.probeMailbox(tokens.accessToken);
     } catch (error) {
       if (error instanceof MailboxUnavailableError) {
-        this.logger.info("mailbox connection rejected — account has no mailbox");
+        this.logger.info("mailbox connection rejected â€” account has no mailbox");
         return `${base}?error=mailbox_unavailable`;
       }
       this.logger.warn({ err: error }, "mailbox token exchange/profile failed");
@@ -285,7 +285,7 @@ export class MailboxesService {
       healthStatus: "active",
       lastError: null,
       // Reconnect reuses the row, so clear the previous connection's health
-      // stamp — otherwise a fresh mailbox shows a check time from before the
+      // stamp â€” otherwise a fresh mailbox shows a check time from before the
       // outage that caused the reconnect.
       lastHealthCheckAt: null,
       connectedBy: claims.userId,
@@ -317,7 +317,7 @@ export class MailboxesService {
     } catch (error) {
       // A DB outage, or the org being deleted between consent and write.
       // (Revoked membership is caught by the authorisation re-check above, not
-      // here — RLS alone would let that write through.) Logged with the cause,
+      // here â€” RLS alone would let that write through.) Logged with the cause,
       // which the global filter would not do, then redirected, because this
       // route's contract is "always a redirect".
       this.logger.error({ err: error }, "mailbox connection could not be persisted");
@@ -333,8 +333,8 @@ export class MailboxesService {
    * own, so the schema used to reject it and the administrator who had just
    * approved Eva landed on raw validation JSON.
    *
-   * This person is usually NOT an Eva user — they are the customer's IT
-   * contact, following a forwarded link — so the page must never claim a
+   * This person is usually NOT an Eva user â€” they are the customer's IT
+   * contact, following a forwarded link â€” so the page must never claim a
    * mailbox is now connected. Somebody else still has to do that.
    */
   private async handleAdminConsentReturn(
@@ -343,7 +343,7 @@ export class MailboxesService {
   ): Promise<string> {
     if (!query.state) {
       // A link that lost its state, or one older than seven days. Still a
-      // successful approval as far as Microsoft is concerned — say so, and let
+      // successful approval as far as Microsoft is concerned â€” say so, and let
       // the customer discover the rest by retrying.
       this.logger.info("admin consent granted; no state to attribute it to");
       return `${base}?admin_consent=granted`;
@@ -361,7 +361,7 @@ export class MailboxesService {
         async (tx) => {
           await writeAuditLog(tx, {
             organisationId: claims.organisationId,
-            // The initiating Eva user, not the approver — the approving admin
+            // The initiating Eva user, not the approver â€” the approving admin
             // has no Eva account. The state proves who started the journey.
             actorUserId: claims.userId,
             action: "mailbox.admin_consent_granted",
@@ -392,7 +392,7 @@ export class MailboxesService {
     }
   }
 
-  /** POST .../mailbox/disconnect — mailbox:manage. Tokens hard-gone
+  /** POST .../mailbox/disconnect â€” mailbox:manage. Tokens hard-gone
    *  (columns nulled) + soft delete in ONE transaction (ruling 8); the row
    *  stays as audit history and does not block reconnect (partial index). */
   async disconnect(authUser: AuthUser, organisationId: string): Promise<void> {
@@ -422,21 +422,21 @@ export class MailboxesService {
   }
 
   /**
-   * POST .../mailbox/test-email — mailbox:manage. Self-addressed send
-   * (ruling 7) proving the full path: valid token → Graph → Sent Items.
+   * POST .../mailbox/test-email â€” mailbox:manage. Self-addressed send
+   * (ruling 7) proving the full path: valid token â†’ Graph â†’ Sent Items.
    *
    * FOUR independently committed steps, deliberately NOT one transaction
    * (founder ruling 2026-07-30). Sending mail and rotating tokens are both
    * irreversible: a single transaction that failed at COMMIT would leave
-   * Microsoft's state ahead of ours — mail sent with nothing recorded. That is
+   * Microsoft's state ahead of ours â€” mail sent with nothing recorded. That is
    * not hypothetical, 1.5's PR #36 fixed a transaction timing out at
    * transatlantic latency after its work had succeeded. No network call runs
    * inside a transaction here, which is also why the 30s timeout that guarded
    * the old shape is gone.
    *
    * 1.7 MUST follow this shape per reminder: claim in a committed transaction
-   * BEFORE sending, then record the outcome after. Steps 3→4 stay
-   * non-atomic — irreducible for any external send — so a crash between them
+   * BEFORE sending, then record the outcome after. Steps 3â†’4 stay
+   * non-atomic â€” irreducible for any external send â€” so a crash between them
    * leaves a claimed row that must never be auto-retried.
    */
   async sendTestEmail(
@@ -467,7 +467,7 @@ export class MailboxesService {
       });
     } catch (error) {
       // The licence was removed after connecting (connect itself now probes,
-      // F3). Not auth_expired — reconnecting cannot conjure a mailbox — so it
+      // F3). Not auth_expired â€” reconnecting cannot conjure a mailbox â€” so it
       // gets health 'error' and its own advice.
       if (error instanceof MailboxUnavailableError) {
         await this.markUnhealthy(organisationId, user.id, {
@@ -487,7 +487,7 @@ export class MailboxesService {
       }
       if (error instanceof GraphRequestError) {
         throw new BadGatewayException(
-          "Microsoft Graph could not send the test email — try again shortly",
+          "Microsoft Graph could not send the test email â€” try again shortly",
         );
       }
       throw error;
@@ -510,7 +510,7 @@ export class MailboxesService {
   }
 
   /**
-   * Refresh-on-use (ruling 10) — THE seam 1.7's sender calls before every
+   * Refresh-on-use (ruling 10) â€” THE seam 1.7's sender calls before every
    * send. Returns a usable access token, refreshing first when inside the
    * 5-minute expiry buffer, and throwing ReauthRequiredError when Microsoft
    * has revoked the grant.
@@ -518,7 +518,7 @@ export class MailboxesService {
    * The rotated pair is persisted in its OWN transaction and COMMITTED before
    * this returns. Microsoft has already moved on by then, so the new pair must
    * not be able to roll back with whatever the caller does next. Callers
-   * therefore call this BEFORE opening their own transaction — never inside
+   * therefore call this BEFORE opening their own transaction â€” never inside
    * one. A still-valid token opens no transaction at all.
    */
   async ensureAccessToken(
@@ -563,7 +563,7 @@ export class MailboxesService {
    * Stored ciphertext that will not decrypt (TOKEN_ENCRYPTION_KEY rotated, row
    * corrupted) is a dead grant from the user's point of view: the only fix is
    * reconnecting. Mapping it to ReauthRequiredError makes health_status say so,
-   * instead of an opaque 500 beside a card still reading "Connected" — which
+   * instead of an opaque 500 beside a card still reading "Connected" â€” which
    * would strand 1.7's sender permanently with no health signal.
    */
   private decryptStoredToken(ciphertext: string, key: string): string {
@@ -571,7 +571,7 @@ export class MailboxesService {
       return decryptToken(ciphertext, key);
     } catch (error) {
       if (error instanceof TokenDecryptionError) {
-        this.logger.error("stored mailbox token could not be decrypted — reconnect required");
+        this.logger.error("stored mailbox token could not be decrypted â€” reconnect required");
         throw new ReauthRequiredError();
       }
       throw error;
@@ -580,7 +580,7 @@ export class MailboxesService {
 
   /** Surfaces a broken mailbox to the UI (ruling 10): the status endpoint reads
    *  health_status, so the right advice shows without another Graph call.
-   *  Audited in the same transaction like every other tenant mutation — "when
+   *  Audited in the same transaction like every other tenant mutation â€” "when
    *  did this mailbox die, and why?" must be answerable from the audit trail,
    *  not from a mutable column with no timestamp. */
   private async markUnhealthy(

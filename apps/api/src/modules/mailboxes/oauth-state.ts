@@ -1,9 +1,9 @@
-import { jwtVerify, SignJWT } from "jose";
+﻿import { jwtVerify, SignJWT } from "jose";
 
 /**
  * OAuth `state` parameter (Slice 1.6, ruling 4): a stateless HS256 JWT
- * binding the flow to one organisation + initiating user, with a 10-minute
- * TTL. The callback route is @Public — this signature + expiry is the
+ * binding the flow to one organisation + initiating user, with a 30-minute
+ * TTL. The callback route is @Public â€” this signature + expiry is the
  * entire CSRF defence. Org-binding makes cross-org CSRF ineffective: an
  * attacker cannot mint a state naming a victim org without membership.
  */
@@ -16,20 +16,31 @@ const MAX_LOGIN_HINT_LENGTH = 320;
 /**
  * What a state token is allowed to complete.
  *
- * `connect` is the 10-minute CSRF token of ruling 4, unchanged. `admin_consent`
+ * `connect` is the short-lived CSRF token of ruling 4, unchanged. `admin_consent`
  * exists because the admin-approval journey is *asynchronous by design*: the
  * customer forwards a link to whoever runs their IT, who may open it hours or
  * days later. Ten minutes would expire before it was ever clicked.
  *
- * The longer life is affordable only because the two are not interchangeable —
+ * The longer life is affordable only because the two are not interchangeable â€”
  * verification demands the purpose it expects. An `admin_consent` token grants
  * nothing on its own: it names the organisation whose approval screen this was,
  * so the return can be attributed and audited. It cannot complete a connect.
  */
 export type OAuthStatePurpose = "connect" | "admin_consent";
 
+/**
+ * `connect` was 10 minutes and that is NOT long enough â€” proven on 2026-07-31,
+ * when a first-time sign-in (password, MFA on a phone, reading the consent
+ * screen, then stepping away) blew through it and the customer got
+ * "the connection attempt expired or was invalid" with no hint that they had
+ * simply taken too long.
+ *
+ * Thirty minutes is still a short window for a CSRF token that is org-bound
+ * and useless without a matching authorization code, and it comfortably covers
+ * a human doing this for the first time on an unfamiliar tenant.
+ */
 const TTL: Record<OAuthStatePurpose, string> = {
-  connect: "10m",
+  connect: "30m",
   admin_consent: "7d",
 };
 
@@ -39,14 +50,14 @@ export interface OAuthStateClaims {
   nonce: string;
   purpose: OAuthStatePurpose;
   /** The address the user typed in Eva, so the callback can still name it
-   *  after Microsoft declines — Microsoft tells us nothing about who tried. */
+   *  after Microsoft declines â€” Microsoft tells us nothing about who tried. */
   loginHint?: string;
 }
 
-/** Thrown for any state that does not verify — signature, expiry, or shape. */
+/** Thrown for any state that does not verify â€” signature, expiry, or shape. */
 export class InvalidOAuthStateError extends Error {
   constructor() {
-    super("the connection attempt expired or was invalid — please try again");
+    super("the connection attempt expired or was invalid â€” please try again");
     this.name = "InvalidOAuthStateError";
   }
 }
@@ -84,7 +95,7 @@ export async function signOAuthState(
  * seven-day admin-consent flow must not be able to complete a connect, which
  * is the only thing that makes the longer life safe. A token with no purpose
  * claim is read as `connect` so tokens already in flight across a deploy still
- * work — admin-consent tokens always carry theirs explicitly.
+ * work â€” admin-consent tokens always carry theirs explicitly.
  */
 export async function verifyOAuthState(
   secret: string,

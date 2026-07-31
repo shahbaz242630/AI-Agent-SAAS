@@ -69,7 +69,7 @@ describe("OAuth state JWT (Slice 1.6, ruling 4)", () => {
     await expect(verifyOAuthState(SECRET, state)).rejects.toBeInstanceOf(InvalidOAuthStateError);
   });
 
-  it("rejects an expired state (10-minute TTL)", async () => {
+  it("rejects an expired state", async () => {
     const expired = await new SignJWT(CLAIMS)
       .setProtectedHeader({ alg: "HS256", typ: "JWT" })
       .setIssuedAt(Math.floor(Date.now() / 1000) - 900)

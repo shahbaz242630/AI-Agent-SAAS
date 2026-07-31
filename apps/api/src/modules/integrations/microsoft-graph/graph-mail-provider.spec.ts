@@ -268,6 +268,38 @@ describe("GraphMailProvider — a missing mailbox is not an expired grant (F3)",
       MailboxUnavailableError,
     );
   });
+
+  /**
+   * THE case that matters, and the one the first implementation got wrong.
+   *
+   * Observed against a real licence-less account on 2026-07-31: Graph answers
+   * /me/mailFolders/inbox with a BARE 401 — no WWW-Authenticate header, empty
+   * body, no error code to match on. Detection by error code silently fell
+   * through to "your authorisation expired", which is the very dead end F3
+   * exists to remove.
+   *
+   * What makes the 401 unambiguous here is ORDERING, not parsing: connect
+   * calls getProfile first, so /me has already answered 200 with this token.
+   */
+  it("treats a BARE 401 on the probe as a missing mailbox, not a dead grant", async () => {
+    stubFetch(() => new Response(null, { status: 401 }));
+
+    await expect(provider.probeMailbox("token-that-just-worked-on-/me")).rejects.toBeInstanceOf(
+      MailboxUnavailableError,
+    );
+  });
+
+  it("a bare 401 ANYWHERE ELSE is still a dead grant", async () => {
+    // The ordering argument does not hold for other calls, so they keep the
+    // conservative reading: an expired grant is the likelier cause, and
+    // "reconnect" is advice the user can act on.
+    stubFetch(() => new Response(null, { status: 401 }));
+
+    await expect(provider.getProfile("expired")).rejects.toBeInstanceOf(ReauthRequiredError);
+    await expect(
+      provider.sendMail("expired", { to: "t@example.com", subject: "s", bodyText: "b" }),
+    ).rejects.toBeInstanceOf(ReauthRequiredError);
+  });
 });
 
 /**

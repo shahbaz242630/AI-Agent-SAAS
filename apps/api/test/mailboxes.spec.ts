@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+﻿import { randomUUID } from "node:crypto";
 import type { INestApplication } from "@nestjs/common";
 import request from "supertest";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -29,16 +29,16 @@ import {
 } from "./support.js";
 
 /**
- * Mailbox connection (Slice 1.6; plan §3): status, OAuth connect/callback,
+ * Mailbox connection (Slice 1.6; plan Â§3): status, OAuth connect/callback,
  * disconnect, test email. The Graph provider is stubbed at the DI boundary
- * (overrideProvider — the invoice-documents §7.4 exception: a REAL external
+ * (overrideProvider â€” the invoice-documents Â§7.4 exception: a REAL external
  * provider cannot run in tests). Everything else is real: Postgres as
  * eva_app, RLS, permissions, crypto, state JWTs.
  */
 
 const SANDBOX_EMAIL = "sandbox@example.com";
 
-/** A DIFFERENT 32-byte key — stands in for a rotated TOKEN_ENCRYPTION_KEY. */
+/** A DIFFERENT 32-byte key â€” stands in for a rotated TOKEN_ENCRYPTION_KEY. */
 const OTHER_TOKEN_KEY = Buffer.from("fedcba9876543210fedcba9876543210").toString("base64");
 
 const DEFAULT_TOKENS: OAuthTokens = {
@@ -97,7 +97,7 @@ function resetGraphStub(): void {
 }
 
 /** Inserts a live connection with VALID encrypted fixture tokens (1h expiry).
- *  Soft-deletes any existing live rows first — tests share orgs, and the
+ *  Soft-deletes any existing live rows first â€” tests share orgs, and the
  *  partial unique index allows only ONE live connection per org (ruling 6). */
 async function insertConnectedMailbox(
   owner: EvaPrismaClient,
@@ -195,7 +195,7 @@ describe("Mailboxes (Slice 1.6)", () => {
       });
     });
 
-    it("200s with the sanitized status when connected — never token material", async () => {
+    it("200s with the sanitized status when connected â€” never token material", async () => {
       await insertConnectedMailbox(owner, org.id);
       const response = await request(app.getHttpServer())
         .get(`/organisations/${org.id}/mailbox`)
@@ -227,7 +227,7 @@ describe("Mailboxes (Slice 1.6)", () => {
         .expect(404);
     });
 
-    it("200s with an authorize URL whose state binds this org + user (10-min JWT)", async () => {
+    it("200s with an authorize URL whose state binds this org + user (30-min JWT)", async () => {
       const response = await request(app.getHttpServer())
         .post(`/organisations/${org.id}/mailbox/connect`)
         .set("Authorization", `Bearer ${tokenFor("owner")}`)
@@ -245,7 +245,7 @@ describe("Mailboxes (Slice 1.6)", () => {
    * Defect F1: `admin_consent_required` never fires, because Microsoft reports
    * the "Need admin approval" wall as an ordinary decline. The UI therefore has
    * to offer BOTH readings of a decline, and this endpoint supplies the
-   * administrator half — the link the customer forwards to their IT contact.
+   * administrator half â€” the link the customer forwards to their IT contact.
    */
   describe("GET .../mailbox/admin-consent (F1)", () => {
     const adminConsentUrl = (email?: string) =>
@@ -293,7 +293,7 @@ describe("Mailboxes (Slice 1.6)", () => {
       await expect(verifyOAuthState(TEST_OAUTH_STATE_SECRET, state)).rejects.toThrow();
     });
 
-    it("offers NO link for a personal account — there is no administrator to ask", async () => {
+    it("offers NO link for a personal account â€” there is no administrator to ask", async () => {
       discoveryStub.describeDomain.mockResolvedValueOnce({
         kind: "personal",
         tenantId: null,
@@ -337,7 +337,7 @@ describe("Mailboxes (Slice 1.6)", () => {
     });
   });
 
-  describe("POST .../mailbox/connect — login_hint (F5)", () => {
+  describe("POST .../mailbox/connect â€” login_hint (F5)", () => {
     it("passes the address to Microsoft and records it on the state", async () => {
       const response = await request(app.getHttpServer())
         .post(`/organisations/${org.id}/mailbox/connect`)
@@ -386,9 +386,9 @@ describe("Mailboxes (Slice 1.6)", () => {
 
     /**
      * Defect F2: the /adminconsent return carries `admin_consent=True&tenant=`
-     * with NO code and NO state of its own, and `state` used to be required —
+     * with NO code and NO state of its own, and `state` used to be required â€”
      * so the customer's IT administrator finished approving Eva and landed on
-     * `{"statusCode":400,"message":"Invalid request body — state: ..."}`.
+     * `{"statusCode":400,"message":"Invalid request body â€” state: ..."}`.
      */
     describe("the /adminconsent return (F2)", () => {
       it("does NOT 400 when Microsoft sends admin_consent with no state at all", async () => {
@@ -424,7 +424,7 @@ describe("Mailboxes (Slice 1.6)", () => {
 
       it("refuses a CONNECT state at the admin-consent return", async () => {
         // The admin-consent token lives seven days; the connect token is the
-        // ten-minute CSRF defence. Purpose-scoping is what makes the long life
+        // short-lived connect CSRF defence. Purpose-scoping is what makes the long life
         // affordable, so it is asserted in both directions.
         const response = await request(app.getHttpServer())
           .get(`/integrations/microsoft/callback?admin_consent=True&state=${await mintState()}`)
@@ -484,7 +484,7 @@ describe("Mailboxes (Slice 1.6)", () => {
     });
 
     /** Microsoft's DEFAULT consent policy blocks Mail scopes for an unverified
-     *  publisher, so most real customers meet the "Approval required" screen —
+     *  publisher, so most real customers meet the "Approval required" screen â€”
      *  and most are not their own admin. It arrives as error=access_denied like
      *  a plain decline; only the AADSTS code distinguishes it. Telling those
      *  users "you cancelled" is a dead end (founder ruling 2026-07-30). */
@@ -549,7 +549,7 @@ describe("Mailboxes (Slice 1.6)", () => {
 
     /**
      * Defect F3: an account with no Exchange licence used to be stored as a
-     * healthy connection and only failed at the first send — reported as
+     * healthy connection and only failed at the first send â€” reported as
      * "authorisation expired", advice that can never work. Catch it while the
      * user is still watching, and store nothing.
      */
@@ -604,8 +604,8 @@ describe("Mailboxes (Slice 1.6)", () => {
     });
 
     /**
-     * The state is valid for 10 minutes and ruling 4 binds it to an
-     * ORGANISATION, not a role — so the initiator can lose mailbox:manage
+     * The state is valid for 30 minutes and ruling 4 binds it to an
+     * ORGANISATION, not a role â€” so the initiator can lose mailbox:manage
      * between clicking Connect and finishing consent. RLS would not stop the
      * write (it only checks organisation_id), so the callback re-checks the
      * permission itself and must refuse without spending the code.
@@ -751,7 +751,7 @@ describe("Mailboxes (Slice 1.6)", () => {
       );
     });
 
-    it("invalid_grant on refresh → 400 + health stamped auth_expired", async () => {
+    it("invalid_grant on refresh â†’ 400 + health stamped auth_expired", async () => {
       const account = await insertConnectedMailbox(owner, org.id, {
         tokenExpiresAt: new Date(Date.now() - 60_000),
       });
@@ -765,7 +765,7 @@ describe("Mailboxes (Slice 1.6)", () => {
       expect(after.healthStatus).toBe("auth_expired");
       expect(after.lastError).toContain("reconnect");
       // A failed attempt is still an attempt, and the transition is a tenant
-      // mutation like any other — it must be timestamped and audited, or
+      // mutation like any other â€” it must be timestamped and audited, or
       // "when did this mailbox die?" is unanswerable.
       expect(after.lastHealthCheckAt).not.toBeNull();
       await owner.auditLog.findFirstOrThrow({
@@ -775,9 +775,9 @@ describe("Mailboxes (Slice 1.6)", () => {
 
     /**
      * TOKEN_ENCRYPTION_KEY rotation is an explicitly supported future operation
-     * (that is why the ciphertext carries a `v1` prefix), and plan §8 risk 3
+     * (that is why the ciphertext carries a `v1` prefix), and plan Â§8 risk 3
      * names key mishandling. Undecryptable stored tokens must present as a dead
-     * grant — otherwise the caller gets an opaque 500 while the settings card
+     * grant â€” otherwise the caller gets an opaque 500 while the settings card
      * still says "Connected", and 1.7's sender fails forever with no signal.
      */
     it("undecryptable stored tokens are treated as a dead grant, not a 500", async () => {
@@ -794,7 +794,7 @@ describe("Mailboxes (Slice 1.6)", () => {
       expect(after.healthStatus).toBe("auth_expired");
     });
 
-    it("Graph failure → 502", async () => {
+    it("Graph failure â†’ 502", async () => {
       await insertConnectedMailbox(owner, org.id);
       graphStub.sendMail.mockRejectedValueOnce(new GraphRequestError("nope", 500));
       await request(app.getHttpServer())
@@ -807,7 +807,7 @@ describe("Mailboxes (Slice 1.6)", () => {
      * The reason the send path is four committed steps rather than one
      * transaction (founder ruling 2026-07-30): Microsoft rotates the refresh
      * token when it is redeemed, so a rotation must NEVER be undone by a later
-     * failure. Here the refresh succeeds and the send then fails — the stored
+     * failure. Here the refresh succeeds and the send then fails â€” the stored
      * pair must still be the new one. One transaction would roll it back and
      * leave us holding a pair Microsoft has moved past.
      */
@@ -848,7 +848,7 @@ describe("Mailboxes (Slice 1.6)", () => {
     });
 
     /** The status endpoint is how the UI learns a reconnect is needed
-     *  (ruling 10) — prove the auth_expired stamp actually surfaces. */
+     *  (ruling 10) â€” prove the auth_expired stamp actually surfaces. */
     it("surfaces auth_expired through the status endpoint after a dead grant", async () => {
       await insertConnectedMailbox(owner, org.id, {
         tokenExpiresAt: new Date(Date.now() - 60_000),

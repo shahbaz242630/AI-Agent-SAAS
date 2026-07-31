@@ -47,7 +47,10 @@ const ERROR_MESSAGES: Record<string, string> = {
     "Your Microsoft 365 administrator needs to approve Eva before this mailbox can be connected. Ask them to authorise it, then try again.",
   mailbox_unavailable:
     "That Microsoft account doesn't have a mailbox — it may not have an Exchange Online licence. Connect the account you actually send email from.",
-  invalid_state: "The connection attempt expired or was invalid — please try again.",
+  // Almost always "you took too long at Microsoft", so say that rather than
+  // leaving the customer wondering what they did wrong (observed 2026-07-31).
+  invalid_state:
+    "That took a bit too long, so the connection attempt expired. Nothing went wrong — just start again.",
   not_authorised:
     "Your access changed while you were connecting, so the mailbox wasn't linked. Ask an owner or administrator to connect it.",
   invalid_address: "That doesn't look like an email address — check it and try again.",
