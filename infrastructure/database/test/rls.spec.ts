@@ -151,33 +151,20 @@ describe("RLS: cross-tenant attacks are refused by Postgres itself", () => {
     "scheduled_actions",
     "human_escalations",
     "email_accounts",
+    // Belongs here after all. An earlier version of this change pulled
+    // organisation_modules out on the theory that migration 0017's backfill
+    // gives ORG_A a row of its own — but ORG_A and ORG_B are SYNTHETIC tenant
+    // contexts that never exist as organisations, so on a clean database they
+    // own nothing in any table. That theory only looked right because this
+    // developer's local database had a leftover organisation row carrying that
+    // id; CI, which starts empty, said otherwise. The DEMO-owned control row
+    // created in beforeAll is what stops this passing against an empty table.
+    "organisation_modules",
   ])("tenant A cannot SELECT tenant B's %s", async (table) => {
     const visible = await asTenant(ORG_A, async (tx) =>
       tx.$queryRawUnsafe<{ id: string }[]>(`SELECT id FROM ${table}`),
     );
     expect(visible).toEqual([]);
-  });
-
-  /**
-   * `organisation_modules` cannot join the list above, and the reason is worth
-   * stating: migration 0017 backfills EVERY organisation, so ORG_A legitimately
-   * owns a row here. "Sees zero rows" would be a false assertion, and quietly
-   * weakening it to that would hide the thing actually worth proving.
-   *
-   * So assert the real property instead — ORG_A sees its own row and ORG_B's is
-   * invisible — which is strictly stronger than the blanket check, because it
-   * fails both if isolation breaks AND if the policy over-filters and locks an
-   * organisation out of its own entitlements.
-   */
-  it("tenant A sees its OWN modules and none of tenant B's", async () => {
-    const visible = await asTenant(ORG_A, async (tx) =>
-      tx.$queryRawUnsafe<{ organisation_id: string }[]>(
-        `SELECT organisation_id FROM organisation_modules`,
-      ),
-    );
-    expect(visible.length).toBeGreaterThan(0);
-    expect(visible.every((row) => row.organisation_id === ORG_A)).toBe(true);
-    expect(visible.some((row) => row.organisation_id === ORG_B)).toBe(false);
   });
 
   /**
