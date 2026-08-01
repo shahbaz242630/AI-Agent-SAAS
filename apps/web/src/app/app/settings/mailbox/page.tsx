@@ -58,7 +58,6 @@ export default async function MailboxSettingsPage({
   // Set only on a genuinely new connection — a reconnect sends nothing, so the
   // absence of this parameter is not a failure.
   const testEmailFailed = params.test_email === "failed";
-  const flashAdminConsent = params.admin_consent === "granted";
   const attemptedAddress = typeof params.hint === "string" ? params.hint : null;
 
   // A declined consent is genuinely ambiguous (F1), so it gets a whole section
@@ -94,39 +93,29 @@ export default async function MailboxSettingsPage({
         </p>
       </section>
 
+      {/* ONE message, three endings. `test_email` only ever arrives alongside
+          `connected=1`, so a separate box for the failure printed "Mailbox
+          connected successfully" directly above "we couldn't send its test
+          email" — two notices where the customer needs one. The failure is
+          styled as a caveat, not an error: the connection succeeded and read
+          access was proven, only the send did not land. */}
       {flashConnected && (
         <p
           role="status"
-          className="w-full max-w-2xl rounded-[var(--radius-card)] bg-muted px-6 py-3 text-sm text-success"
+          className={`w-full max-w-2xl rounded-[var(--radius-card)] bg-muted px-6 py-3 text-sm ${
+            testEmailFailed ? "text-muted-foreground" : "text-success"
+          }`}
         >
           {params.test_email === "sent"
             ? "Mailbox connected. We've sent a test email to it — check the inbox."
-            : "Mailbox connected successfully."}
+            : testEmailFailed
+              ? "Mailbox connected, but we couldn't send its test email. Try Send test email below."
+              : "Mailbox connected successfully."}
         </p>
       )}
-      {/* The connection itself succeeded, so this is a caveat rather than an
-          error: reading mail was already proven, only the send failed. */}
-      {testEmailFailed && (
-        <p
-          role="status"
-          className="w-full max-w-2xl rounded-[var(--radius-card)] bg-muted px-6 py-3 text-sm text-muted-foreground"
-        >
-          The mailbox is connected, but we couldn&apos;t send its test email. Try{" "}
-          <span className="font-medium">Send test email</span> below.
-        </p>
-      )}
-      {/* The approver is usually the customer's IT contact and not an Eva user
-          at all, so this must never claim a mailbox is now connected —
-          somebody else still has to do that. */}
-      {flashAdminConsent && (
-        <p
-          role="status"
-          className="w-full max-w-2xl rounded-[var(--radius-card)] bg-muted px-6 py-3 text-sm text-success"
-        >
-          Eva is approved for your organisation. Whoever asked for this approval can now connect
-          their mailbox.
-        </p>
-      )}
+      {/* An approving administrator no longer lands here at all — they get the
+          public /microsoft-approved receipt, because they usually have no Eva
+          account and this route would bounce them to sign-in. */}
       {flashError && (
         <p
           role="alert"

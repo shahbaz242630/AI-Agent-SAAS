@@ -12,22 +12,34 @@
  * `admin_consent_required` is kept because the classifier is still correct if
  * Microsoft ever does send AADSTS90094, but it must never be relied on: that
  * code goes to Entra's sign-in log, not to the application.
+ *
+ * Note that the first two entries are FALLBACKS. Both callers route those codes
+ * to `AdminConsentHelp` instead — a one-line flash cannot carry an approval link
+ * and a forwardable email — so editing them changes nothing a customer sees.
+ * The wording that ships lives in that component.
  */
 export const MAILBOX_ERROR_MESSAGES: Record<string, string> = {
   consent_denied:
     "We couldn't connect that mailbox. Either the connection was cancelled, or your Microsoft 365 administrator needs to approve Eva first.",
   admin_consent_required:
     "Your Microsoft 365 administrator needs to approve Eva before this mailbox can be connected. Ask them to authorise it, then try again.",
+  // Only reachable on a work account: a personal Outlook or Hotmail account
+  // always has a mailbox. So the reader here does have an IT setup, and the
+  // licence name is the term whoever manages it will need.
   mailbox_unavailable:
-    "That Microsoft account doesn't have a mailbox — it may not have an Exchange Online licence. Connect the account you actually send email from.",
+    "That Microsoft account doesn't have a mailbox — it may not include email (no Exchange Online licence). Sign in with the account you actually send email from.",
   // Almost always "you took too long at Microsoft", so say that rather than
   // leaving the customer wondering what they did wrong (observed 2026-07-31).
   invalid_state:
     "That took a bit too long, so the connection attempt expired. Nothing went wrong — just start again.",
+  // "Owner" means an Eva role, not a Microsoft one. Said explicitly: this slice
+  // exists because people cannot tell our permissions from Microsoft's.
   not_authorised:
-    "Your access changed while you were connecting, so the mailbox wasn't linked. Ask an owner or administrator to connect it.",
+    "Your permissions changed while you were connecting, so the mailbox wasn't linked. Ask an owner of this Eva organisation to connect it.",
   invalid_address: "That doesn't look like an email address — check it and try again.",
-  missing_code: "Microsoft did not return an authorisation code — please try again.",
+  // Was "did not return an authorisation code", which is our plumbing, not
+  // anything the reader can act on.
+  missing_code: "Microsoft didn't finish signing you in — please try again.",
   exchange_failed: "We couldn't complete the Microsoft connection — please try again.",
   connect_failed: "We couldn't start the Microsoft connection — please try again.",
 };

@@ -87,6 +87,18 @@ const FLOW_RETURN_PATHS: Record<OAuthFlow, string> = {
   settings: "/app/settings/mailbox",
 };
 
+/**
+ * Where the `/adminconsent` return goes â€” deliberately NOT one of the paths
+ * above, and deliberately not behind sign-in.
+ *
+ * The approver is the customer's IT contact following a forwarded link. They
+ * have no Eva account, so every `/app/...` destination bounced them to
+ * `/sign-in` with the query string stripped, discarding the confirmation
+ * entirely. The person whose goodwill the whole journey depends on saw a login
+ * form and no sign that their approval had worked.
+ */
+const ADMIN_CONSENT_RETURN_PATH = "/microsoft-approved";
+
 /** The self-addressed test send (ruling 7). One definition, because the manual
  *  button and the automatic send on first connect must prove the same thing. */
 const TEST_EMAIL = {
@@ -259,7 +271,7 @@ export class MailboxesService {
       const hint = hints.loginHint;
       return `${base}?error=consent_denied${hint ? `&hint=${encodeURIComponent(hint)}` : ""}`;
     }
-    if (query.admin_consent) return this.handleAdminConsentReturn(query, base);
+    if (query.admin_consent) return this.handleAdminConsentReturn(query);
     if (!query.state) return `${base}?error=invalid_state`;
     let claims: OAuthStateClaims;
     try {
@@ -430,22 +442,33 @@ export class MailboxesService {
    * contact, following a forwarded link â€” so the page must never claim a
    * mailbox is now connected. Somebody else still has to do that.
    */
-  private async handleAdminConsentReturn(
-    query: MicrosoftCallbackQuery,
-    base: string,
-  ): Promise<string> {
-    if (!query.state) {
-      // A link that lost its state, or one older than seven days. Still a
-      // successful approval as far as Microsoft is concerned â€” say so, and let
-      // the customer discover the rest by retrying.
-      this.logger.info("admin consent granted; no state to attribute it to");
-      return `${base}?admin_consent=granted`;
+  private async handleAdminConsentReturn(query: MicrosoftCallbackQuery): Promise<string> {
+    const approved = `${this.env.WEB_ORIGIN}${ADMIN_CONSENT_RETURN_PATH}`;
+    /**
+     * Whether our own state survived decides whether we can ATTRIBUTE the
+     * approval â€” not whether it happened. Microsoft granted it before
+     * redirecting here, so a link that lost its state, or one older than the
+     * seven-day token, is still a real approval and the administrator is owed
+     * the same confirmation. Telling them "invalid" would be false, and would
+     * strand exactly the person the journey depends on.
+     *
+     * Purpose-scoping still bites where it matters: without a verifiable
+     * `admin_consent` token nothing is written, so no organisation can be
+     * credited with an approval on the strength of a forged or borrowed state.
+     * The page itself carries no organisation name and grants nothing, so
+     * showing it to whoever asks costs nothing.
+     */
+    let claims: OAuthStateClaims | null = null;
+    if (query.state) {
+      try {
+        claims = await verifyOAuthState(this.env.OAUTH_STATE_SECRET, query.state, "admin_consent");
+      } catch {
+        claims = null;
+      }
     }
-    let claims: OAuthStateClaims;
-    try {
-      claims = await verifyOAuthState(this.env.OAUTH_STATE_SECRET, query.state, "admin_consent");
-    } catch {
-      return `${base}?error=invalid_state`;
+    if (!claims) {
+      this.logger.info("admin consent granted; no verifiable state to attribute it to");
+      return approved;
     }
     try {
       await withTenant(
@@ -470,7 +493,7 @@ export class MailboxesService {
       this.logger.error({ err: error }, "admin consent granted but could not be audited");
     }
     this.logger.info("admin consent granted for organisation");
-    return `${base}?admin_consent=granted`;
+    return approved;
   }
 
   /**

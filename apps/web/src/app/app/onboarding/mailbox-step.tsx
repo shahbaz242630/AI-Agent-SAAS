@@ -69,6 +69,10 @@ export function MailboxStep({
           in this flow rather than on the settings page. */}
       <input type="hidden" name="flow" value="onboarding" />
 
+      {/* The picker is a choice about what to show, not a value the API reads:
+          Outlook is the only selectable option and the connect endpoint is
+          Microsoft-only. When Gmail lands it needs a different endpoint, not a
+          different string in this field. */}
       <fieldset className="flex flex-col gap-2">
         <legend className="text-sm font-medium">Where do you send email from?</legend>
         <div className="mt-1 flex flex-col gap-2">

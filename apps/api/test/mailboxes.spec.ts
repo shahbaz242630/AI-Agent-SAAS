@@ -422,9 +422,25 @@ describe("Mailboxes (Slice 1.6)", () => {
           .get("/integrations/microsoft/callback?admin_consent=True&tenant=" + randomUUID())
           .expect(302);
 
-        expect(response.headers.location).toBe(
-          "http://localhost:3000/app/settings/mailbox?admin_consent=granted",
-        );
+        expect(response.headers.location).toBe("http://localhost:3000/microsoft-approved");
+      });
+
+      /**
+       * The approver is the customer's IT contact following a forwarded link,
+       * with no Eva account. Every `/app/...` destination is behind the sign-in
+       * proxy, which strips the query string on the way to `/sign-in` â€” so the
+       * confirmation was discarded and the one person the journey depends on
+       * saw a login form instead. The receipt must live outside `/app`.
+       */
+      it("lands the administrator on a page that does NOT require an Eva account", async () => {
+        const response = await request(app.getHttpServer())
+          .get(
+            `/integrations/microsoft/callback?admin_consent=True&state=${await mintState(org.id, { purpose: "admin_consent" })}`,
+          )
+          .expect(302);
+
+        expect(response.headers.location).not.toContain("/app/");
+        expect(response.headers.location).toBe("http://localhost:3000/microsoft-approved");
       });
 
       it("attributes and audits the approval when our state came back", async () => {
@@ -437,9 +453,7 @@ describe("Mailboxes (Slice 1.6)", () => {
           )
           .expect(302);
 
-        expect(response.headers.location).toBe(
-          "http://localhost:3000/app/settings/mailbox?admin_consent=granted",
-        );
+        expect(response.headers.location).toBe("http://localhost:3000/microsoft-approved");
         const audit = await owner.auditLog.findFirst({
           where: { organisationId: org.id, action: "mailbox.admin_consent_granted" },
           orderBy: { createdAt: "desc" },
@@ -448,17 +462,48 @@ describe("Mailboxes (Slice 1.6)", () => {
         expect(audit?.metadata).toMatchObject({ tenant: tenantId });
       });
 
-      it("refuses a CONNECT state at the admin-consent return", async () => {
-        // The admin-consent token lives seven days; the connect token is the
-        // short-lived connect CSRF defence. Purpose-scoping is what makes the long life
-        // affordable, so it is asserted in both directions.
+      /**
+       * The admin-consent token lives seven days; the connect token is the
+       * short-lived CSRF defence, and purpose-scoping is what makes the long
+       * life affordable.
+       *
+       * What that scoping protects is ATTRIBUTION, not the page. Microsoft has
+       * already granted the consent by the time we are called, so refusing to
+       * confirm it would be false — and would strand an administrator whose
+       * link simply aged past seven days. The property worth asserting is that
+       * no organisation gets credited with an approval on the strength of a
+       * borrowed state, so that is what this asserts.
+       */
+      it("shows the receipt for a CONNECT state but credits NO organisation", async () => {
+        const before = await owner.auditLog.count({
+          where: { organisationId: org.id, action: "mailbox.admin_consent_granted" },
+        });
+
         const response = await request(app.getHttpServer())
           .get(`/integrations/microsoft/callback?admin_consent=True&state=${await mintState()}`)
           .expect(302);
 
-        expect(response.headers.location).toBe(
-          "http://localhost:3000/app/settings/mailbox?error=invalid_state",
-        );
+        expect(response.headers.location).toBe("http://localhost:3000/microsoft-approved");
+        const after = await owner.auditLog.count({
+          where: { organisationId: org.id, action: "mailbox.admin_consent_granted" },
+        });
+        expect(after).toBe(before);
+      });
+
+      it("shows the receipt for a forged state, and still credits no organisation", async () => {
+        const before = await owner.auditLog.count({
+          where: { action: "mailbox.admin_consent_granted" },
+        });
+
+        const response = await request(app.getHttpServer())
+          .get("/integrations/microsoft/callback?admin_consent=True&state=forged")
+          .expect(302);
+
+        expect(response.headers.location).toBe("http://localhost:3000/microsoft-approved");
+        const after = await owner.auditLog.count({
+          where: { action: "mailbox.admin_consent_granted" },
+        });
+        expect(after).toBe(before);
       });
 
       it("refuses an ADMIN_CONSENT state when completing a connect", async () => {
