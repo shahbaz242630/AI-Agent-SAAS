@@ -39,6 +39,7 @@ model Organisation {
   scheduledActions  ScheduledAction[]
   humanEscalations  HumanEscalation[]
   emailAccounts   EmailAccount[]
+  modules         OrganisationModule[]
 
   @@map("organisations")
 }
@@ -502,6 +503,9 @@ model EmailAccount {
   lastHealthCheckAt     DateTime?    @map("last_health_check_at") @db.Timestamptz(6)
   lastError             String?      @map("last_error")
   connectedBy           String?      @map("connected_by") @db.Uuid
+  /// The mailbox 1.7 sends from. Exactly one per organisation, enforced by a
+  /// partial unique index (migration 0017) that schema.prisma cannot express.
+  isPrimary             Boolean      @default(false) @map("is_primary")
   createdAt             DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt             DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
   createdBy             String?      @map("created_by") @db.Uuid
@@ -510,4 +514,32 @@ model EmailAccount {
 
   @@index([organisationId])
   @@map("email_accounts")
+}
+
+/// Which of the four products an organisation holds, and how many units of
+/// each it has paid for. Absence of a row means NOT entitled — fail closed.
+///
+/// The partial unique index on (organisation_id, module_key) WHERE deleted_at
+/// IS NULL lives in migration 0017: partial indexes are not representable
+/// here, the 0011/0013 precedent.
+model OrganisationModule {
+  id             String       @id @default(uuid()) @db.Uuid
+  organisationId String       @map("organisation_id") @db.Uuid
+  moduleKey      String       @map("module_key")
+  enabled        Boolean      @default(true)
+  /// How it was turned on: subscription | manual | trial.
+  source         String       @default("manual")
+  /// Units paid for — a connected mailbox for the email credit controller.
+  /// NOT NULL by design: a NULL meaning "unlimited" would fail open.
+  seats          Int          @default(1)
+  enabledAt      DateTime?    @map("enabled_at") @db.Timestamptz(6)
+  disabledAt     DateTime?    @map("disabled_at") @db.Timestamptz(6)
+  createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy      String?      @map("created_by") @db.Uuid
+  deletedAt      DateTime?    @map("deleted_at") @db.Timestamptz(6)
+  organisation   Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+
+  @@index([organisationId])
+  @@map("organisation_modules")
 }

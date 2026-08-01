@@ -50,6 +50,15 @@ beforeAll(async () => {
   // both client-side), so raw SQL must supply them.
   await owner.$executeRaw`INSERT INTO email_accounts (id, organisation_id, provider, email_address, access_token_encrypted, refresh_token_encrypted, token_expires_at, scopes, updated_at, deleted_at)
     VALUES (${randomUUID()}::uuid, ${DEMO_ORGANISATION_ID}::uuid, 'microsoft', 'rls-fixture@example.com', 'v1.aa.bb.cc', 'v1.aa.bb.cc', now() + interval '1 hour', ARRAY['Mail.Send'], now(), now())`;
+  // POSITIVE CONTROL for organisation_modules (Slice 1.6a), for exactly the
+  // same reason. The migration backfills only organisations that existed when
+  // it ran, so whether the DEMO org has a row here depends on ordering — give
+  // it one unconditionally, soft-deleted so it occupies no slot in the
+  // one-live-row-per-(org, module) partial index and cannot collide with specs
+  // running in parallel against eva_test.
+  await owner.$executeRaw`DELETE FROM organisation_modules WHERE organisation_id = ${DEMO_ORGANISATION_ID}::uuid AND deleted_at IS NOT NULL`;
+  await owner.$executeRaw`INSERT INTO organisation_modules (id, organisation_id, module_key, enabled, source, seats, updated_at, deleted_at)
+    VALUES (${randomUUID()}::uuid, ${DEMO_ORGANISATION_ID}::uuid, 'voice_credit_controller', true, 'manual', 1, now(), now())`;
   await owner.$disconnect();
 });
 
@@ -76,6 +85,7 @@ const TENANT_TABLES = [
   "scheduled_actions",
   "human_escalations",
   "email_accounts",
+  "organisation_modules",
 ];
 
 describe("RLS: connection role hardening", () => {
@@ -99,7 +109,8 @@ describe("RLS: connection role hardening", () => {
         'users', 'audit_logs', 'customers', 'contacts', 'invoices',
         'imports', 'import_rows', 'invoice_documents', 'suppression_list',
         'organisation_role_permissions', 'reminder_sequences', 'reminder_steps',
-        'scheduled_actions', 'human_escalations', 'email_accounts'
+        'scheduled_actions', 'human_escalations', 'email_accounts',
+        'organisation_modules'
       )`;
     expect(rows.length).toBe(TENANT_TABLES.length);
     for (const row of rows) {
@@ -116,7 +127,8 @@ describe("RLS: connection role hardening", () => {
         'users', 'audit_logs', 'customers', 'contacts', 'invoices',
         'imports', 'import_rows', 'invoice_documents', 'suppression_list',
         'organisation_role_permissions', 'reminder_sequences', 'reminder_steps',
-        'scheduled_actions', 'human_escalations', 'email_accounts'
+        'scheduled_actions', 'human_escalations', 'email_accounts',
+        'organisation_modules'
       )
       GROUP BY tablename`;
     expect(rows.length).toBe(TENANT_TABLES.length);
@@ -144,6 +156,63 @@ describe("RLS: cross-tenant attacks are refused by Postgres itself", () => {
       tx.$queryRawUnsafe<{ id: string }[]>(`SELECT id FROM ${table}`),
     );
     expect(visible).toEqual([]);
+  });
+
+  /**
+   * `organisation_modules` cannot join the list above, and the reason is worth
+   * stating: migration 0017 backfills EVERY organisation, so ORG_A legitimately
+   * owns a row here. "Sees zero rows" would be a false assertion, and quietly
+   * weakening it to that would hide the thing actually worth proving.
+   *
+   * So assert the real property instead — ORG_A sees its own row and ORG_B's is
+   * invisible — which is strictly stronger than the blanket check, because it
+   * fails both if isolation breaks AND if the policy over-filters and locks an
+   * organisation out of its own entitlements.
+   */
+  it("tenant A sees its OWN modules and none of tenant B's", async () => {
+    const visible = await asTenant(ORG_A, async (tx) =>
+      tx.$queryRawUnsafe<{ organisation_id: string }[]>(
+        `SELECT organisation_id FROM organisation_modules`,
+      ),
+    );
+    expect(visible.length).toBeGreaterThan(0);
+    expect(visible.every((row) => row.organisation_id === ORG_A)).toBe(true);
+    expect(visible.some((row) => row.organisation_id === ORG_B)).toBe(false);
+  });
+
+  /**
+   * Entitlement is the thing that decides whether an organisation may use a
+   * product at all, so granting yourself a module across a tenant boundary is
+   * the single most valuable write an attacker could make here.
+   *
+   * `id` and `updated_at` are NOT NULL with no database default (Prisma
+   * generates both client-side), so raw SQL must supply them — otherwise this
+   * dies on a 23502 not-null violation BEFORE Postgres evaluates the policy and
+   * passes for the wrong reason. That is the standing rule from slice 1.6,
+   * where all eight of these tests had been passing vacuously since 1.1.
+   */
+  it("tenant A cannot INSERT an organisation module carrying tenant B's organisation_id", async () => {
+    await expect(
+      asTenant(
+        ORG_A,
+        async (tx) =>
+          tx.$executeRaw`INSERT INTO organisation_modules (id, organisation_id, module_key, enabled, source, seats, updated_at)
+            VALUES (${randomUUID()}::uuid, ${ORG_B}::uuid, 'ai_receptionist', true, 'manual', 99, now())`,
+      ),
+    ).rejects.toThrow(/row-level security/i);
+  });
+
+  it("tenant A cannot UPDATE tenant B's seat count", async () => {
+    // The UPDATE path matters independently: buying seats is a WITH CHECK
+    // concern, and raising someone else's cap is as useful to an attacker as
+    // creating a row. RLS filters the row out, so this is a silent no-op
+    // rather than an error — assert nothing changed rather than a throw.
+    const changed = await asTenant(ORG_A, async (tx) =>
+      tx.$executeRawUnsafe(
+        `UPDATE organisation_modules SET seats = 99 WHERE organisation_id = '${ORG_B}'`,
+      ),
+    );
+    expect(changed).toBe(0);
   });
 
   it("tenant A cannot INSERT a reminder sequence carrying tenant B's organisation_id", async () => {
