@@ -564,6 +564,14 @@ describe("Schema conventions (BRD 10)", () => {
     const orgNone = await prisma.organisation.create({ data: { name: `LAO-none-${suffix}` } });
     const orgDraft = await prisma.organisation.create({ data: { name: `LAO-draft-${suffix}` } });
     const orgActive = await prisma.organisation.create({ data: { name: `LAO-active-${suffix}` } });
+    // Slice 1.6a: the function now also requires the email credit controller,
+    // so these fixtures must hold it or they drop out for the wrong reason and
+    // the invoice-status assertions below would pass vacuously.
+    for (const organisation of [orgNone, orgDraft, orgActive]) {
+      await prisma.organisationModule.create({
+        data: { organisationId: organisation.id, moduleKey: "email_credit_controller" },
+      });
+    }
     const draftCustomer = await prisma.customer.create({
       data: { organisationId: orgDraft.id, name: `LAO draft customer ${suffix}` },
     });
@@ -603,6 +611,20 @@ describe("Schema conventions (BRD 10)", () => {
     expect(ids).toContain(orgActive.id);
     expect(ids).not.toContain(orgNone.id);
     expect(ids).not.toContain(orgDraft.id);
+
+    // Slice 1.6a: switching the product off must drop the organisation out of
+    // the sweep even though its invoice is untouched — a disabled module has
+    // to stop outbound action, not merely hide a button (BRD §3.4).
+    await prisma.organisationModule.updateMany({
+      where: { organisationId: orgActive.id },
+      data: { enabled: false },
+    });
+    expect(await listIds()).not.toContain(orgActive.id);
+    await prisma.organisationModule.updateMany({
+      where: { organisationId: orgActive.id },
+      data: { enabled: true },
+    });
+    expect(await listIds()).toContain(orgActive.id);
 
     // A soft-deleted active invoice no longer qualifies the org.
     await prisma.invoice.update({
@@ -757,14 +779,23 @@ describe("Schema conventions (BRD 10)", () => {
      * deploy, for a customer who did nothing. Asserted against the real
      * migrated database rather than trusted.
      */
-    it("the backfill granted the email credit controller to EVERY live organisation", async () => {
+    it("the backfill granted the email credit controller to EVERY organisation that existed when it ran", async () => {
+      // Scoped to organisations older than the migration itself. The naive
+      // "every live organisation" version passed or failed depending on which
+      // specs had run first, because later tests create organisations the
+      // migration could not possibly have seen — an assertion that drifts with
+      // execution order is not evidence of anything.
       const missed = await prisma.$queryRaw<{ id: string }[]>`
         SELECT o.id FROM organisations o
-        WHERE o.deleted_at IS NULL AND NOT EXISTS (
-          SELECT 1 FROM organisation_modules m
-          WHERE m.organisation_id = o.id
-            AND m.module_key = 'email_credit_controller'
-            AND m.enabled AND m.deleted_at IS NULL)`;
+        WHERE o.deleted_at IS NULL
+          AND o.created_at < (
+            SELECT finished_at FROM _prisma_migrations
+            WHERE migration_name = '20260801100000_organisation_modules')
+          AND NOT EXISTS (
+            SELECT 1 FROM organisation_modules m
+            WHERE m.organisation_id = o.id
+              AND m.module_key = 'email_credit_controller'
+              AND m.enabled AND m.deleted_at IS NULL)`;
       expect(missed).toEqual([]);
     });
 
@@ -877,10 +908,17 @@ describe("Schema conventions (BRD 10)", () => {
     /** Deploy had to be a zero-behaviour-change event: before 0017 every
      *  organisation had at most one live mailbox, so each ends with exactly
      *  one primary and nothing a customer can observe changed. */
-    it("no organisation ended the migration with a live mailbox and no primary", async () => {
+    it("no mailbox that predates the migration was left without a primary", async () => {
+      // Same scoping problem as the backfill test above, with an extra twist:
+      // specs in this very file create non-primary mailboxes on purpose (that
+      // is what seats are for), so "every organisation has a primary" is not
+      // even true going forward. Only the migration's own work is in scope.
       const orphaned = await prisma.$queryRaw<{ organisation_id: string }[]>`
         SELECT organisation_id FROM email_accounts
         WHERE deleted_at IS NULL
+          AND created_at < (
+            SELECT finished_at FROM _prisma_migrations
+            WHERE migration_name = '20260801100000_organisation_modules')
         GROUP BY organisation_id
         HAVING count(*) FILTER (WHERE is_primary) = 0`;
       expect(orphaned).toEqual([]);
