@@ -28,6 +28,7 @@ import { PrismaService } from "../../common/database/prisma.service.js";
 // eslint-disable-next-line @typescript-eslint/consistent-type-imports
 import { UsersService } from "../users/users.service.js";
 import { requirePermission, type TenantTx } from "../../common/permissions/permissions.js";
+import { ModuleNotEntitledException } from "../../common/permissions/module-not-entitled.exception.js";
 import { writeAuditLog } from "../../common/audit/audit-log.js";
 import {
   decryptToken,
@@ -351,6 +352,19 @@ export class MailboxesService {
         },
       );
     } catch (error) {
+      /**
+       * This @Public() route calls requirePermission internally, so as of
+       * slice 1.6a it inherits the 402 — and its contract is ALWAYS a redirect,
+       * never JSON. Falling through to `connect_failed` would have been a
+       * redirect too, so nothing would have crashed; it would just have told
+       * someone whose organisation switched Invoice Chasing off mid-flow to
+       * "try again", which can never work. The same shape of wrong advice as
+       * defect F3, so it gets its own code.
+       */
+      if (error instanceof ModuleNotEntitledException) {
+        this.logger.info("mailbox callback rejected â€” organisation is not entitled");
+        return `${base}?error=module_not_entitled`;
+      }
       if (error instanceof ForbiddenException || error instanceof NotFoundException) {
         this.logger.info("mailbox callback rejected â€” initiator no longer authorised");
         return `${base}?error=not_authorised`;

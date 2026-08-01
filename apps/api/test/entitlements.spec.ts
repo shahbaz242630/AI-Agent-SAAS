@@ -1,6 +1,8 @@
+import { randomUUID } from "node:crypto";
 import type { INestApplication } from "@nestjs/common";
 import request from "supertest";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { signOAuthState } from "../src/modules/mailboxes/oauth-state.js";
 import type { EvaPrismaClient } from "@eva/database";
 import { PERMISSION_KEYS, PERMISSION_MODULE, MODULE_KEYS, type ModuleKey } from "@eva/types";
 import {
@@ -9,6 +11,7 @@ import {
   createTestApp,
   seedTestDatabase,
   signToken,
+  TEST_OAUTH_STATE_SECRET,
   type FixtureOrg,
 } from "./support.js";
 
@@ -203,6 +206,28 @@ describe("Module entitlements (Slice 1.6a)", () => {
         .set("Authorization", `Bearer ${tokenFor(bare, "sales")}`)
         .expect(403);
     });
+  });
+
+  /**
+   * The known trap, recorded in the plan before it bit: the @Public() OAuth
+   * callback calls requirePermission internally, so it inherits the 402 — and
+   * its contract is ALWAYS a redirect, never JSON.
+   */
+  it("the public OAuth callback turns an inherited 402 into a redirect, not an exception", async () => {
+    const ownerMember = bare.members.find((member) => member.roleKey === "owner")!;
+    const state = await signOAuthState(TEST_OAUTH_STATE_SECRET, {
+      organisationId: bare.id,
+      userId: ownerMember.id,
+      nonce: randomUUID(),
+    });
+
+    const response = await request(app.getHttpServer())
+      .get(`/integrations/microsoft/callback?code=fake&state=${state}`)
+      .expect(302);
+
+    // Its own code, not `connect_failed`: telling someone whose organisation
+    // has no Invoice Chasing to "try again" is advice that can never work.
+    expect(response.headers.location).toContain("error=module_not_entitled");
   });
 
   describe("PUT .../modules/:moduleKey", () => {

@@ -102,6 +102,44 @@ export async function connectMailbox(formData: FormData): Promise<void> {
   );
 }
 
+const MODULES_PATH = "/app/settings/modules";
+
+/**
+ * Turn a product on or off, or change how many seats it has (slice 1.6a).
+ *
+ * `seats` is only sent when the form actually carries it, because omitting it
+ * means "leave it alone" on the API side — an enable must never silently reset
+ * a seat count somebody paid for.
+ */
+export async function setModule(
+  _prevState: MailboxActionState,
+  formData: FormData,
+): Promise<MailboxActionState> {
+  const organisationId = String(formData.get("organisationId") ?? "");
+  const moduleKey = String(formData.get("moduleKey") ?? "");
+  const enabled = String(formData.get("enabled") ?? "") === "true";
+  const rawSeats = String(formData.get("seats") ?? "").trim();
+  const accessToken = await getAccessToken();
+  if (!accessToken) redirect("/sign-in");
+  try {
+    await apiFetch(`/organisations/${organisationId}/modules/${moduleKey}`, accessToken, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ enabled, ...(rawSeats ? { seats: Number(rawSeats) } : {}) }),
+    });
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 401) redirect("/sign-in");
+    // The API's own message names the missing prerequisite, or how many
+    // mailboxes must be disconnected first — both are things only it knows,
+    // and both survive apiFetch now (F4).
+    return {
+      error: error instanceof ApiError ? error.message : "Something went wrong. Please try again.",
+    };
+  }
+  revalidatePath(MODULES_PATH);
+  return { success: enabled ? "Product turned on." : "Product turned off." };
+}
+
 export async function disconnectMailbox(
   _prevState: MailboxActionState,
   formData: FormData,
