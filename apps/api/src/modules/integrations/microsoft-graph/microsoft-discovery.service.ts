@@ -35,6 +35,14 @@ const CACHE_MAX_ENTRIES = 500;
 /** Labels 1-63 chars, at least one dot, no leading/trailing hyphen. */
 const DOMAIN_PATTERN = /^(?!-)[a-z0-9-]{1,63}(?<!-)(\.(?!-)[a-z0-9-]{1,63}(?<!-))+$/i;
 const MAX_DOMAIN_LENGTH = 253;
+/**
+ * `FederationBrandName` is the ONE field here that reaches a customer's screen,
+ * and whoever owns the domain being looked up chooses it. Nothing worse than
+ * text can come back — React escapes it and it is never put in a URL or a
+ * header — but an unbounded string from a stranger has no business being
+ * rendered at full length. No real organisation name is this long.
+ */
+const MAX_BRAND_LENGTH = 100;
 
 interface UserRealmResponse {
   NameSpaceType?: unknown;
@@ -76,7 +84,7 @@ export class MicrosoftDiscoveryService implements MicrosoftDiscovery {
 
     const brand =
       typeof realm.FederationBrandName === "string" && realm.FederationBrandName.trim()
-        ? realm.FederationBrandName.trim()
+        ? realm.FederationBrandName.trim().slice(0, MAX_BRAND_LENGTH)
         : null;
     return { kind: "work", tenantId: await this.getTenantId(domain), organisationName: brand };
   }
@@ -92,8 +100,15 @@ export class MicrosoftDiscoveryService implements MicrosoftDiscovery {
     return /\/([0-9a-f-]{36})\//i.exec(config.issuer)?.[1] ?? null;
   }
 
-  /** Fails silently by design — see MicrosoftDiscovery.describeDomain. Nothing
-   *  from these responses is ever echoed to a user, only classified. */
+  /**
+   * Fails silently by design — see MicrosoftDiscovery.describeDomain.
+   *
+   * Everything from these responses is CLASSIFIED rather than echoed, with one
+   * exception worth knowing about: `FederationBrandName` is shown to the
+   * customer, so it is length-capped above. Do not add a second field to that
+   * list without the same thought — the domain being looked up is whatever
+   * somebody typed into a box.
+   */
   private async getJson<T>(url: string): Promise<T | null> {
     try {
       const response = await fetch(url, { signal: AbortSignal.timeout(TIMEOUT_MS) });

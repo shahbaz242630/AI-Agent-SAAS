@@ -26,6 +26,13 @@ import { ERROR_REPORTER, type ErrorReporter } from "../monitoring/error-reporter
  * This used to key on `status < 500`, which also silenced the two 5xx messages
  * we write on purpose — the customer got "Internal server error" for a
  * situation we understood and had already explained in plain English.
+ *
+ * ⚠️ STANDING RULE, and the thing that makes the above safe: an HttpException's
+ * message is now a PUBLIC string. Never construct one from a caught error —
+ * `new BadGatewayException(err.message)` would hand a customer the very
+ * connection strings and query text this filter exists to contain. Both 5xx
+ * exceptions in the API today are hardcoded literals (checked 2026-08-01);
+ * keep it that way, and summarise upstream failures in words we chose.
  */
 @Catch()
 export class GlobalExceptionFilter implements ExceptionFilter {
