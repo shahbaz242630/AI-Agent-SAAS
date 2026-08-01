@@ -56,6 +56,9 @@ export const PERMISSION_KEYS = [
   "reminders:write",
   "mailbox:read",
   "mailbox:manage",
+  /** Slice 1.6a — turning products on and off, and buying seats. Itself
+   *  `core`: an organisation with no modules must still be able to buy one. */
+  "modules:manage",
 ] as const;
 
 export type PermissionKey = (typeof PERMISSION_KEYS)[number];
@@ -68,7 +71,15 @@ export type PermissionKey = (typeof PERMISSION_KEYS)[number];
  */
 export const DEFAULT_ROLE_PERMISSIONS: Record<OrganisationRole, readonly PermissionKey[]> = {
   owner: PERMISSION_KEYS,
-  administrator: PERMISSION_KEYS,
+  /**
+   * Everything EXCEPT `modules:manage` (slice 1.6a). Turning a product on is
+   * the one action here that commits the business to money, and that belongs
+   * to whoever owns the account rather than to anyone they delegate
+   * administration to. Written as a filter rather than a hand-maintained list
+   * so an administrator keeps inheriting every future permission by default,
+   * which is the existing intent.
+   */
+  administrator: PERMISSION_KEYS.filter((key) => key !== "modules:manage"),
   finance: [
     "customers:read",
     "customers:write",
@@ -88,6 +99,99 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<OrganisationRole, readonly Permiss
   reception: ["customers:read", "contacts:read", "invoices:read", "imports:read", "reminders:read"],
   read_only: ["customers:read", "contacts:read", "invoices:read", "imports:read", "reminders:read"],
 };
+
+// --- Slice 1.6a: module entitlements ---
+
+/** The four products an organisation can hold (BRD entitlement model). */
+export const MODULE_KEYS = [
+  "email_credit_controller",
+  "voice_credit_controller",
+  "lead_follow_up_agent",
+  "ai_receptionist",
+] as const;
+
+export type ModuleKey = (typeof MODULE_KEYS)[number];
+
+/**
+ * Which product owns each permission.
+ *
+ * The `Record<PermissionKey, …>` type IS the exhaustiveness guarantee: adding a
+ * permission key without assigning it a module fails the build. There is no
+ * rule for anyone to remember and nothing to rot — which matters, because the
+ * failure mode of a forgotten mapping is a permission silently escaping
+ * enforcement forever.
+ *
+ * **`core` is not a loophole, it is a requirement.** An organisation with zero
+ * modules must still reach organisation, member and billing management, or it
+ * can never buy anything — the lockout trap. Customers and contacts are shared
+ * by all four products, so they are core too.
+ */
+export const PERMISSION_MODULE: Record<PermissionKey, ModuleKey | "core"> = {
+  "customers:read": "core",
+  "customers:write": "core",
+  "contacts:read": "core",
+  "contacts:write": "core",
+  "permissions:read": "core",
+  "permissions:manage": "core",
+  "modules:manage": "core",
+  "invoices:read": "email_credit_controller",
+  "invoices:write": "email_credit_controller",
+  "imports:read": "email_credit_controller",
+  "imports:write": "email_credit_controller",
+  "reminders:read": "email_credit_controller",
+  "reminders:write": "email_credit_controller",
+  "mailbox:read": "email_credit_controller",
+  "mailbox:manage": "email_credit_controller",
+};
+
+/**
+ * What each product needs underneath it (BRD): lead follow-up and the
+ * receptionist need the voice platform; voice credit control needs the email
+ * credit controller's data model.
+ *
+ * Validated when ENABLING, never re-derived per request — a stored invalid
+ * combination is a bug to prevent at the write, not to pay for on every check.
+ */
+export const MODULE_DEPENDENCIES: Record<ModuleKey, readonly ModuleKey[]> = {
+  email_credit_controller: [],
+  voice_credit_controller: ["email_credit_controller"],
+  lead_follow_up_agent: ["voice_credit_controller"],
+  ai_receptionist: ["voice_credit_controller"],
+};
+
+/** How a module came to be enabled. `subscription` is written by Paddle
+ *  webhooks later; the table stays authoritative for ENFORCEMENT and Paddle
+ *  for BILLING, because deriving entitlement live from Paddle would let a
+ *  Paddle outage disable every customer at once. */
+export const MODULE_SOURCES = ["subscription", "manual", "trial"] as const;
+
+export type ModuleSource = (typeof MODULE_SOURCES)[number];
+
+/** GET /organisations/:id/modules — one entry per product, always all four,
+ *  so the UI can show what is available to buy as well as what is held. */
+export interface ModuleStatusDto {
+  moduleKey: ModuleKey;
+  enabled: boolean;
+  source: ModuleSource | null;
+  /** Units paid for. Meaningless while `enabled` is false. */
+  seats: number;
+  /** Units in use — connected mailboxes for the email credit controller.
+   *  Null for products with nothing countable yet. */
+  seatsUsed: number | null;
+  enabledAt: string | null;
+  disabledAt: string | null;
+  /** Products this one needs first, and which are not currently enabled. */
+  missingDependencies: readonly ModuleKey[];
+}
+
+/** The machine-readable body of a 402, so the web app can show an upgrade
+ *  prompt instead of a dead end. */
+export interface ModuleNotEntitledBody {
+  statusCode: 402;
+  code: "module_not_entitled";
+  module: ModuleKey;
+  message: string;
+}
 
 // --- Slice 1.2: invoice records ---
 

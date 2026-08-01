@@ -7,7 +7,7 @@ constraints on `module_key` / `source` / `seats`, and a partial unique index on
 `(organisation_id, module_key)`.
 
 It also **supersedes slice 1.6 ruling 6** by reshaping `email_accounts`: the
-one-live-mailbox-per-organisation index is replaced by a one-live-*address*
+one-live-mailbox-per-organisation index is replaced by a one-live-_address_
 index, and `is_primary` is added with its own single-primary index.
 
 Both halves backfill: every existing organisation is granted
@@ -39,7 +39,7 @@ the `eva_app` grant dies with the table.)
 - **The `email_accounts` half is NOT cleanly reversible once used.** Recreating
   `email_accounts_live_organisation_key` fails if any organisation has taken
   advantage of a second seat, because two live rows now share an
-  `organisation_id`. Rolling back then requires a human decision about *which*
+  `organisation_id`. Rolling back then requires a human decision about _which_
   mailbox to keep — there is no correct automatic answer, and picking one
   silently disconnects a mailbox a customer is relying on. Soft-delete the
   surplus rows deliberately first, or prefer a forward corrective migration
