@@ -62,6 +62,25 @@ export default async function AppHomePage() {
     );
   }
 
+  // A brand-new account has nothing to look at here, so send it straight into
+  // setup — that is the founder's journey: sign up, name the business, connect
+  // the mailbox, move on. Only when there is NO organisation at all. Once one
+  // exists this page has something real to show, and dragging someone back into
+  // a flow they chose to leave would be a trap rather than a guide.
+  if (organisations.length === 0) {
+    redirect("/app/onboarding");
+  }
+
+  // Whether setup is actually finished. Best-effort: not every role can read
+  // mailbox status, and a nudge is not worth failing the home page over.
+  let mailboxConnected: boolean | null = null;
+  try {
+    const response = await apiFetch(`/organisations/${organisations[0]!.id}/mailbox`, accessToken);
+    mailboxConnected = ((await response.json()) as { connected: boolean }).connected;
+  } catch {
+    mailboxConnected = null;
+  }
+
   return (
     <main className="flex flex-1 flex-col items-center gap-8 p-8">
       <header className="flex w-full max-w-2xl items-center justify-between">
@@ -81,6 +100,25 @@ export default async function AppHomePage() {
         <p className="text-muted-foreground">Signed in as {me.email}</p>
       </section>
 
+      {mailboxConnected === false && (
+        <section className="flex w-full max-w-2xl flex-col gap-3 rounded-[var(--radius-card)] bg-muted px-6 py-4">
+          <div className="flex flex-col gap-1">
+            <h2 className="text-base font-semibold">Finish setting up</h2>
+            <p className="text-sm text-muted-foreground">
+              Eva can&apos;t chase anything until it can send from your mailbox.
+            </p>
+          </div>
+          <div>
+            <Link
+              href="/app/onboarding"
+              className="rounded-[var(--radius-card)] bg-primary px-4 py-2 text-sm font-medium text-primary-foreground"
+            >
+              Connect your mailbox
+            </Link>
+          </div>
+        </section>
+      )}
+
       <section className="flex w-full max-w-2xl flex-col gap-4">
         <div className="flex items-center justify-between">
           <h2 className="text-lg font-semibold">Your organisations</h2>
@@ -99,23 +137,19 @@ export default async function AppHomePage() {
             </Link>
           </div>
         </div>
-        {organisations.length === 0 ? (
-          <p className="rounded-[var(--radius-card)] bg-muted px-6 py-4 text-sm text-muted-foreground">
-            You don&apos;t belong to an organisation yet. Create one to get started.
-          </p>
-        ) : (
-          <ul className="flex flex-col gap-2">
-            {organisations.map((organisation) => (
-              <li
-                key={organisation.id}
-                className="flex items-center justify-between rounded-[var(--radius-card)] bg-muted px-6 py-4 text-sm"
-              >
-                <span className="font-medium">{organisation.name}</span>
-                <span className="text-muted-foreground">{organisation.roleKey}</span>
-              </li>
-            ))}
-          </ul>
-        )}
+        {/* No empty state: an account with no organisation was redirected into
+            setup above and never reaches this list. */}
+        <ul className="flex flex-col gap-2">
+          {organisations.map((organisation) => (
+            <li
+              key={organisation.id}
+              className="flex items-center justify-between rounded-[var(--radius-card)] bg-muted px-6 py-4 text-sm"
+            >
+              <span className="font-medium">{organisation.name}</span>
+              <span className="text-muted-foreground">{organisation.roleKey}</span>
+            </li>
+          ))}
+        </ul>
       </section>
     </main>
   );

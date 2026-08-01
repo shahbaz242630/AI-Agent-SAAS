@@ -1,7 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ApiEnv } from "../../../config/env.js";
 import { GraphMailProvider } from "./graph-mail-provider.js";
-import { GraphRequestError, ReauthRequiredError } from "./microsoft-graph-provider.js";
+import {
+  GraphRequestError,
+  MailboxUnavailableError,
+  ReauthRequiredError,
+} from "./microsoft-graph-provider.js";
 
 /**
  * The hand-rolled Microsoft identity/Graph client (Slice 1.6, ruling 3).
@@ -189,5 +193,197 @@ describe("GraphMailProvider (Slice 1.6, ruling 3 — hand-rolled OAuth)", () => 
       .catch((caught: unknown) => caught)) as GraphRequestError;
     expect(error.message).not.toContain("super-secret-access-token");
     expect(error.message).not.toContain("secret-internal-detail");
+  });
+});
+
+/**
+ * Defect F3 (found on live staging 2026-07-30): every Graph 401 was mapped to
+ * ReauthRequiredError, so an account with no Exchange licence was told
+ * "Microsoft authorisation expired — reconnect the mailbox". Reconnecting can
+ * never help — the grant is perfectly valid, the account simply has no mailbox —
+ * so the user loops forever. Observed on
+ * evatest@evacrosstenanttest.onmicrosoft.com, which has no Exchange licence.
+ */
+describe("GraphMailProvider — a missing mailbox is not an expired grant (F3)", () => {
+  const provider = new GraphMailProvider(ENV);
+
+  const mailboxless = (code: string) =>
+    jsonResponse(401, { error: { code, message: "confidential-microsoft-detail" } });
+
+  it("maps a 401 MailboxNotEnabledForRESTAPI to MailboxUnavailableError", async () => {
+    stubFetch(() => mailboxless("MailboxNotEnabledForRESTAPI"));
+    await expect(provider.getProfile("valid-token")).rejects.toBeInstanceOf(
+      MailboxUnavailableError,
+    );
+  });
+
+  it("maps the other mailbox-missing codes Graph uses", async () => {
+    for (const code of ["MailboxNotHostedInExchangeOnline", "RestApiNotEnabledForUser"]) {
+      stubFetch(() => mailboxless(code));
+      await expect(provider.getProfile("valid-token")).rejects.toBeInstanceOf(
+        MailboxUnavailableError,
+      );
+    }
+  });
+
+  it("matches the code case-insensitively", async () => {
+    stubFetch(() => mailboxless("mailboxnotenabledforrestapi"));
+    await expect(provider.getProfile("valid-token")).rejects.toBeInstanceOf(
+      MailboxUnavailableError,
+    );
+  });
+
+  it("still treats every other 401 as a dead grant", async () => {
+    stubFetch(() => mailboxless("InvalidAuthenticationToken"));
+    await expect(provider.getProfile("expired")).rejects.toBeInstanceOf(ReauthRequiredError);
+  });
+
+  it("falls back to a dead grant when the 401 body is unreadable", async () => {
+    // Safe default: an unparseable body must not become "you have no mailbox",
+    // which would tell a user with a perfectly good mailbox to go and buy one.
+    stubFetch(() => new Response("<html>401</html>", { status: 401 }));
+    await expect(provider.getProfile("expired")).rejects.toBeInstanceOf(ReauthRequiredError);
+  });
+
+  it("does not echo Microsoft's body text (the no-echo rule still holds)", async () => {
+    stubFetch(() => mailboxless("MailboxNotEnabledForRESTAPI"));
+    const error = (await provider
+      .getProfile("super-secret-access-token")
+      .catch((caught: unknown) => caught)) as Error;
+    expect(error.message).not.toContain("confidential-microsoft-detail");
+    expect(error.message).not.toContain("super-secret-access-token");
+  });
+
+  it("probeMailbox resolves for an account that has one", async () => {
+    stubFetch((url) => {
+      expect(url).toContain("https://graph.microsoft.com/v1.0/me/mailFolders/inbox");
+      return jsonResponse(200, { id: "inbox-id" });
+    });
+    await expect(provider.probeMailbox("valid-token")).resolves.toBeUndefined();
+  });
+
+  it("probeMailbox surfaces MailboxUnavailableError so connect can refuse early", async () => {
+    stubFetch(() => mailboxless("MailboxNotEnabledForRESTAPI"));
+    await expect(provider.probeMailbox("valid-token")).rejects.toBeInstanceOf(
+      MailboxUnavailableError,
+    );
+  });
+
+  /**
+   * THE case that matters, and the one the first implementation got wrong.
+   *
+   * Observed against a real licence-less account on 2026-07-31: Graph answers
+   * /me/mailFolders/inbox with a BARE 401 — no WWW-Authenticate header, empty
+   * body, no error code to match on. Detection by error code silently fell
+   * through to "your authorisation expired", which is the very dead end F3
+   * exists to remove.
+   *
+   * What makes the 401 unambiguous here is ORDERING, not parsing: connect
+   * calls getProfile first, so /me has already answered 200 with this token.
+   */
+  it("treats a BARE 401 on the probe as a missing mailbox, not a dead grant", async () => {
+    stubFetch(() => new Response(null, { status: 401 }));
+
+    await expect(provider.probeMailbox("token-that-just-worked-on-/me")).rejects.toBeInstanceOf(
+      MailboxUnavailableError,
+    );
+  });
+
+  /**
+   * The SECOND thing the implementation got wrong, found by running it against
+   * staging on 2026-08-01 and invisible to every test that existed.
+   *
+   * The very same licence-less account that answered a bare 401 on 2026-07-31
+   * answered HTTP 500 with `Retry-After: 10` the next day. Only 401 was mapped
+   * to "no mailbox", so the 500 fell through to GraphRequestError and the
+   * customer was told "please try again" — the identical infinite loop F3 was
+   * written to remove, just wearing a different message.
+   *
+   * The ordering argument never depended on the status code: getProfile
+   * succeeded moments earlier with this token, so the grant is alive and
+   * whatever failed is not authorisation.
+   */
+  it.each([
+    ["500 with Retry-After, as observed on staging", 500],
+    ["503, the other shape Graph uses for a backend it cannot reach", 503],
+    ["403, in case Graph ever refuses outright", 403],
+    ["404, if the folder simply is not there", 404],
+  ])("treats a probe failing with %s as a missing mailbox", async (_label, status) => {
+    stubFetch(() => new Response(null, { status, headers: { "Retry-After": "10" } }));
+
+    await expect(provider.probeMailbox("token-that-just-worked-on-/me")).rejects.toBeInstanceOf(
+      MailboxUnavailableError,
+    );
+  });
+
+  it("treats a probe that cannot reach Microsoft at all as a missing mailbox", async () => {
+    // A thrown fetch never produced a GraphRequestError, so it used to escape
+    // handleCallback's MailboxUnavailableError branch entirely.
+    stubFetch(() => {
+      throw new TypeError("network down");
+    });
+
+    await expect(provider.probeMailbox("token-that-just-worked-on-/me")).rejects.toBeInstanceOf(
+      MailboxUnavailableError,
+    );
+  });
+
+  it("a non-401 failure ANYWHERE ELSE is still a plain Graph error", async () => {
+    // The ordering argument is specific to the probe. Widening it to every call
+    // would tell a user with a perfectly good mailbox that they have none.
+    stubFetch(() => new Response(null, { status: 500 }));
+
+    await expect(provider.getProfile("valid")).rejects.toBeInstanceOf(GraphRequestError);
+    await expect(
+      provider.sendMail("valid", { to: "t@example.com", subject: "s", bodyText: "b" }),
+    ).rejects.toBeInstanceOf(GraphRequestError);
+  });
+
+  it("a bare 401 ANYWHERE ELSE is still a dead grant", async () => {
+    // The ordering argument does not hold for other calls, so they keep the
+    // conservative reading: an expired grant is the likelier cause, and
+    // "reconnect" is advice the user can act on.
+    stubFetch(() => new Response(null, { status: 401 }));
+
+    await expect(provider.getProfile("expired")).rejects.toBeInstanceOf(ReauthRequiredError);
+    await expect(
+      provider.sendMail("expired", { to: "t@example.com", subject: "s", bodyText: "b" }),
+    ).rejects.toBeInstanceOf(ReauthRequiredError);
+  });
+});
+
+/**
+ * Defect F5 (found on live staging 2026-07-30): the authorize URL set neither
+ * `login_hint` nor `prompt`, so Microsoft silently reused whatever session
+ * existed. Someone signed into a personal and a work account got no choice and
+ * could connect the WRONG mailbox without ever seeing a picker — after which
+ * Eva chases their customers from an address they never intended to use.
+ */
+describe("GraphMailProvider — account targeting on the authorize URL (F5)", () => {
+  const provider = new GraphMailProvider(ENV);
+
+  it("passes login_hint through when the user told us their address", () => {
+    const url = new URL(provider.buildAuthorizeUrl("state-xyz", { loginHint: "sara@example.com" }));
+    expect(url.searchParams.get("login_hint")).toBe("sara@example.com");
+  });
+
+  it("omits login_hint entirely when we do not have one", () => {
+    const url = new URL(provider.buildAuthorizeUrl("state-xyz"));
+    expect(url.searchParams.has("login_hint")).toBe(false);
+  });
+
+  it("always asks for the account picker", () => {
+    // Belt and braces only: prompt=select_account was IGNORED once a session
+    // context existed (Microsoft's reprocess flow, observed 2026-07-30), so
+    // nothing may depend on it. login_hint is the reliable mechanism, and
+    // showing the connected address back to the user is the real guarantee.
+    const url = new URL(provider.buildAuthorizeUrl("state-xyz"));
+    expect(url.searchParams.get("prompt")).toBe("select_account");
+  });
+
+  it("keeps the state and scopes untouched", () => {
+    const url = new URL(provider.buildAuthorizeUrl("state-xyz", { loginHint: "sara@example.com" }));
+    expect(url.searchParams.get("state")).toBe("state-xyz");
+    expect(url.searchParams.get("scope")).toBe("offline_access User.Read Mail.Read Mail.Send");
   });
 });

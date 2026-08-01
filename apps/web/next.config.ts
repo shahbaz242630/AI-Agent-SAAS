@@ -1,5 +1,14 @@
+import { loadRootEnvFile } from "@eva/configuration";
 import { withSentryConfig } from "@sentry/nextjs";
 import type { NextConfig } from "next";
+
+// Next.js reads env files from its OWN directory, never the repo root, so the
+// root .env that AGENTS.md tells you to create was invisible here — the dev
+// server started and then threw "NEXT_PUBLIC_SUPABASE_URL is not set" on every
+// request. Loading it in next.config puts the values in process.env before
+// Next inlines any NEXT_PUBLIC_* variable, which is why this cannot move
+// later. Local development only; see loadRootEnvFile.
+loadRootEnvFile();
 
 const nextConfig: NextConfig = {
   // The founder's local .env stores the web DSN as SENTRY_DSN_WEB, but the

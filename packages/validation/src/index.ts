@@ -314,15 +314,59 @@ export type UpdateReminderStepInput = z.infer<typeof updateReminderStepSchema>;
 // --- Slice 1.6: Outlook connection ---
 
 /**
- * GET /integrations/microsoft/callback query (Slice 1.6, ruling 4). Microsoft
- * returns either `code`+`state` (consent given) or `error`(+`error_description`)
- * (consent declined); `state` is always present on a legitimate redirect.
+ * GET /integrations/microsoft/callback query (Slice 1.6, ruling 4).
+ *
+ * Microsoft sends THREE shapes here, not two:
+ *
+ * 1. `code` + `state` — consent given.
+ * 2. `error` (+ `error_description`, usually `state`) — declined.
+ * 3. `admin_consent` + `tenant` — an administrator approved Eva org-wide via
+ *    the `/adminconsent` endpoint. **No `code`, and no `state` unless we put
+ *    one there.**
+ *
+ * Shape 3 is defect F2: `state` used to be required, so the customer's IT
+ * administrator — the one person in the whole journey we most need to impress —
+ * finished approving Eva and landed on raw validation JSON.
+ *
+ * `state` is therefore optional at the schema level, and the callback decides
+ * per shape whether it can proceed without one.
+ *
+ * Every field is optional ON PURPOSE, and no `.refine` rejects a query that
+ * matches none of the three shapes. A rejection here becomes a 400 JSON body,
+ * which is precisely the contract violation F2 was: this route owes the browser
+ * a redirect in every case, so "this is not a Microsoft callback" is the
+ * service's decision to make (`?error=invalid_state`), not the schema's.
  */
 export const microsoftCallbackQuerySchema = z.object({
   code: z.string().min(1).optional(),
-  state: z.string().min(1),
+  state: z.string().min(1).optional(),
   error: z.string().optional(),
   error_description: z.string().optional(),
+  /** Microsoft sends the literal capitalised string "True" — not a boolean. */
+  admin_consent: z.string().optional(),
+  tenant: z.string().optional(),
 });
 
 export type MicrosoftCallbackQuery = z.infer<typeof microsoftCallbackQuerySchema>;
+
+/**
+ * POST .../mailbox/connect body. The address is optional — it is a `login_hint`
+ * for Microsoft (defect F5: without one, someone signed into two accounts can
+ * silently connect the wrong mailbox) and the domain we classify to decide
+ * whether an administrator can even exist. Eva never asks for the password;
+ * that happens at Microsoft.
+ */
+export const mailboxConnectSchema = z
+  .object({
+    emailAddress: z.string().trim().email().max(320).optional(),
+    /** Which Eva screen this was started from, so the callback returns the user
+     *  there. A closed enum, never a URL — the API maps it to a path from its
+     *  own table, so a caller cannot choose where the browser lands. */
+    flow: z.enum(["onboarding", "settings"]).optional(),
+  })
+  // The whole body is optional: connect worked without one before onboarding
+  // existed, and the settings page still calls it that way. Without the default
+  // an absent body parses as undefined and 400s.
+  .default({});
+
+export type MailboxConnectInput = z.infer<typeof mailboxConnectSchema>;

@@ -1,6 +1,9 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import { AdminConsentHelp } from "@/components/admin-consent-help";
+import { MailboxCard, type MailboxSummary } from "@/components/mailbox-card";
 import { ApiError, apiFetch } from "@/lib/api";
+import { mailboxErrorMessage, needsConsentHelp } from "@/lib/mailbox-errors";
 import { createClient } from "@/lib/supabase/server";
 import { MailboxControls } from "./mailbox-controls";
 
@@ -11,33 +14,11 @@ interface OrganisationSummary {
   roleKey: string;
 }
 
-interface MailboxStatus {
-  connected: boolean;
-  emailAddress: string | null;
-  displayName: string | null;
-  healthStatus: "active" | "auth_expired" | "error" | null;
-  lastHealthCheckAt: string | null;
-  lastError: string | null;
+interface AdminConsent {
+  accountKind: "work" | "personal" | "unknown";
+  url: string | null;
+  organisationName: string | null;
 }
-
-/**
- * Callback error codes from the API (mailboxes service). `admin_consent_required`
- * is the one most real customers will meet: Microsoft's default consent policy
- * blocks Mail scopes for an unverified publisher, and it arrives looking exactly
- * like a cancellation — so it gets its own actionable message rather than
- * "you cancelled" (founder ruling 2026-07-30).
- */
-const ERROR_MESSAGES: Record<string, string> = {
-  consent_denied: "The Microsoft connection was cancelled or declined.",
-  admin_consent_required:
-    "Your Microsoft 365 administrator needs to approve Eva before this mailbox can be connected. Ask them to authorise it, then try again.",
-  invalid_state: "The connection attempt expired or was invalid — please try again.",
-  not_authorised:
-    "Your access changed while you were connecting, so the mailbox wasn't linked. Ask an owner or administrator to connect it.",
-  missing_code: "Microsoft did not return an authorisation code — please try again.",
-  exchange_failed: "We couldn't complete the Microsoft connection — please try again.",
-  connect_failed: "We couldn't start the Microsoft connection — please try again.",
-};
 
 export default async function MailboxSettingsPage({
   searchParams,
@@ -58,13 +39,13 @@ export default async function MailboxSettingsPage({
   ).json()) as OrganisationSummary[];
   const organisation = organisations[0];
 
-  let status: MailboxStatus | null = null;
+  let status: MailboxSummary | null = null;
   let forbidden = false;
   if (organisation) {
     try {
       status = (await (
         await apiFetch(`/organisations/${organisation.id}/mailbox`, accessToken)
-      ).json()) as MailboxStatus;
+      ).json()) as MailboxSummary;
     } catch (error) {
       if (error instanceof ApiError && error.status === 401) redirect("/sign-in");
       if (error instanceof ApiError && error.status === 403) forbidden = true;
@@ -72,11 +53,36 @@ export default async function MailboxSettingsPage({
     }
   }
 
-  const flashError =
-    typeof params.error === "string"
-      ? (ERROR_MESSAGES[params.error] ?? "Something went wrong — please try again.")
-      : null;
+  const errorCode = typeof params.error === "string" ? params.error : null;
   const flashConnected = params.connected === "1";
+  // Set only on a genuinely new connection — a reconnect sends nothing, so the
+  // absence of this parameter is not a failure.
+  const testEmailFailed = params.test_email === "failed";
+  const attemptedAddress = typeof params.hint === "string" ? params.hint : null;
+
+  // A declined consent is genuinely ambiguous (F1), so it gets a whole section
+  // rather than a one-line flash: the customer may need to involve their
+  // administrator, and that is the moment to hand them the link.
+  const showConsentHelp = needsConsentHelp(errorCode);
+  let adminConsent: AdminConsent | null = null;
+  if (showConsentHelp && organisation && !forbidden) {
+    try {
+      const query = attemptedAddress ? `?email=${encodeURIComponent(attemptedAddress)}` : "";
+      adminConsent = (await (
+        await apiFetch(
+          `/organisations/${organisation.id}/mailbox/admin-consent${query}`,
+          accessToken,
+        )
+      ).json()) as AdminConsent;
+    } catch (error) {
+      // The help is an enhancement; the message below still explains the
+      // situation without it. Never turn a failed connection into a crash.
+      if (error instanceof ApiError && error.status === 401) redirect("/sign-in");
+      adminConsent = null;
+    }
+  }
+
+  const flashError = errorCode && !showConsentHelp ? mailboxErrorMessage(errorCode) : null;
 
   return (
     <main className="flex flex-1 flex-col items-center gap-6 p-8">
@@ -87,14 +93,29 @@ export default async function MailboxSettingsPage({
         </p>
       </section>
 
+      {/* ONE message, three endings. `test_email` only ever arrives alongside
+          `connected=1`, so a separate box for the failure printed "Mailbox
+          connected successfully" directly above "we couldn't send its test
+          email" — two notices where the customer needs one. The failure is
+          styled as a caveat, not an error: the connection succeeded and read
+          access was proven, only the send did not land. */}
       {flashConnected && (
         <p
           role="status"
-          className="w-full max-w-2xl rounded-[var(--radius-card)] bg-muted px-6 py-3 text-sm text-success"
+          className={`w-full max-w-2xl rounded-[var(--radius-card)] bg-muted px-6 py-3 text-sm ${
+            testEmailFailed ? "text-muted-foreground" : "text-success"
+          }`}
         >
-          Mailbox connected successfully.
+          {params.test_email === "sent"
+            ? "Mailbox connected. We've sent a test email to it — check the inbox."
+            : testEmailFailed
+              ? "Mailbox connected, but we couldn't send its test email. Try Send test email below."
+              : "Mailbox connected successfully."}
         </p>
       )}
+      {/* An approving administrator no longer lands here at all — they get the
+          public /microsoft-approved receipt, because they usually have no Eva
+          account and this route would bounce them to sign-in. */}
       {flashError && (
         <p
           role="alert"
@@ -102,6 +123,14 @@ export default async function MailboxSettingsPage({
         >
           {flashError}
         </p>
+      )}
+      {showConsentHelp && (
+        <AdminConsentHelp
+          accountKind={adminConsent?.accountKind ?? "unknown"}
+          url={adminConsent?.url ?? null}
+          organisationName={adminConsent?.organisationName ?? null}
+          attemptedAddress={attemptedAddress}
+        />
       )}
 
       {!organisation ? (
@@ -118,18 +147,9 @@ export default async function MailboxSettingsPage({
         </p>
       ) : status ? (
         <section className="flex w-full max-w-2xl flex-col gap-4 rounded-[var(--radius-card)] bg-muted px-6 py-4">
+          {/* A list of one today; 1.6a's seats turn it into a list of several. */}
           {status.connected ? (
-            <div className="flex flex-col gap-1 text-sm">
-              <span className="font-medium">{status.emailAddress}</span>
-              {status.displayName && (
-                <span className="text-muted-foreground">{status.displayName}</span>
-              )}
-              <span className={status.healthStatus === "active" ? "text-success" : "text-danger"}>
-                {status.healthStatus === "active"
-                  ? "Connected"
-                  : (status.lastError ?? "Connection problem — reconnect the mailbox.")}
-              </span>
-            </div>
+            [status].map((mailbox) => <MailboxCard key={mailbox.emailAddress} mailbox={mailbox} />)
           ) : (
             <p className="text-sm text-muted-foreground">No mailbox connected yet.</p>
           )}
@@ -137,6 +157,7 @@ export default async function MailboxSettingsPage({
             organisationId={organisation.id}
             connected={status.connected}
             reconnectNeeded={status.healthStatus === "auth_expired"}
+            defaultAddress={attemptedAddress}
           />
         </section>
       ) : null}

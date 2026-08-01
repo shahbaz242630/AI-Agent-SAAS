@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+﻿import { randomUUID } from "node:crypto";
 import type { INestApplication } from "@nestjs/common";
 import request from "supertest";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -6,12 +6,16 @@ import type { EvaPrismaClient } from "@eva/database";
 import { decryptToken, encryptToken } from "../src/common/crypto/token-crypto.js";
 import {
   GraphRequestError,
+  MailboxUnavailableError,
   ReauthRequiredError,
 } from "../src/modules/integrations/microsoft-graph/microsoft-graph-provider.js";
 import type {
+  AuthorizeUrlOptions,
   MicrosoftGraphProvider,
   OAuthTokens,
 } from "../src/modules/integrations/microsoft-graph/microsoft-graph-provider.js";
+import { UNKNOWN_DOMAIN } from "../src/modules/integrations/microsoft-graph/microsoft-discovery.js";
+import type { DomainDiscovery } from "../src/modules/integrations/microsoft-graph/microsoft-discovery.js";
 import { signOAuthState, verifyOAuthState } from "../src/modules/mailboxes/oauth-state.js";
 import {
   createOrgWithMembers,
@@ -25,16 +29,16 @@ import {
 } from "./support.js";
 
 /**
- * Mailbox connection (Slice 1.6; plan §3): status, OAuth connect/callback,
+ * Mailbox connection (Slice 1.6; plan Â§3): status, OAuth connect/callback,
  * disconnect, test email. The Graph provider is stubbed at the DI boundary
- * (overrideProvider — the invoice-documents §7.4 exception: a REAL external
+ * (overrideProvider â€” the invoice-documents Â§7.4 exception: a REAL external
  * provider cannot run in tests). Everything else is real: Postgres as
  * eva_app, RLS, permissions, crypto, state JWTs.
  */
 
 const SANDBOX_EMAIL = "sandbox@example.com";
 
-/** A DIFFERENT 32-byte key — stands in for a rotated TOKEN_ENCRYPTION_KEY. */
+/** A DIFFERENT 32-byte key â€” stands in for a rotated TOKEN_ENCRYPTION_KEY. */
 const OTHER_TOKEN_KEY = Buffer.from("fedcba9876543210fedcba9876543210").toString("base64");
 
 const DEFAULT_TOKENS: OAuthTokens = {
@@ -55,25 +59,45 @@ const DEFAULT_PROFILE = { emailAddress: SANDBOX_EMAIL, displayName: "Sandbox Mai
 
 /** vi.fn-backed stub; reset to these defaults in beforeEach. */
 const graphStub = {
-  buildAuthorizeUrl: vi.fn((state: string) => `https://stub.test/authorize?state=${state}`),
+  buildAuthorizeUrl: vi.fn(
+    (state: string, options?: AuthorizeUrlOptions) =>
+      `https://stub.test/authorize?state=${state}${
+        options?.loginHint ? `&login_hint=${encodeURIComponent(options.loginHint)}` : ""
+      }`,
+  ),
   exchangeCode: vi.fn(async (): Promise<OAuthTokens> => DEFAULT_TOKENS),
   refreshTokens: vi.fn(async (): Promise<OAuthTokens> => REFRESHED_TOKENS),
   getProfile: vi.fn(async () => DEFAULT_PROFILE),
   sendMail: vi.fn(async (): Promise<void> => undefined),
+  probeMailbox: vi.fn(async (): Promise<void> => undefined),
+};
+
+/** Discovery is stubbed like the Graph provider: it reaches Microsoft's
+ *  unauthenticated endpoints, and its real implementation fails open to
+ *  "unknown", which would quietly weaken every assertion below. */
+const discoveryStub = {
+  describeDomain: vi.fn(async (): Promise<DomainDiscovery> => UNKNOWN_DOMAIN),
 };
 
 function resetGraphStub(): void {
+  discoveryStub.describeDomain.mockClear().mockResolvedValue(UNKNOWN_DOMAIN);
   graphStub.buildAuthorizeUrl
     .mockClear()
-    .mockImplementation((state: string) => `https://stub.test/authorize?state=${state}`);
+    .mockImplementation(
+      (state: string, options?: AuthorizeUrlOptions) =>
+        `https://stub.test/authorize?state=${state}${
+          options?.loginHint ? `&login_hint=${encodeURIComponent(options.loginHint)}` : ""
+        }`,
+    );
   graphStub.exchangeCode.mockClear().mockResolvedValue(DEFAULT_TOKENS);
   graphStub.refreshTokens.mockClear().mockResolvedValue(REFRESHED_TOKENS);
   graphStub.getProfile.mockClear().mockResolvedValue(DEFAULT_PROFILE);
   graphStub.sendMail.mockClear().mockResolvedValue(undefined);
+  graphStub.probeMailbox.mockClear().mockResolvedValue(undefined);
 }
 
 /** Inserts a live connection with VALID encrypted fixture tokens (1h expiry).
- *  Soft-deletes any existing live rows first — tests share orgs, and the
+ *  Soft-deletes any existing live rows first â€” tests share orgs, and the
  *  partial unique index allows only ONE live connection per org (ruling 6). */
 async function insertConnectedMailbox(
   owner: EvaPrismaClient,
@@ -116,7 +140,10 @@ describe("Mailboxes (Slice 1.6)", () => {
     await seedTestDatabase(owner);
     org = await createOrgWithMembers(owner, "mailbox", ["owner", "finance", "sales"]);
     otherOrg = await createOrgWithMembers(owner, "mailbox-other", ["owner"]);
-    app = await createTestApp({ graphProvider: graphStub as MicrosoftGraphProvider });
+    app = await createTestApp({
+      graphProvider: graphStub as MicrosoftGraphProvider,
+      discovery: discoveryStub,
+    });
     for (const member of org.members) {
       tokens.set(member.roleKey, await signToken({ sub: member.authUserId, email: member.email }));
     }
@@ -168,7 +195,7 @@ describe("Mailboxes (Slice 1.6)", () => {
       });
     });
 
-    it("200s with the sanitized status when connected — never token material", async () => {
+    it("200s with the sanitized status when connected â€” never token material", async () => {
       await insertConnectedMailbox(owner, org.id);
       const response = await request(app.getHttpServer())
         .get(`/organisations/${org.id}/mailbox`)
@@ -200,7 +227,7 @@ describe("Mailboxes (Slice 1.6)", () => {
         .expect(404);
     });
 
-    it("200s with an authorize URL whose state binds this org + user (10-min JWT)", async () => {
+    it("200s with an authorize URL whose state binds this org + user (30-min JWT)", async () => {
       const response = await request(app.getHttpServer())
         .post(`/organisations/${org.id}/mailbox/connect`)
         .set("Authorization", `Bearer ${tokenFor("owner")}`)
@@ -214,15 +241,309 @@ describe("Mailboxes (Slice 1.6)", () => {
     });
   });
 
+  /**
+   * Defect F1: `admin_consent_required` never fires, because Microsoft reports
+   * the "Need admin approval" wall as an ordinary decline. The UI therefore has
+   * to offer BOTH readings of a decline, and this endpoint supplies the
+   * administrator half â€” the link the customer forwards to their IT contact.
+   */
+  describe("GET .../mailbox/admin-consent (F1)", () => {
+    const adminConsentUrl = (email?: string) =>
+      `/organisations/${org.id}/mailbox/admin-consent${email ? `?email=${encodeURIComponent(email)}` : ""}`;
+
+    it("builds a TENANT-SPECIFIC link and names the customer's own organisation", async () => {
+      discoveryStub.describeDomain.mockResolvedValueOnce({
+        kind: "work",
+        tenantId: "b6ae81d6-90c0-4114-a1a0-dc674c5900a9",
+        organisationName: "Acme Ltd",
+      });
+
+      const response = await request(app.getHttpServer())
+        .get(adminConsentUrl("sara@acme.example"))
+        .set("Authorization", `Bearer ${tokenFor("owner")}`)
+        .expect(200);
+
+      const url = new URL(response.body.url);
+      // The tenant-specific form renders the org-wide screen ("No one else will
+      // be prompted"); `organizations` is only the fallback.
+      expect(url.pathname).toBe("/b6ae81d6-90c0-4114-a1a0-dc674c5900a9/adminconsent");
+      expect(url.origin).toBe("https://login.microsoftonline.com");
+      expect(url.searchParams.get("client_id")).toBeTruthy();
+      expect(response.body.organisationName).toBe("Acme Ltd");
+      expect(response.body.accountKind).toBe("work");
+      expect(discoveryStub.describeDomain).toHaveBeenCalledWith("acme.example");
+    });
+
+    it("carries a SEVEN-DAY admin_consent state, because the link gets forwarded", async () => {
+      discoveryStub.describeDomain.mockResolvedValueOnce({
+        kind: "work",
+        tenantId: randomUUID(),
+        organisationName: "Acme Ltd",
+      });
+
+      const response = await request(app.getHttpServer())
+        .get(adminConsentUrl("sara@acme.example"))
+        .set("Authorization", `Bearer ${tokenFor("owner")}`)
+        .expect(200);
+
+      const state = new URL(response.body.url).searchParams.get("state")!;
+      const claims = await verifyOAuthState(TEST_OAUTH_STATE_SECRET, state, "admin_consent");
+      expect(claims.organisationId).toBe(org.id);
+      // A ten-minute token would expire before an IT contact ever opened it.
+      await expect(verifyOAuthState(TEST_OAUTH_STATE_SECRET, state)).rejects.toThrow();
+    });
+
+    it("offers NO link for a personal account â€” there is no administrator to ask", async () => {
+      discoveryStub.describeDomain.mockResolvedValueOnce({
+        kind: "personal",
+        tenantId: null,
+        organisationName: null,
+      });
+
+      const response = await request(app.getHttpServer())
+        .get(adminConsentUrl("sara@hotmail.co.uk"))
+        .set("Authorization", `Bearer ${tokenFor("owner")}`)
+        .expect(200);
+
+      expect(response.body).toEqual({
+        accountKind: "personal",
+        url: null,
+        organisationName: null,
+      });
+    });
+
+    it("falls back to the generic form when the tenant is unknown", async () => {
+      const response = await request(app.getHttpServer())
+        .get(adminConsentUrl())
+        .set("Authorization", `Bearer ${tokenFor("owner")}`)
+        .expect(200);
+
+      expect(new URL(response.body.url).pathname).toBe("/organizations/adminconsent");
+      expect(response.body.accountKind).toBe("unknown");
+    });
+
+    it("403s for a member without mailbox:manage (finance)", async () => {
+      await request(app.getHttpServer())
+        .get(adminConsentUrl("sara@acme.example"))
+        .set("Authorization", `Bearer ${tokenFor("finance")}`)
+        .expect(403);
+    });
+
+    it("404s for a non-member (cross-tenant is invisible, BRD 15)", async () => {
+      await request(app.getHttpServer())
+        .get(`/organisations/${otherOrg.id}/mailbox/admin-consent`)
+        .set("Authorization", `Bearer ${tokenFor("owner")}`)
+        .expect(404);
+    });
+  });
+
+  describe("POST .../mailbox/connect â€” login_hint (F5)", () => {
+    it("passes the address to Microsoft and records it on the state", async () => {
+      const response = await request(app.getHttpServer())
+        .post(`/organisations/${org.id}/mailbox/connect`)
+        .set("Authorization", `Bearer ${tokenFor("owner")}`)
+        .send({ emailAddress: "sara@acme.example" })
+        .expect(200);
+
+      expect(graphStub.buildAuthorizeUrl).toHaveBeenCalledWith(expect.any(String), {
+        loginHint: "sara@acme.example",
+      });
+      const state = new URL(response.body.authorizeUrl).searchParams.get("state")!;
+      expect((await verifyOAuthState(TEST_OAUTH_STATE_SECRET, state)).loginHint).toBe(
+        "sara@acme.example",
+      );
+    });
+
+    it("rejects a malformed address rather than passing it to Microsoft", async () => {
+      await request(app.getHttpServer())
+        .post(`/organisations/${org.id}/mailbox/connect`)
+        .set("Authorization", `Bearer ${tokenFor("owner")}`)
+        .send({ emailAddress: "not-an-email" })
+        .expect(400);
+    });
+
+    it("still works with no address at all", async () => {
+      await request(app.getHttpServer())
+        .post(`/organisations/${org.id}/mailbox/connect`)
+        .set("Authorization", `Bearer ${tokenFor("owner")}`)
+        .expect(200);
+    });
+
+    /** The seam between the web app and the callback: the flow has to reach the
+     *  signed state here, or the round trip through Microsoft loses it and the
+     *  customer is dropped on the settings page mid-setup. */
+    it("carries the requested flow onto the signed state", async () => {
+      const response = await request(app.getHttpServer())
+        .post(`/organisations/${org.id}/mailbox/connect`)
+        .set("Authorization", `Bearer ${tokenFor("owner")}`)
+        .send({ emailAddress: "sara@acme.example", flow: "onboarding" })
+        .expect(200);
+
+      const state = new URL(response.body.authorizeUrl).searchParams.get("state")!;
+      expect((await verifyOAuthState(TEST_OAUTH_STATE_SECRET, state)).flow).toBe("onboarding");
+    });
+
+    it("rejects a flow outside the known set rather than trusting the caller", async () => {
+      await request(app.getHttpServer())
+        .post(`/organisations/${org.id}/mailbox/connect`)
+        .set("Authorization", `Bearer ${tokenFor("owner")}`)
+        .send({ flow: "https://evil.example" })
+        .expect(400);
+    });
+  });
+
   describe("GET /integrations/microsoft/callback (@Public)", () => {
-    async function mintState(organisationId = org.id): Promise<string> {
+    async function mintState(
+      organisationId = org.id,
+      extra: {
+        purpose?: "connect" | "admin_consent";
+        loginHint?: string;
+        flow?: "onboarding" | "settings";
+      } = {},
+    ): Promise<string> {
       const ownerMember = org.members.find((member) => member.roleKey === "owner")!;
       return signOAuthState(TEST_OAUTH_STATE_SECRET, {
         organisationId,
         userId: ownerMember.id,
         nonce: randomUUID(),
+        ...extra,
       });
     }
+
+    /**
+     * Defect F2: the /adminconsent return carries `admin_consent=True&tenant=`
+     * with NO code and NO state of its own, and `state` used to be required â€”
+     * so the customer's IT administrator finished approving Eva and landed on
+     * `{"statusCode":400,"message":"Invalid request body â€” state: ..."}`.
+     */
+    describe("the /adminconsent return (F2)", () => {
+      it("does NOT 400 when Microsoft sends admin_consent with no state at all", async () => {
+        const response = await request(app.getHttpServer())
+          .get("/integrations/microsoft/callback?admin_consent=True&tenant=" + randomUUID())
+          .expect(302);
+
+        expect(response.headers.location).toBe("http://localhost:3000/microsoft-approved");
+      });
+
+      /**
+       * The approver is the customer's IT contact following a forwarded link,
+       * with no Eva account. Every `/app/...` destination is behind the sign-in
+       * proxy, which strips the query string on the way to `/sign-in` â€” so the
+       * confirmation was discarded and the one person the journey depends on
+       * saw a login form instead. The receipt must live outside `/app`.
+       */
+      it("lands the administrator on a page that does NOT require an Eva account", async () => {
+        const response = await request(app.getHttpServer())
+          .get(
+            `/integrations/microsoft/callback?admin_consent=True&state=${await mintState(org.id, { purpose: "admin_consent" })}`,
+          )
+          .expect(302);
+
+        expect(response.headers.location).not.toContain("/app/");
+        expect(response.headers.location).toBe("http://localhost:3000/microsoft-approved");
+      });
+
+      it("attributes and audits the approval when our state came back", async () => {
+        const tenantId = randomUUID();
+        const state = await mintState(org.id, { purpose: "admin_consent" });
+
+        const response = await request(app.getHttpServer())
+          .get(
+            `/integrations/microsoft/callback?admin_consent=True&tenant=${tenantId}&state=${state}`,
+          )
+          .expect(302);
+
+        expect(response.headers.location).toBe("http://localhost:3000/microsoft-approved");
+        const audit = await owner.auditLog.findFirst({
+          where: { organisationId: org.id, action: "mailbox.admin_consent_granted" },
+          orderBy: { createdAt: "desc" },
+        });
+        expect(audit).not.toBeNull();
+        expect(audit?.metadata).toMatchObject({ tenant: tenantId });
+      });
+
+      /**
+       * The admin-consent token lives seven days; the connect token is the
+       * short-lived CSRF defence, and purpose-scoping is what makes the long
+       * life affordable.
+       *
+       * What that scoping protects is ATTRIBUTION, not the page. Microsoft has
+       * already granted the consent by the time we are called, so refusing to
+       * confirm it would be false — and would strand an administrator whose
+       * link simply aged past seven days. The property worth asserting is that
+       * no organisation gets credited with an approval on the strength of a
+       * borrowed state, so that is what this asserts.
+       */
+      it("shows the receipt for a CONNECT state but credits NO organisation", async () => {
+        const before = await owner.auditLog.count({
+          where: { organisationId: org.id, action: "mailbox.admin_consent_granted" },
+        });
+
+        const response = await request(app.getHttpServer())
+          .get(`/integrations/microsoft/callback?admin_consent=True&state=${await mintState()}`)
+          .expect(302);
+
+        expect(response.headers.location).toBe("http://localhost:3000/microsoft-approved");
+        const after = await owner.auditLog.count({
+          where: { organisationId: org.id, action: "mailbox.admin_consent_granted" },
+        });
+        expect(after).toBe(before);
+      });
+
+      it("shows the receipt for a forged state, and still credits no organisation", async () => {
+        const before = await owner.auditLog.count({
+          where: { action: "mailbox.admin_consent_granted" },
+        });
+
+        const response = await request(app.getHttpServer())
+          .get("/integrations/microsoft/callback?admin_consent=True&state=forged")
+          .expect(302);
+
+        expect(response.headers.location).toBe("http://localhost:3000/microsoft-approved");
+        const after = await owner.auditLog.count({
+          where: { action: "mailbox.admin_consent_granted" },
+        });
+        expect(after).toBe(before);
+      });
+
+      it("refuses an ADMIN_CONSENT state when completing a connect", async () => {
+        const state = await mintState(org.id, { purpose: "admin_consent" });
+
+        const response = await request(app.getHttpServer())
+          .get(`/integrations/microsoft/callback?code=fake&state=${state}`)
+          .expect(302);
+
+        expect(response.headers.location).toBe(
+          "http://localhost:3000/app/settings/mailbox?error=invalid_state",
+        );
+        expect(graphStub.exchangeCode).not.toHaveBeenCalled();
+      });
+
+      it("still REDIRECTS for a callback carrying nothing at all", async () => {
+        // The whole point of F2 is that this route owes the browser a redirect
+        // in every case. Tightening the schema to reject unrecognised shapes
+        // would reintroduce the raw-JSON 400 by a different door.
+        const response = await request(app.getHttpServer())
+          .get("/integrations/microsoft/callback")
+          .expect(302);
+
+        expect(response.headers.location).toBe(
+          "http://localhost:3000/app/settings/mailbox?error=invalid_state",
+        );
+      });
+    });
+
+    it("carries the attempted address through a decline, so the UI can name it (F1)", async () => {
+      const state = await mintState(org.id, { loginHint: "sara@acme.example" });
+
+      const response = await request(app.getHttpServer())
+        .get(`/integrations/microsoft/callback?error=access_denied&state=${state}`)
+        .expect(302);
+
+      expect(response.headers.location).toBe(
+        "http://localhost:3000/app/settings/mailbox?error=consent_denied&hint=sara%40acme.example",
+      );
+    });
 
     it("redirects ?error=consent_denied when Microsoft returns an error", async () => {
       const response = await request(app.getHttpServer())
@@ -234,7 +555,7 @@ describe("Mailboxes (Slice 1.6)", () => {
     });
 
     /** Microsoft's DEFAULT consent policy blocks Mail scopes for an unverified
-     *  publisher, so most real customers meet the "Approval required" screen —
+     *  publisher, so most real customers meet the "Approval required" screen â€”
      *  and most are not their own admin. It arrives as error=access_denied like
      *  a plain decline; only the AADSTS code distinguishes it. Telling those
      *  users "you cancelled" is a dead end (founder ruling 2026-07-30). */
@@ -297,12 +618,53 @@ describe("Mailboxes (Slice 1.6)", () => {
       );
     });
 
+    /**
+     * Defect F3: an account with no Exchange licence used to be stored as a
+     * healthy connection and only failed at the first send â€” reported as
+     * "authorisation expired", advice that can never work. Catch it while the
+     * user is still watching, and store nothing.
+     */
+    it("redirects ?error=mailbox_unavailable and stores NOTHING for an account with no mailbox", async () => {
+      graphStub.probeMailbox.mockRejectedValueOnce(new MailboxUnavailableError());
+      // Counted rather than compared to []: earlier specs in this describe
+      // leave live and soft-deleted rows on the same org, and the property
+      // under test is "this call wrote nothing", not "the table is empty".
+      const before = await owner.emailAccount.count({ where: { organisationId: org.id } });
+
+      const response = await request(app.getHttpServer())
+        .get(`/integrations/microsoft/callback?code=fake&state=${await mintState()}`)
+        .expect(302);
+
+      expect(response.headers.location).toBe(
+        "http://localhost:3000/app/settings/mailbox?error=mailbox_unavailable",
+      );
+      const after = await owner.emailAccount.count({ where: { organisationId: org.id } });
+      expect(after).toBe(before);
+    });
+
+    it("probes every connect, so a dead mailbox cannot be stored unchecked", async () => {
+      await request(app.getHttpServer())
+        .get(`/integrations/microsoft/callback?code=fake&state=${await mintState()}`)
+        .expect(302);
+
+      expect(graphStub.probeMailbox).toHaveBeenCalledTimes(1);
+      expect(graphStub.probeMailbox).toHaveBeenCalledWith(DEFAULT_TOKENS.accessToken);
+    });
+
     it("happy path: 302 ?connected=1, row upserted with CIPHERTEXT tokens, audit written", async () => {
+      // Precondition stated rather than inherited: specs in this file share an
+      // organisation, so whether this callback INSERTs or UPDATEs used to
+      // depend on execution order — and it now decides whether the test email
+      // fires. Start disconnected so this is unambiguously a NEW connection.
+      await owner.emailAccount.updateMany({
+        where: { organisationId: org.id, deletedAt: null },
+        data: { deletedAt: new Date() },
+      });
       const response = await request(app.getHttpServer())
         .get(`/integrations/microsoft/callback?code=fake&state=${await mintState()}`)
         .expect(302);
       expect(response.headers.location).toBe(
-        "http://localhost:3000/app/settings/mailbox?connected=1",
+        "http://localhost:3000/app/settings/mailbox?connected=1&test_email=sent",
       );
       const account = await owner.emailAccount.findFirstOrThrow({
         where: { organisationId: org.id, deletedAt: null },
@@ -314,15 +676,20 @@ describe("Mailboxes (Slice 1.6)", () => {
       expect(account.accessTokenEncrypted).not.toContain("stub-access-token-PLAINTEXT");
       expect(account.refreshTokenEncrypted).not.toContain("stub-refresh-token-PLAINTEXT");
       expect(account.scopes).toContain("Mail.Send");
-      const audit = await owner.auditLog.findFirstOrThrow({
-        where: { organisationId: org.id, action: "mailbox.connected" },
+      // Matched on the account id rather than "the first mailbox.connected row
+      // for this org". Specs here share an organisation, so the loose query
+      // returned whichever row happened to be first and only agreed with
+      // `account.id` while every connect in the file reused one row — an
+      // assertion that held by coincidence, not because the audit was right.
+      const audit = await owner.auditLog.findFirst({
+        where: { organisationId: org.id, action: "mailbox.connected", entityId: account.id },
       });
-      expect(audit.entityId).toBe(account.id);
+      expect(audit).not.toBeNull();
     });
 
     /**
-     * The state is valid for 10 minutes and ruling 4 binds it to an
-     * ORGANISATION, not a role — so the initiator can lose mailbox:manage
+     * The state is valid for 30 minutes and ruling 4 binds it to an
+     * ORGANISATION, not a role â€” so the initiator can lose mailbox:manage
      * between clicking Connect and finishing consent. RLS would not stop the
      * write (it only checks organisation_id), so the callback re-checks the
      * permission itself and must refuse without spending the code.
@@ -361,6 +728,139 @@ describe("Mailboxes (Slice 1.6)", () => {
         where: { organisationId: otherOrg.id, deletedAt: null },
       });
       expect(live).toEqual([]);
+    });
+
+    /**
+     * The founder's journey ends with proof that sending works, not with a
+     * question (ruling 2026-07-31: send it, say so, move on). `probeMailbox`
+     * only proves the account can READ mail — a restricted sender, a shared
+     * mailbox or a half-revoked grant all read fine and fail to send — so
+     * without this the first proof that sending works would be a real chasing
+     * email to a real customer.
+     */
+    describe("the test email on first connect", () => {
+      async function startDisconnected(): Promise<void> {
+        await owner.emailAccount.updateMany({
+          where: { organisationId: org.id, deletedAt: null },
+          data: { deletedAt: new Date() },
+        });
+      }
+
+      it("sends a self-addressed test email and records it", async () => {
+        await startDisconnected();
+        const response = await request(app.getHttpServer())
+          .get(`/integrations/microsoft/callback?code=fake&state=${await mintState()}`)
+          .expect(302);
+
+        expect(response.headers.location).toBe(
+          "http://localhost:3000/app/settings/mailbox?connected=1&test_email=sent",
+        );
+        expect(graphStub.sendMail).toHaveBeenCalledTimes(1);
+        expect(graphStub.sendMail).toHaveBeenCalledWith(
+          DEFAULT_TOKENS.accessToken,
+          expect.objectContaining({ to: SANDBOX_EMAIL }),
+        );
+        const account = await owner.emailAccount.findFirstOrThrow({
+          where: { organisationId: org.id, deletedAt: null },
+        });
+        expect(account.lastHealthCheckAt).not.toBeNull();
+        const audit = await owner.auditLog.findFirst({
+          where: { organisationId: org.id, action: "mailbox.test_email_sent" },
+          orderBy: { createdAt: "desc" },
+        });
+        expect(audit?.entityId).toBe(account.id);
+      });
+
+      /** A reconnect is someone repairing a broken grant on the settings page,
+       *  not someone signing up. Posting them an email they did not ask for is
+       *  noise, so the live row must suppress the send. */
+      it("does NOT send again when an existing live connection is replaced", async () => {
+        await insertConnectedMailbox(owner, org.id);
+        const response = await request(app.getHttpServer())
+          .get(`/integrations/microsoft/callback?code=fake&state=${await mintState()}`)
+          .expect(302);
+
+        expect(response.headers.location).toBe(
+          "http://localhost:3000/app/settings/mailbox?connected=1",
+        );
+        expect(graphStub.sendMail).not.toHaveBeenCalled();
+      });
+
+      /**
+       * The mailbox is connected and COMMITTED before the send is attempted, so
+       * a failed test send is not a failed connection and must never be
+       * reported as one — that would send the customer back to reconnect a
+       * mailbox that is already fine.
+       */
+      it("still reports the connection as successful when the test email fails", async () => {
+        await startDisconnected();
+        graphStub.sendMail.mockRejectedValueOnce(new GraphRequestError("nope", 500));
+
+        const response = await request(app.getHttpServer())
+          .get(`/integrations/microsoft/callback?code=fake&state=${await mintState()}`)
+          .expect(302);
+
+        expect(response.headers.location).toBe(
+          "http://localhost:3000/app/settings/mailbox?connected=1&test_email=failed",
+        );
+        const account = await owner.emailAccount.findFirstOrThrow({
+          where: { organisationId: org.id, deletedAt: null },
+        });
+        // Read access was just proven by probeMailbox, so one failed send must
+        // not paint a red error across a mailbox that works.
+        expect(account.healthStatus).toBe("active");
+        expect(account.lastError).toBeNull();
+      });
+    });
+
+    /**
+     * The flow rides the signed state because the browser is at Microsoft in
+     * between — nothing we hold locally survives the round trip. It is an enum
+     * mapped to a path server-side, never a URL, so a leaked state cannot be
+     * turned into an open redirect.
+     */
+    describe("returning to the screen the connection started from", () => {
+      it("sends a connection started in onboarding back to the setup flow", async () => {
+        await owner.emailAccount.updateMany({
+          where: { organisationId: org.id, deletedAt: null },
+          data: { deletedAt: new Date() },
+        });
+        const response = await request(app.getHttpServer())
+          .get(
+            `/integrations/microsoft/callback?code=fake&state=${await mintState(org.id, { flow: "onboarding" })}`,
+          )
+          .expect(302);
+
+        expect(response.headers.location).toBe(
+          "http://localhost:3000/app/onboarding?connected=1&test_email=sent",
+        );
+      });
+
+      /** The decline path resolves the flow BEFORE the state is verified for
+       *  real, so it needs its own proof that it lands in the right place. */
+      it("sends a decline during onboarding back to the setup flow", async () => {
+        const state = await mintState(org.id, {
+          flow: "onboarding",
+          loginHint: "sara@acme.example",
+        });
+        const response = await request(app.getHttpServer())
+          .get(`/integrations/microsoft/callback?error=access_denied&state=${state}`)
+          .expect(302);
+
+        expect(response.headers.location).toBe(
+          "http://localhost:3000/app/onboarding?error=consent_denied&hint=sara%40acme.example",
+        );
+      });
+
+      it("falls back to the settings page for a state that names no flow", async () => {
+        const response = await request(app.getHttpServer())
+          .get(`/integrations/microsoft/callback?error=access_denied&state=${await mintState()}`)
+          .expect(302);
+
+        expect(response.headers.location).toBe(
+          "http://localhost:3000/app/settings/mailbox?error=consent_denied",
+        );
+      });
     });
 
     it("reconnect replaces the single live connection (partial unique index, ruling 6)", async () => {
@@ -468,7 +968,7 @@ describe("Mailboxes (Slice 1.6)", () => {
       );
     });
 
-    it("invalid_grant on refresh → 400 + health stamped auth_expired", async () => {
+    it("invalid_grant on refresh â†’ 400 + health stamped auth_expired", async () => {
       const account = await insertConnectedMailbox(owner, org.id, {
         tokenExpiresAt: new Date(Date.now() - 60_000),
       });
@@ -482,7 +982,7 @@ describe("Mailboxes (Slice 1.6)", () => {
       expect(after.healthStatus).toBe("auth_expired");
       expect(after.lastError).toContain("reconnect");
       // A failed attempt is still an attempt, and the transition is a tenant
-      // mutation like any other — it must be timestamped and audited, or
+      // mutation like any other â€” it must be timestamped and audited, or
       // "when did this mailbox die?" is unanswerable.
       expect(after.lastHealthCheckAt).not.toBeNull();
       await owner.auditLog.findFirstOrThrow({
@@ -492,9 +992,9 @@ describe("Mailboxes (Slice 1.6)", () => {
 
     /**
      * TOKEN_ENCRYPTION_KEY rotation is an explicitly supported future operation
-     * (that is why the ciphertext carries a `v1` prefix), and plan §8 risk 3
+     * (that is why the ciphertext carries a `v1` prefix), and plan Â§8 risk 3
      * names key mishandling. Undecryptable stored tokens must present as a dead
-     * grant — otherwise the caller gets an opaque 500 while the settings card
+     * grant â€” otherwise the caller gets an opaque 500 while the settings card
      * still says "Connected", and 1.7's sender fails forever with no signal.
      */
     it("undecryptable stored tokens are treated as a dead grant, not a 500", async () => {
@@ -511,7 +1011,7 @@ describe("Mailboxes (Slice 1.6)", () => {
       expect(after.healthStatus).toBe("auth_expired");
     });
 
-    it("Graph failure → 502", async () => {
+    it("Graph failure â†’ 502", async () => {
       await insertConnectedMailbox(owner, org.id);
       graphStub.sendMail.mockRejectedValueOnce(new GraphRequestError("nope", 500));
       await request(app.getHttpServer())
@@ -524,7 +1024,7 @@ describe("Mailboxes (Slice 1.6)", () => {
      * The reason the send path is four committed steps rather than one
      * transaction (founder ruling 2026-07-30): Microsoft rotates the refresh
      * token when it is redeemed, so a rotation must NEVER be undone by a later
-     * failure. Here the refresh succeeds and the send then fails — the stored
+     * failure. Here the refresh succeeds and the send then fails â€” the stored
      * pair must still be the new one. One transaction would roll it back and
      * leave us holding a pair Microsoft has moved past.
      */
@@ -565,7 +1065,7 @@ describe("Mailboxes (Slice 1.6)", () => {
     });
 
     /** The status endpoint is how the UI learns a reconnect is needed
-     *  (ruling 10) — prove the auth_expired stamp actually surfaces. */
+     *  (ruling 10) â€” prove the auth_expired stamp actually surfaces. */
     it("surfaces auth_expired through the status endpoint after a dead grant", async () => {
       await insertConnectedMailbox(owner, org.id, {
         tokenExpiresAt: new Date(Date.now() - 60_000),

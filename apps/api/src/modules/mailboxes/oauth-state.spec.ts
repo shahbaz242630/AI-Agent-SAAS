@@ -10,9 +10,98 @@ const CLAIMS = {
 };
 
 describe("OAuth state JWT (Slice 1.6, ruling 4)", () => {
-  it("round-trips the claims", async () => {
+  it("round-trips the claims, defaulting to the connect purpose", async () => {
     const state = await signOAuthState(SECRET, CLAIMS);
-    await expect(verifyOAuthState(SECRET, state)).resolves.toEqual(CLAIMS);
+    await expect(verifyOAuthState(SECRET, state)).resolves.toEqual({
+      ...CLAIMS,
+      purpose: "connect",
+    });
+  });
+
+  it("round-trips the login hint when one was given", async () => {
+    const state = await signOAuthState(SECRET, { ...CLAIMS, loginHint: "sara@acme.example" });
+    await expect(verifyOAuthState(SECRET, state)).resolves.toMatchObject({
+      loginHint: "sara@acme.example",
+    });
+  });
+
+  /**
+   * The flow decides where the callback sends the browser back to. It survives
+   * the round trip only because it is signed into the state — the browser is at
+   * Microsoft in between, so nothing we hold locally comes back with it.
+   */
+  describe("return flow", () => {
+    it("round-trips the flow when one was given", async () => {
+      const state = await signOAuthState(SECRET, { ...CLAIMS, flow: "onboarding" });
+      await expect(verifyOAuthState(SECRET, state)).resolves.toMatchObject({
+        flow: "onboarding",
+      });
+    });
+
+    it("omits the flow entirely when none was given, so readers apply their own default", async () => {
+      const state = await signOAuthState(SECRET, CLAIMS);
+      await expect(verifyOAuthState(SECRET, state)).resolves.not.toHaveProperty("flow");
+    });
+
+    /**
+     * DROPPED, not rejected. The signature has already proved we minted this
+     * token, so a value outside the enum means our own code changed — refusing
+     * it would strand a connection mid-flight across a deploy for no safety
+     * gain. The reader falls back to the settings page, which is somewhere real.
+     */
+    it("drops an unrecognised flow rather than failing the whole state", async () => {
+      const state = await new SignJWT({
+        ...CLAIMS,
+        purpose: "connect",
+        flow: "https://evil.example",
+      })
+        .setProtectedHeader({ alg: "HS256", typ: "JWT" })
+        .setIssuedAt()
+        .setExpirationTime("10m")
+        .sign(new TextEncoder().encode(SECRET));
+      const claims = await verifyOAuthState(SECRET, state);
+      expect(claims).not.toHaveProperty("flow");
+      expect(claims.organisationId).toBe(CLAIMS.organisationId);
+    });
+  });
+
+  /**
+   * The admin-consent token lives SEVEN DAYS, because the approval link gets
+   * forwarded to an IT contact who opens it whenever they get to it. That is
+   * only affordable because the two purposes are not interchangeable — asserted
+   * in both directions, since the long-lived one is the dangerous one.
+   */
+  describe("purpose scoping", () => {
+    it("refuses an admin_consent token where a connect token is expected", async () => {
+      const state = await signOAuthState(SECRET, { ...CLAIMS, purpose: "admin_consent" });
+      await expect(verifyOAuthState(SECRET, state)).rejects.toBeInstanceOf(InvalidOAuthStateError);
+    });
+
+    it("refuses a connect token where an admin_consent token is expected", async () => {
+      const state = await signOAuthState(SECRET, CLAIMS);
+      await expect(verifyOAuthState(SECRET, state, "admin_consent")).rejects.toBeInstanceOf(
+        InvalidOAuthStateError,
+      );
+    });
+
+    it("accepts an admin_consent token for its own purpose", async () => {
+      const state = await signOAuthState(SECRET, { ...CLAIMS, purpose: "admin_consent" });
+      await expect(verifyOAuthState(SECRET, state, "admin_consent")).resolves.toMatchObject({
+        purpose: "admin_consent",
+        organisationId: CLAIMS.organisationId,
+      });
+    });
+
+    it("reads a token with no purpose claim as connect, for tokens in flight across a deploy", async () => {
+      const legacy = await new SignJWT(CLAIMS)
+        .setProtectedHeader({ alg: "HS256", typ: "JWT" })
+        .setIssuedAt()
+        .setExpirationTime("10m")
+        .sign(new TextEncoder().encode(SECRET));
+      await expect(verifyOAuthState(SECRET, legacy)).resolves.toMatchObject({
+        purpose: "connect",
+      });
+    });
   });
 
   it("rejects a state signed with a different secret", async () => {
@@ -20,7 +109,7 @@ describe("OAuth state JWT (Slice 1.6, ruling 4)", () => {
     await expect(verifyOAuthState(SECRET, state)).rejects.toBeInstanceOf(InvalidOAuthStateError);
   });
 
-  it("rejects an expired state (10-minute TTL)", async () => {
+  it("rejects an expired state", async () => {
     const expired = await new SignJWT(CLAIMS)
       .setProtectedHeader({ alg: "HS256", typ: "JWT" })
       .setIssuedAt(Math.floor(Date.now() / 1000) - 900)
