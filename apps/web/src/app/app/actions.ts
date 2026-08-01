@@ -20,10 +20,18 @@ export async function signOut(): Promise<void> {
   redirect("/sign-in");
 }
 
-export async function createOrganisation(
-  _prevState: CreateOrganisationState,
+/**
+ * Creates the organisation and reports what happened, without redirecting.
+ *
+ * The destination is left to the caller so it is decided by WHICH action a form
+ * calls — a literal in our own code — rather than by a field the browser
+ * supplies. It also keeps every `redirect()` at the top level of an action:
+ * redirect works by throwing, so one called inside this function's try would be
+ * swallowed by its own catch (Next.js 16 redirect docs, "Behavior").
+ */
+async function submitOrganisation(
   formData: FormData,
-): Promise<CreateOrganisationState> {
+): Promise<{ error?: string; signedOut?: boolean }> {
   const name = String(formData.get("name") ?? "").trim();
   if (name.length === 0) {
     return { error: "Please enter an organisation name." };
@@ -34,7 +42,7 @@ export async function createOrganisation(
 
   const accessToken = await getAccessToken();
   if (!accessToken) {
-    redirect("/sign-in");
+    return { signedOut: true };
   }
 
   try {
@@ -47,12 +55,34 @@ export async function createOrganisation(
     });
   } catch (error) {
     if (error instanceof ApiError && error.status === 401) {
-      redirect("/sign-in");
+      return { signedOut: true };
     }
     return {
       error: error instanceof ApiError ? error.message : "Something went wrong. Please try again.",
     };
   }
 
+  return {};
+}
+
+export async function createOrganisation(
+  _prevState: CreateOrganisationState,
+  formData: FormData,
+): Promise<CreateOrganisationState> {
+  const result = await submitOrganisation(formData);
+  if (result.signedOut) redirect("/sign-in");
+  if (result.error) return { error: result.error };
   redirect("/app");
+}
+
+/** Same creation, but keeps a new customer inside the setup journey instead of
+ *  dropping them on an organisation list they have no use for yet. */
+export async function createOrganisationForOnboarding(
+  _prevState: CreateOrganisationState,
+  formData: FormData,
+): Promise<CreateOrganisationState> {
+  const result = await submitOrganisation(formData);
+  if (result.signedOut) redirect("/sign-in");
+  if (result.error) return { error: result.error };
+  redirect("/app/onboarding");
 }

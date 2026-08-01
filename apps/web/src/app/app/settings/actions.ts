@@ -15,6 +15,28 @@ import { createClient } from "@/lib/supabase/server";
 
 const MAILBOX_PATH = "/app/settings/mailbox";
 
+/**
+ * Which screen a connection was started from. The API carries this on the
+ * signed OAuth state and maps it back to a path from its own fixed table, so
+ * the round trip through Microsoft returns the user where they began.
+ *
+ * A closed set, and re-checked here rather than forwarded as typed: a server
+ * action is reachable by direct POST, so a form field is untrusted input even
+ * though our own UI is the only thing that renders the form.
+ */
+const CONNECT_FLOWS = ["onboarding", "settings"] as const;
+type ConnectFlow = (typeof CONNECT_FLOWS)[number];
+
+const FLOW_PATHS: Record<ConnectFlow, string> = {
+  onboarding: "/app/onboarding",
+  settings: MAILBOX_PATH,
+};
+
+function readFlow(formData: FormData): ConnectFlow {
+  const value = String(formData.get("flow") ?? "");
+  return CONNECT_FLOWS.includes(value as ConnectFlow) ? (value as ConnectFlow) : "settings";
+}
+
 export interface MailboxActionState {
   error?: string;
   success?: string;
@@ -36,6 +58,7 @@ async function resolveConnectTarget(
   organisationId: string,
   accessToken: string,
   emailAddress: string,
+  flow: ConnectFlow,
 ): Promise<string> {
   try {
     const response = await apiFetch(
@@ -44,7 +67,7 @@ async function resolveConnectTarget(
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(emailAddress ? { emailAddress } : {}),
+        body: JSON.stringify({ ...(emailAddress ? { emailAddress } : {}), flow }),
       },
     );
     const { authorizeUrl } = (await response.json()) as { authorizeUrl: string };
@@ -53,8 +76,9 @@ async function resolveConnectTarget(
     if (error instanceof ApiError && error.status === 401) return "/sign-in";
     // A malformed address is a 400 with the API's own message, which now
     // survives apiFetch (F4) — but this action can only redirect, so it goes
-    // back as a code the page already knows how to render.
-    return `${MAILBOX_PATH}?error=${error instanceof ApiError && error.status === 400 ? "invalid_address" : "connect_failed"}`;
+    // back as a code the page already knows how to render. Back to the screen
+    // they started from, not always to settings.
+    return `${FLOW_PATHS[flow]}?error=${error instanceof ApiError && error.status === 400 ? "invalid_address" : "connect_failed"}`;
   }
 }
 
@@ -73,7 +97,9 @@ export async function connectMailbox(formData: FormData): Promise<void> {
   const emailAddress = String(formData.get("emailAddress") ?? "").trim();
   const accessToken = await getAccessToken();
   if (!accessToken) redirect("/sign-in");
-  redirect(await resolveConnectTarget(organisationId, accessToken, emailAddress));
+  redirect(
+    await resolveConnectTarget(organisationId, accessToken, emailAddress, readFlow(formData)),
+  );
 }
 
 export async function disconnectMailbox(

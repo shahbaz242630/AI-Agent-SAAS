@@ -359,6 +359,10 @@ export type MicrosoftCallbackQuery = z.infer<typeof microsoftCallbackQuerySchema
 export const mailboxConnectSchema = z
   .object({
     emailAddress: z.string().trim().email().max(320).optional(),
+    /** Which Eva screen this was started from, so the callback returns the user
+     *  there. A closed enum, never a URL — the API maps it to a path from its
+     *  own table, so a caller cannot choose where the browser lands. */
+    flow: z.enum(["onboarding", "settings"]).optional(),
   })
   // The whole body is optional: connect worked without one before onboarding
   // existed, and the settings page still calls it that way. Without the default

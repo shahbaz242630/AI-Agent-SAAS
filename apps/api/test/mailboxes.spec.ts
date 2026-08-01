@@ -368,12 +368,38 @@ describe("Mailboxes (Slice 1.6)", () => {
         .set("Authorization", `Bearer ${tokenFor("owner")}`)
         .expect(200);
     });
+
+    /** The seam between the web app and the callback: the flow has to reach the
+     *  signed state here, or the round trip through Microsoft loses it and the
+     *  customer is dropped on the settings page mid-setup. */
+    it("carries the requested flow onto the signed state", async () => {
+      const response = await request(app.getHttpServer())
+        .post(`/organisations/${org.id}/mailbox/connect`)
+        .set("Authorization", `Bearer ${tokenFor("owner")}`)
+        .send({ emailAddress: "sara@acme.example", flow: "onboarding" })
+        .expect(200);
+
+      const state = new URL(response.body.authorizeUrl).searchParams.get("state")!;
+      expect((await verifyOAuthState(TEST_OAUTH_STATE_SECRET, state)).flow).toBe("onboarding");
+    });
+
+    it("rejects a flow outside the known set rather than trusting the caller", async () => {
+      await request(app.getHttpServer())
+        .post(`/organisations/${org.id}/mailbox/connect`)
+        .set("Authorization", `Bearer ${tokenFor("owner")}`)
+        .send({ flow: "https://evil.example" })
+        .expect(400);
+    });
   });
 
   describe("GET /integrations/microsoft/callback (@Public)", () => {
     async function mintState(
       organisationId = org.id,
-      extra: { purpose?: "connect" | "admin_consent"; loginHint?: string } = {},
+      extra: {
+        purpose?: "connect" | "admin_consent";
+        loginHint?: string;
+        flow?: "onboarding" | "settings";
+      } = {},
     ): Promise<string> {
       const ownerMember = org.members.find((member) => member.roleKey === "owner")!;
       return signOAuthState(TEST_OAUTH_STATE_SECRET, {
@@ -581,11 +607,19 @@ describe("Mailboxes (Slice 1.6)", () => {
     });
 
     it("happy path: 302 ?connected=1, row upserted with CIPHERTEXT tokens, audit written", async () => {
+      // Precondition stated rather than inherited: specs in this file share an
+      // organisation, so whether this callback INSERTs or UPDATEs used to
+      // depend on execution order — and it now decides whether the test email
+      // fires. Start disconnected so this is unambiguously a NEW connection.
+      await owner.emailAccount.updateMany({
+        where: { organisationId: org.id, deletedAt: null },
+        data: { deletedAt: new Date() },
+      });
       const response = await request(app.getHttpServer())
         .get(`/integrations/microsoft/callback?code=fake&state=${await mintState()}`)
         .expect(302);
       expect(response.headers.location).toBe(
-        "http://localhost:3000/app/settings/mailbox?connected=1",
+        "http://localhost:3000/app/settings/mailbox?connected=1&test_email=sent",
       );
       const account = await owner.emailAccount.findFirstOrThrow({
         where: { organisationId: org.id, deletedAt: null },
@@ -597,10 +631,15 @@ describe("Mailboxes (Slice 1.6)", () => {
       expect(account.accessTokenEncrypted).not.toContain("stub-access-token-PLAINTEXT");
       expect(account.refreshTokenEncrypted).not.toContain("stub-refresh-token-PLAINTEXT");
       expect(account.scopes).toContain("Mail.Send");
-      const audit = await owner.auditLog.findFirstOrThrow({
-        where: { organisationId: org.id, action: "mailbox.connected" },
+      // Matched on the account id rather than "the first mailbox.connected row
+      // for this org". Specs here share an organisation, so the loose query
+      // returned whichever row happened to be first and only agreed with
+      // `account.id` while every connect in the file reused one row — an
+      // assertion that held by coincidence, not because the audit was right.
+      const audit = await owner.auditLog.findFirst({
+        where: { organisationId: org.id, action: "mailbox.connected", entityId: account.id },
       });
-      expect(audit.entityId).toBe(account.id);
+      expect(audit).not.toBeNull();
     });
 
     /**
@@ -644,6 +683,139 @@ describe("Mailboxes (Slice 1.6)", () => {
         where: { organisationId: otherOrg.id, deletedAt: null },
       });
       expect(live).toEqual([]);
+    });
+
+    /**
+     * The founder's journey ends with proof that sending works, not with a
+     * question (ruling 2026-07-31: send it, say so, move on). `probeMailbox`
+     * only proves the account can READ mail — a restricted sender, a shared
+     * mailbox or a half-revoked grant all read fine and fail to send — so
+     * without this the first proof that sending works would be a real chasing
+     * email to a real customer.
+     */
+    describe("the test email on first connect", () => {
+      async function startDisconnected(): Promise<void> {
+        await owner.emailAccount.updateMany({
+          where: { organisationId: org.id, deletedAt: null },
+          data: { deletedAt: new Date() },
+        });
+      }
+
+      it("sends a self-addressed test email and records it", async () => {
+        await startDisconnected();
+        const response = await request(app.getHttpServer())
+          .get(`/integrations/microsoft/callback?code=fake&state=${await mintState()}`)
+          .expect(302);
+
+        expect(response.headers.location).toBe(
+          "http://localhost:3000/app/settings/mailbox?connected=1&test_email=sent",
+        );
+        expect(graphStub.sendMail).toHaveBeenCalledTimes(1);
+        expect(graphStub.sendMail).toHaveBeenCalledWith(
+          DEFAULT_TOKENS.accessToken,
+          expect.objectContaining({ to: SANDBOX_EMAIL }),
+        );
+        const account = await owner.emailAccount.findFirstOrThrow({
+          where: { organisationId: org.id, deletedAt: null },
+        });
+        expect(account.lastHealthCheckAt).not.toBeNull();
+        const audit = await owner.auditLog.findFirst({
+          where: { organisationId: org.id, action: "mailbox.test_email_sent" },
+          orderBy: { createdAt: "desc" },
+        });
+        expect(audit?.entityId).toBe(account.id);
+      });
+
+      /** A reconnect is someone repairing a broken grant on the settings page,
+       *  not someone signing up. Posting them an email they did not ask for is
+       *  noise, so the live row must suppress the send. */
+      it("does NOT send again when an existing live connection is replaced", async () => {
+        await insertConnectedMailbox(owner, org.id);
+        const response = await request(app.getHttpServer())
+          .get(`/integrations/microsoft/callback?code=fake&state=${await mintState()}`)
+          .expect(302);
+
+        expect(response.headers.location).toBe(
+          "http://localhost:3000/app/settings/mailbox?connected=1",
+        );
+        expect(graphStub.sendMail).not.toHaveBeenCalled();
+      });
+
+      /**
+       * The mailbox is connected and COMMITTED before the send is attempted, so
+       * a failed test send is not a failed connection and must never be
+       * reported as one — that would send the customer back to reconnect a
+       * mailbox that is already fine.
+       */
+      it("still reports the connection as successful when the test email fails", async () => {
+        await startDisconnected();
+        graphStub.sendMail.mockRejectedValueOnce(new GraphRequestError("nope", 500));
+
+        const response = await request(app.getHttpServer())
+          .get(`/integrations/microsoft/callback?code=fake&state=${await mintState()}`)
+          .expect(302);
+
+        expect(response.headers.location).toBe(
+          "http://localhost:3000/app/settings/mailbox?connected=1&test_email=failed",
+        );
+        const account = await owner.emailAccount.findFirstOrThrow({
+          where: { organisationId: org.id, deletedAt: null },
+        });
+        // Read access was just proven by probeMailbox, so one failed send must
+        // not paint a red error across a mailbox that works.
+        expect(account.healthStatus).toBe("active");
+        expect(account.lastError).toBeNull();
+      });
+    });
+
+    /**
+     * The flow rides the signed state because the browser is at Microsoft in
+     * between — nothing we hold locally survives the round trip. It is an enum
+     * mapped to a path server-side, never a URL, so a leaked state cannot be
+     * turned into an open redirect.
+     */
+    describe("returning to the screen the connection started from", () => {
+      it("sends a connection started in onboarding back to the setup flow", async () => {
+        await owner.emailAccount.updateMany({
+          where: { organisationId: org.id, deletedAt: null },
+          data: { deletedAt: new Date() },
+        });
+        const response = await request(app.getHttpServer())
+          .get(
+            `/integrations/microsoft/callback?code=fake&state=${await mintState(org.id, { flow: "onboarding" })}`,
+          )
+          .expect(302);
+
+        expect(response.headers.location).toBe(
+          "http://localhost:3000/app/onboarding?connected=1&test_email=sent",
+        );
+      });
+
+      /** The decline path resolves the flow BEFORE the state is verified for
+       *  real, so it needs its own proof that it lands in the right place. */
+      it("sends a decline during onboarding back to the setup flow", async () => {
+        const state = await mintState(org.id, {
+          flow: "onboarding",
+          loginHint: "sara@acme.example",
+        });
+        const response = await request(app.getHttpServer())
+          .get(`/integrations/microsoft/callback?error=access_denied&state=${state}`)
+          .expect(302);
+
+        expect(response.headers.location).toBe(
+          "http://localhost:3000/app/onboarding?error=consent_denied&hint=sara%40acme.example",
+        );
+      });
+
+      it("falls back to the settings page for a state that names no flow", async () => {
+        const response = await request(app.getHttpServer())
+          .get(`/integrations/microsoft/callback?error=access_denied&state=${await mintState()}`)
+          .expect(302);
+
+        expect(response.headers.location).toBe(
+          "http://localhost:3000/app/settings/mailbox?error=consent_denied",
+        );
+      });
     });
 
     it("reconnect replaces the single live connection (partial unique index, ruling 6)", async () => {

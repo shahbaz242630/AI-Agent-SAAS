@@ -29,6 +29,26 @@ const MAX_LOGIN_HINT_LENGTH = 320;
 export type OAuthStatePurpose = "connect" | "admin_consent";
 
 /**
+ * Which Eva screen this connection was started from, so the callback can return
+ * the user to it. Signed into the state rather than passed as a query
+ * parameter, because Microsoft hands `state` back untouched and anything else
+ * would have to be re-supplied by the browser mid-flow.
+ *
+ * It is an ENUM, never a URL. The callback maps it to a path from a fixed
+ * server-side table (`FLOW_RETURN_PATHS`). Accepting a redirect target from the
+ * client — even a signed one — would make this an open redirect the moment a
+ * state token leaked, and Microsoft's own redirect_uri allowlist would not
+ * catch it because the hop happens after we are back on our own origin.
+ */
+export type OAuthFlow = "onboarding" | "settings";
+
+const OAUTH_FLOWS: readonly OAuthFlow[] = ["onboarding", "settings"];
+
+/** Where a connection started when the state does not say — every state minted
+ *  before onboarding existed, and any that fails to verify. */
+export const DEFAULT_OAUTH_FLOW: OAuthFlow = "settings";
+
+/**
  * `connect` was 10 minutes and that is NOT long enough â€” proven on 2026-07-31,
  * when a first-time sign-in (password, MFA on a phone, reading the consent
  * screen, then stepping away) blew through it and the customer got
@@ -52,6 +72,9 @@ export interface OAuthStateClaims {
   /** The address the user typed in Eva, so the callback can still name it
    *  after Microsoft declines â€” Microsoft tells us nothing about who tried. */
   loginHint?: string;
+  /** The screen this started from. Absent on states minted before onboarding
+   *  existed, which is why every reader falls back to DEFAULT_OAUTH_FLOW. */
+  flow?: OAuthFlow;
 }
 
 /** Thrown for any state that does not verify â€” signature, expiry, or shape. */
@@ -73,6 +96,10 @@ function key(secret: string): Uint8Array {
  * clean ?error=invalid_state redirect the callback owes the user. (Same
  * defect class as the Task 4 String(payload.refresh_token) fix.)
  */
+function isOAuthFlow(value: unknown): value is OAuthFlow {
+  return typeof value === "string" && OAUTH_FLOWS.includes(value as OAuthFlow);
+}
+
 function readUuidClaim(value: unknown): string {
   if (typeof value !== "string" || !UUID_PATTERN.test(value)) throw new InvalidOAuthStateError();
   return value;
@@ -110,6 +137,12 @@ export async function verifyOAuthState(
     const purpose = payload.purpose ?? "connect";
     if (purpose !== expectedPurpose) throw new InvalidOAuthStateError();
     const loginHint = payload.loginHint;
+    // An unrecognised flow is DROPPED rather than rejected. The signature has
+    // already proved we minted this token, so a value outside the enum means
+    // our own code changed, not that anyone is attacking â€” and refusing it
+    // would strand a mid-flight connection across a deploy. The reader falls
+    // back to DEFAULT_OAUTH_FLOW, which lands the user somewhere real.
+    const flow = payload.flow;
     return {
       organisationId: readUuidClaim(payload.organisationId),
       userId: readUuidClaim(payload.userId),
@@ -120,6 +153,7 @@ export async function verifyOAuthState(
       loginHint.length <= MAX_LOGIN_HINT_LENGTH
         ? { loginHint }
         : {}),
+      ...(isOAuthFlow(flow) ? { flow } : {}),
     };
   } catch {
     throw new InvalidOAuthStateError();

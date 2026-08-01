@@ -49,6 +49,9 @@ export function MailboxControls({
       {(!connected || reconnectNeeded) && (
         <form action={connectMailbox} className="flex flex-col gap-3">
           <input type="hidden" name="organisationId" value={organisationId} />
+          {/* Rides the signed OAuth state so the return from Microsoft lands
+              back here rather than in the setup flow. */}
+          <input type="hidden" name="flow" value="settings" />
           <div className="flex flex-col gap-1">
             <label htmlFor="emailAddress" className="text-sm font-medium">
               Which mailbox?

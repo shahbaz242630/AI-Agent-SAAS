@@ -50,7 +50,13 @@ import {
   UNKNOWN_DOMAIN,
 } from "../integrations/microsoft-graph/microsoft-discovery.js";
 import type { MicrosoftDiscovery } from "../integrations/microsoft-graph/microsoft-discovery.js";
-import { signOAuthState, verifyOAuthState, type OAuthStateClaims } from "./oauth-state.js";
+import {
+  DEFAULT_OAUTH_FLOW,
+  signOAuthState,
+  verifyOAuthState,
+  type OAuthFlow,
+  type OAuthStateClaims,
+} from "./oauth-state.js";
 
 /**
  * Microsoft reports "your admin must approve this app" as a plain
@@ -66,6 +72,28 @@ const ADMIN_CONSENT_CODES = /AADSTS90094|AADSTS90095/;
 const TOKEN_EXPIRY_BUFFER_MS = 5 * 60 * 1000;
 
 const AUTH_EXPIRED_MESSAGE = "Microsoft authorisation expired â€” reconnect the mailbox";
+
+/**
+ * Where the callback sends the browser, per flow.
+ *
+ * A FIXED table, keyed by an enum carried on the signed state â€” the caller
+ * never supplies a path or a URL. Signing a destination would not make it safe:
+ * this redirect happens after we are back on our own origin, so Microsoft's
+ * `redirect_uri` allowlist has already done its work and would not catch a
+ * second hop somewhere else.
+ */
+const FLOW_RETURN_PATHS: Record<OAuthFlow, string> = {
+  onboarding: "/app/onboarding",
+  settings: "/app/settings/mailbox",
+};
+
+/** The self-addressed test send (ruling 7). One definition, because the manual
+ *  button and the automatic send on first connect must prove the same thing. */
+const TEST_EMAIL = {
+  subject: "Eva test email",
+  bodyText:
+    "This is a test email from Eva, sent to confirm your Outlook mailbox is connected correctly. You can ignore it.",
+};
 
 /** The live email_accounts row as findFirst returns it (inferred â€” avoids
  *  wrestling Prisma's GetPayload generics under exactOptionalPropertyTypes). */
@@ -138,6 +166,10 @@ export class MailboxesService {
       userId: user.id,
       nonce: randomUUID(),
       ...(input.emailAddress ? { loginHint: input.emailAddress } : {}),
+      // Rides on the state because Microsoft returns `state` untouched and
+      // nothing else survives the round trip â€” the browser is at Microsoft in
+      // between, so we cannot hold this in a cookie we control.
+      ...(input.flow ? { flow: input.flow } : {}),
     });
     return {
       authorizeUrl: this.graph.buildAuthorizeUrl(state, {
@@ -202,7 +234,12 @@ export class MailboxesService {
    * Codes/state are never logged (BRD 14).
    */
   async handleCallback(query: MicrosoftCallbackQuery): Promise<string> {
-    const base = `${this.env.WEB_ORIGIN}/app/settings/mailbox`;
+    // Read the state BEFORE branching. Every return below needs the flow to
+    // know where it is going, including the decline path, which fires before
+    // the state is verified for real. Failure is fine and expected here â€” an
+    // expired or absent state simply falls back to the settings page.
+    const hints = await this.recoverStateHints(query.state);
+    const base = `${this.env.WEB_ORIGIN}${FLOW_RETURN_PATHS[hints.flow]}`;
     if (query.error) {
       // The belt-and-braces branch. The classifier is correct â€” fed AADSTS90094
       // it returns admin_consent_required, verified against deployed staging â€”
@@ -219,7 +256,7 @@ export class MailboxesService {
       // readings. Carrying the attempted address through lets it do that
       // properly: the domain decides whether an administrator can even exist.
       this.logger.info("mailbox connection declined at Microsoft");
-      const hint = await this.recoverLoginHint(query.state);
+      const hint = hints.loginHint;
       return `${base}?error=consent_denied${hint ? `&hint=${encodeURIComponent(hint)}` : ""}`;
     }
     if (query.admin_consent) return this.handleAdminConsentReturn(query, base);
@@ -291,8 +328,9 @@ export class MailboxesService {
       connectedBy: claims.userId,
     };
     let accountId: string;
+    let isNewConnection: boolean;
     try {
-      accountId = await withTenant(
+      ({ accountId, isNewConnection } = await withTenant(
         this.prisma.db,
         { organisationId: claims.organisationId, userId: claims.userId },
         async (tx) => {
@@ -311,9 +349,9 @@ export class MailboxesService {
             entityId: account.id,
             metadata: { emailAddress: profile.emailAddress, provider: "microsoft" },
           });
-          return account.id;
+          return { accountId: account.id, isNewConnection: existing === null };
         },
-      );
+      ));
     } catch (error) {
       // A DB outage, or the org being deleted between consent and write.
       // (Revoked membership is caught by the authorisation re-check above, not
@@ -324,7 +362,62 @@ export class MailboxesService {
       return `${base}?error=connect_failed`;
     }
     this.logger.info({ emailAccountId: accountId }, "mailbox connected");
-    return `${base}?connected=1`;
+    // A reconnect is someone repairing a broken grant on the settings page, not
+    // someone signing up â€” posting them an email they did not ask for is noise.
+    if (!isNewConnection) return `${base}?connected=1`;
+    const sent = await this.trySendWelcomeTestEmail(
+      claims,
+      accountId,
+      profile.emailAddress,
+      tokens.accessToken,
+    );
+    return `${base}?connected=1&test_email=${sent ? "sent" : "failed"}`;
+  }
+
+  /**
+   * The test send that closes a new connection (founder ruling 2026-07-31:
+   * send it, say so, move on â€” no "did it arrive?" step, because a
+   * self-addressed mail never crosses the internet and cannot realistically
+   * fail to arrive once Graph has accepted it).
+   *
+   * It earns its place because `probeMailbox` proves the account can READ mail
+   * and nothing more. Reading and sending genuinely diverge â€” a restricted
+   * sender, a shared mailbox, an admin who revoked one permission of four â€” so
+   * without this the first proof that sending works would be a real chasing
+   * email to a real customer.
+   *
+   * NEVER THROWS. The mailbox is connected and committed by the time this runs;
+   * a failed test send is not a failed connection and must not be reported as
+   * one. Nor does it mark the mailbox unhealthy: read access was just proven,
+   * so a transient Graph 5xx would otherwise paint a red error across a mailbox
+   * that is fine. The user is told, and the manual button retries through the
+   * path that does map errors to health.
+   *
+   * Uses the token already in hand rather than re-reading and decrypting the row
+   * written moments ago â€” it was minted seconds back, so refresh-on-use has
+   * nothing to do and `ensureAccessToken` would only add a round trip.
+   */
+  private async trySendWelcomeTestEmail(
+    claims: OAuthStateClaims,
+    accountId: string,
+    emailAddress: string,
+    accessToken: string,
+  ): Promise<boolean> {
+    try {
+      await this.graph.sendMail(accessToken, { to: emailAddress, ...TEST_EMAIL });
+    } catch (error) {
+      this.logger.warn({ err: error }, "mailbox connected but its test email could not be sent");
+      return false;
+    }
+    // Caught separately, and deliberately does NOT change the answer: the mail
+    // has left. Reporting "we couldn't send it" because our own bookkeeping
+    // failed would tell the customer something untrue about the world.
+    try {
+      await this.recordTestEmailSent(claims.organisationId, claims.userId, accountId);
+    } catch (error) {
+      this.logger.error({ err: error }, "test email sent on connect but could not be recorded");
+    }
+    return true;
   }
 
   /**
@@ -380,15 +473,24 @@ export class MailboxesService {
     return `${base}?admin_consent=granted`;
   }
 
-  /** The address the user typed, recovered from a signed state. Returns null
-   *  rather than throwing: a decline still has to render even if the state has
-   *  expired, and this only decides how helpful the copy can be. */
-  private async recoverLoginHint(state?: string): Promise<string | null> {
-    if (!state) return null;
+  /**
+   * What a signed state can tell us before the callback commits to a branch:
+   * which screen the user started from, and the address they typed.
+   *
+   * Never throws. A decline, an expired state and an `/adminconsent` return
+   * (whose state carries a different purpose and so will not verify here) all
+   * still have to render something â€” this only decides where they land and how
+   * helpful the copy can be. Verification proper happens on the success path.
+   */
+  private async recoverStateHints(
+    state?: string,
+  ): Promise<{ flow: OAuthFlow; loginHint: string | null }> {
+    if (!state) return { flow: DEFAULT_OAUTH_FLOW, loginHint: null };
     try {
-      return (await verifyOAuthState(this.env.OAUTH_STATE_SECRET, state)).loginHint ?? null;
+      const claims = await verifyOAuthState(this.env.OAUTH_STATE_SECRET, state);
+      return { flow: claims.flow ?? DEFAULT_OAUTH_FLOW, loginHint: claims.loginHint ?? null };
     } catch {
-      return null;
+      return { flow: DEFAULT_OAUTH_FLOW, loginHint: null };
     }
   }
 
@@ -459,12 +561,7 @@ export class MailboxesService {
       // 2. Token. Any rotation is committed before we send (see below).
       const accessToken = await this.ensureAccessToken(organisationId, user.id, account);
       // 3. Send. No transaction open.
-      await this.graph.sendMail(accessToken, {
-        to: account.emailAddress,
-        subject: "Eva test email",
-        bodyText:
-          "This is a test email from Eva, sent to confirm your Outlook mailbox is connected correctly. You can ignore it.",
-      });
+      await this.graph.sendMail(accessToken, { to: account.emailAddress, ...TEST_EMAIL });
     } catch (error) {
       // The licence was removed after connecting (connect itself now probes,
       // F3). Not auth_expired â€” reconnecting cannot conjure a mailbox â€” so it
@@ -493,20 +590,32 @@ export class MailboxesService {
       throw error;
     }
     // 4. Record the outcome.
-    await withTenant(this.prisma.db, { organisationId, userId: user.id }, async (tx) => {
+    await this.recordTestEmailSent(organisationId, user.id, account.id);
+    return { sent: true, to: account.emailAddress };
+  }
+
+  /** Step 4 of a test send: health stamp + audit row, committed together.
+   *  Shared by the manual button and the automatic send on first connect, so
+   *  "was this mailbox ever proven able to send?" has one answer wherever the
+   *  send came from. */
+  private async recordTestEmailSent(
+    organisationId: string,
+    userId: string,
+    accountId: string,
+  ): Promise<void> {
+    await withTenant(this.prisma.db, { organisationId, userId }, async (tx) => {
       await tx.emailAccount.update({
-        where: { id: account.id },
+        where: { id: accountId },
         data: { healthStatus: "active", lastHealthCheckAt: new Date(), lastError: null },
       });
       await writeAuditLog(tx, {
         organisationId,
-        actorUserId: user.id,
+        actorUserId: userId,
         action: "mailbox.test_email_sent",
         entityType: "email_account",
-        entityId: account.id,
+        entityId: accountId,
       });
     });
-    return { sent: true, to: account.emailAddress };
   }
 
   /**

@@ -14,13 +14,18 @@ export function OrganisationForm() {
         <label htmlFor="name" className="text-sm font-medium">
           Organisation name
         </label>
+        {/* Same welcome as the setup flow: nothing here has ever blocked a sole
+            trader, but the old placeholder alone implied one was unwelcome. */}
+        <p className="text-sm text-muted-foreground">
+          Working for yourself? Register under your own name.
+        </p>
         <input
           id="name"
           name="name"
           type="text"
           required
           maxLength={200}
-          placeholder="e.g. Slough Plumbing Ltd"
+          placeholder="e.g. Slough Plumbing Ltd, or Sara Ahmed"
           className="rounded-[var(--radius-card)] border border-muted-foreground/30 bg-background px-3 py-2 text-sm outline-none focus:border-primary"
         />
       </div>

@@ -1,4 +1,5 @@
 import { Body, Controller, Get, HttpCode, Param, ParseUUIDPipe, Post, Query } from "@nestjs/common";
+import { Throttle } from "@nestjs/throttler";
 import type {
   MailboxAdminConsentDto,
   MailboxConnectDto,
@@ -60,6 +61,25 @@ export class MailboxesController {
     return this.mailboxesService.disconnect(authUser, organisationId);
   }
 
+  /**
+   * Tighter than the global 100/min because this one reaches out to Microsoft
+   * and puts mail in a real mailbox.
+   *
+   * Tidiness rather than a security control: the send is strictly
+   * self-addressed (ruling 7), so a flood can only fill the sender's own inbox
+   * and cannot be aimed at anybody else. Two consequences of that, both
+   * deliberate:
+   *
+   * - **Twenty, not "a handful".** The person pressing this repeatedly is
+   *   almost always someone whose mailbox is misbehaving, which is exactly when
+   *   locking them out is least helpful. It needs to stop a runaway loop, not
+   *   ration legitimate diagnosis.
+   * - **Keyed by client, not by mailbox** â€” the framework default. The plan
+   *   asked for per-mailbox; that needs a custom tracker, and it would buy
+   *   nothing here because the only inbox at risk is the caller's own. Worth
+   *   revisiting in 1.6a, when one organisation can hold several mailboxes.
+   */
+  @Throttle({ default: { limit: 20, ttl: 60 * 60 * 1000 } })
   @Post("test-email")
   @HttpCode(200)
   sendTestEmail(
