@@ -97,8 +97,11 @@ function resetGraphStub(): void {
 }
 
 /** Inserts a live connection with VALID encrypted fixture tokens (1h expiry).
- *  Soft-deletes any existing live rows first â€” tests share orgs, and the
- *  partial unique index allows only ONE live connection per org (ruling 6). */
+ *  Soft-deletes any existing live rows first — not because the schema demands
+ *  it any more (slice 1.6a replaced the one-live-mailbox-per-org index with a
+ *  one-live-ADDRESS index), but because these specs share an organisation and
+ *  every one of them uses the same SANDBOX_EMAIL. Leaving the old row live
+ *  would now collide on the address instead. */
 async function insertConnectedMailbox(
   owner: EvaPrismaClient,
   organisationId: string,
@@ -168,7 +171,7 @@ describe("Mailboxes (Slice 1.6)", () => {
 
   beforeEach(resetGraphStub);
 
-  describe("GET .../mailbox (status)", () => {
+  describe("GET .../mailboxes (list)", () => {
     it("404s for a non-member (cross-tenant is invisible, BRD 15)", async () => {
       await request(app.getHttpServer())
         .get(`/organisations/${otherOrg.id}/mailboxes`)
@@ -1072,9 +1075,12 @@ describe("Mailboxes (Slice 1.6)", () => {
       });
     });
 
-    it("reconnect replaces the single live connection (partial unique index, ruling 6)", async () => {
+    it("reconnecting the SAME address reuses its row and consumes no second seat", async () => {
+      // Was "reconnect replaces the single live connection (ruling 6)". The
+      // assertion is unchanged and still exactly right, but the reason is
+      // different now: one live row per ADDRESS, not one per organisation.
       // Start disconnected so the first callback INSERTs and the second
-      // UPDATEs: a soft-deleted row must block neither (ruling 6).
+      // UPDATEs — a soft-deleted row must block neither.
       await owner.emailAccount.updateMany({
         where: { organisationId: org.id, deletedAt: null },
         data: { deletedAt: new Date() },
@@ -1092,7 +1098,7 @@ describe("Mailboxes (Slice 1.6)", () => {
     });
   });
 
-  describe("POST .../mailbox/disconnect", () => {
+  describe("POST .../mailboxes/:mailboxId/disconnect", () => {
     it("wipes tokens + soft-deletes in one transaction, audited (ruling 8)", async () => {
       const account = await insertConnectedMailbox(owner, org.id);
       await request(app.getHttpServer())
@@ -1133,7 +1139,7 @@ describe("Mailboxes (Slice 1.6)", () => {
     });
   });
 
-  describe("POST .../mailbox/test-email (self-addressed, ruling 7)", () => {
+  describe("POST .../mailboxes/:mailboxId/test-email (self-addressed, ruling 7)", () => {
     it("sends with the stored token, stamps health, audits", async () => {
       const account = await insertConnectedMailbox(owner, org.id);
       const response = await request(app.getHttpServer())

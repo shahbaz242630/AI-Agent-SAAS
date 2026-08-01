@@ -37,7 +37,7 @@ export class EntitlementsService {
   async list(authUser: AuthUser, organisationId: string): Promise<ModuleStatusDto[]> {
     const user = await this.usersService.resolveOrProvision(authUser);
     return withTenant(this.prisma.db, { organisationId, userId: user.id }, async (tx) => {
-      await requirePermission(tx, organisationId, user.id, "permissions:read");
+      await requirePermission(tx, organisationId, user.id, "modules:read");
       return this.describeAll(tx);
     });
   }

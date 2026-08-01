@@ -188,7 +188,7 @@ export class MailboxesService {
     return module?.seats ?? DEFAULT_SEATS;
   }
 
-  /** POST .../mailbox/connect â€” mailbox:manage. Mints the 30-minute state
+  /** POST .../mailboxes/connect â€” mailbox:manage. Mints the 30-minute state
    *  JWT (ruling 4) and returns the Microsoft authorize URL; the web app
    *  redirects the browser there. The optional address becomes Microsoft's
    *  `login_hint` (F5) and is carried on the state so a declined callback can
@@ -247,7 +247,7 @@ export class MailboxesService {
   }
 
   /**
-   * GET .../mailbox/admin-consent â€” mailbox:manage. The administrator half of
+   * GET .../mailboxes/admin-consent â€” mailbox:manage. The administrator half of
    * the declined-consent screen (defect F1).
    *
    * The state carried into the approval link lives for SEVEN DAYS, not ten
@@ -636,7 +636,7 @@ export class MailboxesService {
     }
   }
 
-  /** POST .../mailbox/disconnect â€” mailbox:manage. Tokens hard-gone
+  /** POST .../mailboxes/:mailboxId/disconnect â€” mailbox:manage. Tokens hard-gone
    *  (columns nulled) + soft delete in ONE transaction (ruling 8); the row
    *  stays as audit history and does not block reconnect (partial index). */
   async disconnect(authUser: AuthUser, organisationId: string, mailboxId: string): Promise<void> {
@@ -746,7 +746,7 @@ export class MailboxesService {
   }
 
   /**
-   * POST .../mailbox/test-email â€” mailbox:manage. Self-addressed send
+   * POST .../mailboxes/:mailboxId/test-email â€” mailbox:manage. Self-addressed send
    * (ruling 7) proving the full path: valid token â†’ Graph â†’ Sent Items.
    *
    * FOUR independently committed steps, deliberately NOT one transaction

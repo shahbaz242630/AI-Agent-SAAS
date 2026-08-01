@@ -56,8 +56,9 @@ export const PERMISSION_KEYS = [
   "reminders:write",
   "mailbox:read",
   "mailbox:manage",
-  /** Slice 1.6a — turning products on and off, and buying seats. Itself
-   *  `core`: an organisation with no modules must still be able to buy one. */
+  /** Slice 1.6a. Both are `core`: an organisation with no modules must still be
+   *  able to see what exists and buy one, or it can never become a customer. */
+  "modules:read",
   "modules:manage",
 ] as const;
 
@@ -94,6 +95,9 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<OrganisationRole, readonly Permiss
     "reminders:write",
     // BRD §6 adjacency: finance lives with mailbox connection health day-to-day.
     "mailbox:read",
+    // Which products the organisation holds is not billing detail, and finance
+    // needs it to make sense of a 402 rather than reading it as a fault.
+    "modules:read",
   ],
   sales: ["customers:read", "contacts:read", "invoices:read", "imports:read", "reminders:read"],
   reception: ["customers:read", "contacts:read", "invoices:read", "imports:read", "reminders:read"],
@@ -133,6 +137,7 @@ export const PERMISSION_MODULE: Record<PermissionKey, ModuleKey | "core"> = {
   "contacts:write": "core",
   "permissions:read": "core",
   "permissions:manage": "core",
+  "modules:read": "core",
   "modules:manage": "core",
   "invoices:read": "email_credit_controller",
   "invoices:write": "email_credit_controller",
@@ -532,12 +537,12 @@ export interface MailboxListDto {
   seatLimitReached: boolean;
 }
 
-/** POST .../mailbox/connect — the Microsoft authorize URL to redirect the browser to. */
+/** POST .../mailboxes/connect — the Microsoft authorize URL to redirect the browser to. */
 export interface MailboxConnectDto {
   authorizeUrl: string;
 }
 
-/** POST .../mailbox/test-email — self-addressed send (ruling 7). */
+/** POST .../mailboxes/:mailboxId/test-email — self-addressed send (ruling 7). */
 export interface MailboxTestEmailResultDto {
   sent: true;
   to: string;
@@ -549,7 +554,7 @@ export const MICROSOFT_ACCOUNT_KINDS = ["work", "personal", "unknown"] as const;
 export type MicrosoftAccountKind = (typeof MICROSOFT_ACCOUNT_KINDS)[number];
 
 /**
- * GET .../mailbox/admin-consent — what to show someone whose connection was
+ * GET .../mailboxes/admin-consent — what to show someone whose connection was
  * declined (defect F1).
  *
  * Microsoft reports "your administrator must approve this" and "you pressed

@@ -51,7 +51,7 @@ describe("Module entitlements (Slice 1.6a)", () => {
   beforeAll(async () => {
     owner = createOwnerClient();
     await seedTestDatabase(owner);
-    entitled = await createOrgWithMembers(owner, "ent-yes", ["owner", "sales"]);
+    entitled = await createOrgWithMembers(owner, "ent-yes", ["owner", "sales", "finance"]);
     bare = await createOrgWithMembers(owner, "ent-no", ["owner", "sales"], "Bare Org Ltd", []);
     stranger = await createOrgWithMembers(owner, "ent-other", ["owner"]);
     app = await createTestApp();
@@ -175,6 +175,25 @@ describe("Module entitlements (Slice 1.6a)", () => {
         .get(`/organisations/${bare.id}/modules`)
         .set("Authorization", `Bearer ${tokenFor(bare, "owner")}`)
         .expect(200);
+    });
+
+    /**
+     * Reading the product list and changing it are separate permissions, and
+     * deliberately land in different places in the default matrix. Seeing what
+     * your organisation holds is what makes a 402 elsewhere legible rather than
+     * looking like a fault; committing the business to money is the owner's.
+     */
+    it("a role with modules:read but not modules:manage can look but not touch", async () => {
+      await request(app.getHttpServer())
+        .get(`/organisations/${entitled.id}/modules`)
+        .set("Authorization", `Bearer ${tokenFor(entitled, "finance")}`)
+        .expect(200);
+
+      await request(app.getHttpServer())
+        .put(`/organisations/${entitled.id}/modules/email_credit_controller`)
+        .set("Authorization", `Bearer ${tokenFor(entitled, "finance")}`)
+        .send({ enabled: false })
+        .expect(403);
     });
   });
 

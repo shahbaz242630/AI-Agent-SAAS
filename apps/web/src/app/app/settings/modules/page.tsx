@@ -82,7 +82,11 @@ export default async function ModulesPage() {
 
   // Turning a product on commits the business to money, so it is the account
   // owner's call rather than a delegated administrator's. The API enforces
-  // this; hiding the controls just avoids offering a button that will 403.
+  // this (`modules:manage`, owner-only in the default matrix); hiding the
+  // controls just avoids offering a button that will 403. Everyone who can
+  // reach this page can still SEE what the organisation holds — that is
+  // `modules:read`, and it is what makes a 402 elsewhere legible rather than
+  // looking like a fault.
   const canManage = organisation?.roleKey === "owner";
 
   return (
