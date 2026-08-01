@@ -289,6 +289,56 @@ describe("GraphMailProvider — a missing mailbox is not an expired grant (F3)",
     );
   });
 
+  /**
+   * The SECOND thing the implementation got wrong, found by running it against
+   * staging on 2026-08-01 and invisible to every test that existed.
+   *
+   * The very same licence-less account that answered a bare 401 on 2026-07-31
+   * answered HTTP 500 with `Retry-After: 10` the next day. Only 401 was mapped
+   * to "no mailbox", so the 500 fell through to GraphRequestError and the
+   * customer was told "please try again" — the identical infinite loop F3 was
+   * written to remove, just wearing a different message.
+   *
+   * The ordering argument never depended on the status code: getProfile
+   * succeeded moments earlier with this token, so the grant is alive and
+   * whatever failed is not authorisation.
+   */
+  it.each([
+    ["500 with Retry-After, as observed on staging", 500],
+    ["503, the other shape Graph uses for a backend it cannot reach", 503],
+    ["403, in case Graph ever refuses outright", 403],
+    ["404, if the folder simply is not there", 404],
+  ])("treats a probe failing with %s as a missing mailbox", async (_label, status) => {
+    stubFetch(() => new Response(null, { status, headers: { "Retry-After": "10" } }));
+
+    await expect(provider.probeMailbox("token-that-just-worked-on-/me")).rejects.toBeInstanceOf(
+      MailboxUnavailableError,
+    );
+  });
+
+  it("treats a probe that cannot reach Microsoft at all as a missing mailbox", async () => {
+    // A thrown fetch never produced a GraphRequestError, so it used to escape
+    // handleCallback's MailboxUnavailableError branch entirely.
+    stubFetch(() => {
+      throw new TypeError("network down");
+    });
+
+    await expect(provider.probeMailbox("token-that-just-worked-on-/me")).rejects.toBeInstanceOf(
+      MailboxUnavailableError,
+    );
+  });
+
+  it("a non-401 failure ANYWHERE ELSE is still a plain Graph error", async () => {
+    // The ordering argument is specific to the probe. Widening it to every call
+    // would tell a user with a perfectly good mailbox that they have none.
+    stubFetch(() => new Response(null, { status: 500 }));
+
+    await expect(provider.getProfile("valid")).rejects.toBeInstanceOf(GraphRequestError);
+    await expect(
+      provider.sendMail("valid", { to: "t@example.com", subject: "s", bodyText: "b" }),
+    ).rejects.toBeInstanceOf(GraphRequestError);
+  });
+
   it("a bare 401 ANYWHERE ELSE is still a dead grant", async () => {
     // The ordering argument does not hold for other calls, so they keep the
     // conservative reading: an expired grant is the likelier cause, and

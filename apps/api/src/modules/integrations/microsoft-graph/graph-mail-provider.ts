@@ -181,9 +181,37 @@ export class GraphMailProvider implements MicrosoftGraphProvider {
    * alone silently fails, which is exactly what it did.
    */
   async probeMailbox(accessToken: string): Promise<void> {
-    await this.graphRequest(accessToken, `${GRAPH_BASE}/me/mailFolders/inbox?$select=id`, {
-      unauthorizedMeans: "mailbox_missing",
-    });
+    try {
+      await this.graphRequest(accessToken, `${GRAPH_BASE}/me/mailFolders/inbox?$select=id`, {
+        unauthorizedMeans: "mailbox_missing",
+      });
+    } catch (error) {
+      if (error instanceof MailboxUnavailableError) throw error;
+      /**
+       * ANY failure here means the same thing to the customer: we could not
+       * open their mailbox, so storing this connection would hand slice 1.7 a
+       * mailbox it cannot send through.
+       *
+       * Mapping only 401 was not enough, and that is not a theory — the SAME
+       * licence-less account answered a bare 401 on 2026-07-31 and an
+       * HTTP 500 (with `Retry-After: 10`) on 2026-08-01, observed on staging.
+       * The 500 fell through to GraphRequestError and the customer was told
+       * "please try again", which for an account with no mailbox is the exact
+       * infinite loop F3 exists to remove.
+       *
+       * The ordering argument is what makes this safe, and it does not depend
+       * on the status code: `getProfile` succeeded moments ago with this very
+       * token, so the grant is provably alive. Whatever just failed, it is not
+       * authorisation.
+       *
+       * The cost is that a genuinely transient Graph outage now reads as
+       * "mailbox unavailable" too. That is why the copy names BOTH causes
+       * rather than asserting the licence — the same rule F1 established for
+       * a declined consent: when two causes are indistinguishable, say so
+       * instead of guessing, because guessing is wrong half the time.
+       */
+      throw new MailboxUnavailableError();
+    }
   }
 
   private async graphRequest<T = unknown>(

@@ -78,11 +78,15 @@ export class ReauthRequiredError extends Error {
  * Distinct from ReauthRequiredError because the remedy is completely
  * different — connect a different account, or buy a licence.
  */
+/**
+ * "We could not open this mailbox." Deliberately NOT "this account has no
+ * licence" — that is the likeliest cause but not a provable one. Graph answered
+ * the same licence-less account with a bare 401 one day and a 500 the next, so
+ * the honest statement is what we observed, not what we inferred.
+ */
 export class MailboxUnavailableError extends Error {
   constructor() {
-    super(
-      "This Microsoft account doesn't have a mailbox — it may not have an Exchange Online licence",
-    );
+    super("Eva couldn't open that mailbox — it may not have an Exchange Online licence");
     this.name = "MailboxUnavailableError";
   }
 }

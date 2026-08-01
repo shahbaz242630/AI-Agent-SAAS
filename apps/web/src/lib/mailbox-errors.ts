@@ -23,11 +23,13 @@ export const MAILBOX_ERROR_MESSAGES: Record<string, string> = {
     "We couldn't connect that mailbox. Either the connection was cancelled, or your Microsoft 365 administrator needs to approve Eva first.",
   admin_consent_required:
     "Your Microsoft 365 administrator needs to approve Eva before this mailbox can be connected. Ask them to authorise it, then try again.",
-  // Only reachable on a work account: a personal Outlook or Hotmail account
-  // always has a mailbox. So the reader here does have an IT setup, and the
-  // licence name is the term whoever manages it will need.
+  // Names BOTH causes, for the same reason consent_denied does: we genuinely
+  // cannot tell them apart. Graph answered one licence-less account with a bare
+  // 401 on 2026-07-31 and an HTTP 500 on 2026-08-01, so "this account has no
+  // licence" would be an assertion we cannot make. Each half gets its own
+  // action, so the message is useful whichever cause it turns out to be.
   mailbox_unavailable:
-    "That Microsoft account doesn't have a mailbox — it may not include email (no Exchange Online licence). Sign in with the account you actually send email from.",
+    "We couldn't open that mailbox. It may not include email (no Exchange Online licence), or Microsoft may be having a moment. Try again — and if it keeps failing, sign in with the account you actually send email from.",
   // Almost always "you took too long at Microsoft", so say that rather than
   // leaving the customer wondering what they did wrong (observed 2026-07-31).
   invalid_state:
