@@ -76,16 +76,21 @@ export default async function OnboardingPage({
   ).json()) as OrganisationSummary[];
   const organisation = organisations[0];
 
-  let status: MailboxSummary | null = null;
+  let status: { mailboxes: MailboxSummary[] } | null = null;
   let forbidden = false;
   if (organisation) {
     try {
       status = (await (
-        await apiFetch(`/organisations/${organisation.id}/mailbox`, accessToken)
-      ).json()) as MailboxSummary;
+        await apiFetch(`/organisations/${organisation.id}/mailboxes`, accessToken)
+      ).json()) as { mailboxes: MailboxSummary[] };
     } catch (error) {
       if (error instanceof ApiError && error.status === 401) redirect("/sign-in");
-      if (error instanceof ApiError && error.status === 403) forbidden = true;
+      // 403 (role) and 402 (product not held) both mean "this person cannot
+      // finish setup here" — the message below covers the first, and the
+      // second cannot happen during signup because organisation creation
+      // grants the module in the same transaction.
+      if (error instanceof ApiError && (error.status === 403 || error.status === 402))
+        forbidden = true;
       else throw error;
     }
   }
@@ -100,7 +105,7 @@ export default async function OnboardingPage({
       const query = attemptedAddress ? `?email=${encodeURIComponent(attemptedAddress)}` : "";
       adminConsent = (await (
         await apiFetch(
-          `/organisations/${organisation.id}/mailbox/admin-consent${query}`,
+          `/organisations/${organisation.id}/mailboxes/admin-consent${query}`,
           accessToken,
         )
       ).json()) as AdminConsent;
@@ -113,7 +118,7 @@ export default async function OnboardingPage({
   }
 
   const flashError = errorCode && !showConsentHelp ? mailboxErrorMessage(errorCode) : null;
-  const connected = status?.connected === true;
+  const connected = (status?.mailboxes.length ?? 0) > 0;
   const step = !organisation ? 1 : !connected ? 2 : 3;
 
   return (
@@ -177,9 +182,14 @@ export default async function OnboardingPage({
                     : "Your mailbox is connected."}
               </p>
             </div>
-            {/* A list of one today; 1.6a's seats turn it into a list of several. */}
-            {[status].map((mailbox) => (
-              <MailboxCard key={mailbox.emailAddress} mailbox={mailbox} />
+            {/* Setup connects one, but an organisation that returns here after
+                adding more should see what it actually has. */}
+            {status.mailboxes.map((mailbox) => (
+              <MailboxCard
+                key={mailbox.id}
+                mailbox={mailbox}
+                showPrimary={status.mailboxes.length > 1}
+              />
             ))}
             <div className="flex flex-wrap gap-3">
               <Link

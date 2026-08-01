@@ -75,9 +75,16 @@ export default async function AppHomePage() {
   // mailbox status, and a nudge is not worth failing the home page over.
   let mailboxConnected: boolean | null = null;
   try {
-    const response = await apiFetch(`/organisations/${organisations[0]!.id}/mailbox`, accessToken);
-    mailboxConnected = ((await response.json()) as { connected: boolean }).connected;
+    const response = await apiFetch(
+      `/organisations/${organisations[0]!.id}/mailboxes`,
+      accessToken,
+    );
+    const body = (await response.json()) as { mailboxes: unknown[] };
+    mailboxConnected = body.mailboxes.length > 0;
   } catch {
+    // Also swallows the 402 of an organisation that has not got Invoice
+    // Chasing — it has no mailbox to finish setting up, so the nudge below
+    // would be wrong rather than merely missing.
     mailboxConnected = null;
   }
 

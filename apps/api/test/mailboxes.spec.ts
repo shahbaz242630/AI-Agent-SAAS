@@ -138,7 +138,13 @@ describe("Mailboxes (Slice 1.6)", () => {
   beforeAll(async () => {
     owner = createOwnerClient();
     await seedTestDatabase(owner);
-    org = await createOrgWithMembers(owner, "mailbox", ["owner", "finance", "sales"]);
+    // Seats deliberately generous: these specs are about OAuth, tokens and
+    // health, and most of them connect while a mailbox already exists. Seat
+    // enforcement gets its own fixtures below rather than silently gating
+    // every unrelated test in the file.
+    org = await createOrgWithMembers(owner, "mailbox", ["owner", "finance", "sales"], undefined, [
+      { moduleKey: "email_credit_controller", seats: 5 },
+    ]);
     otherOrg = await createOrgWithMembers(owner, "mailbox-other", ["owner"]);
     app = await createTestApp({
       graphProvider: graphStub as MicrosoftGraphProvider,
@@ -165,71 +171,274 @@ describe("Mailboxes (Slice 1.6)", () => {
   describe("GET .../mailbox (status)", () => {
     it("404s for a non-member (cross-tenant is invisible, BRD 15)", async () => {
       await request(app.getHttpServer())
-        .get(`/organisations/${otherOrg.id}/mailbox`)
+        .get(`/organisations/${otherOrg.id}/mailboxes`)
         .set("Authorization", `Bearer ${tokenFor("owner")}`)
         .expect(404);
     });
 
     it("403s for a member without mailbox:read (sales)", async () => {
       await request(app.getHttpServer())
-        .get(`/organisations/${org.id}/mailbox`)
+        .get(`/organisations/${org.id}/mailboxes`)
         .set("Authorization", `Bearer ${tokenFor("sales")}`)
         .expect(403);
     });
 
-    it("200s with connected:false when nothing is connected (finance has mailbox:read)", async () => {
+    it("200s with an EMPTY list when nothing is connected (finance has mailbox:read)", async () => {
+      await owner.emailAccount.updateMany({
+        where: { organisationId: org.id, deletedAt: null },
+        data: { deletedAt: new Date() },
+      });
       const response = await request(app.getHttpServer())
-        .get(`/organisations/${org.id}/mailbox`)
+        .get(`/organisations/${org.id}/mailboxes`)
         .set("Authorization", `Bearer ${tokenFor("finance")}`)
         .expect(200);
-      expect(response.body).toEqual({
-        connected: false,
-        provider: null,
-        emailAddress: null,
-        displayName: null,
-        healthStatus: null,
-        lastHealthCheckAt: null,
-        lastError: null,
-        connectedBy: null,
-        connectedAt: null,
-      });
+      // Slice 1.6a: an empty list rather than a nullable status object. Seats
+      // come back too, so the UI knows whether to offer Connect at all.
+      expect(response.body.mailboxes).toEqual([]);
+      expect(response.body.seats).toBe(5);
+      expect(response.body.seatLimitReached).toBe(false);
     });
 
-    it("200s with the sanitized status when connected â€” never token material", async () => {
-      await insertConnectedMailbox(owner, org.id);
+    it("200s with the sanitized list when connected â€” never token material", async () => {
+      const account = await insertConnectedMailbox(owner, org.id);
       const response = await request(app.getHttpServer())
-        .get(`/organisations/${org.id}/mailbox`)
+        .get(`/organisations/${org.id}/mailboxes`)
         .set("Authorization", `Bearer ${tokenFor("owner")}`)
         .expect(200);
-      expect(response.body.connected).toBe(true);
-      expect(response.body.emailAddress).toBe(SANDBOX_EMAIL);
-      expect(response.body.healthStatus).toBe("active");
+      const listed = response.body.mailboxes.find((row: { id: string }) => row.id === account.id);
+      expect(listed.emailAddress).toBe(SANDBOX_EMAIL);
+      expect(listed.healthStatus).toBe("active");
       const raw = JSON.stringify(response.body);
       expect(raw).not.toContain("fixture-access-token");
       expect(raw).not.toContain("fixture-refresh-token");
-      expect(response.body).not.toHaveProperty("accessTokenEncrypted");
-      expect(response.body).not.toHaveProperty("refreshTokenEncrypted");
+      expect(listed).not.toHaveProperty("accessTokenEncrypted");
+      expect(listed).not.toHaveProperty("refreshTokenEncrypted");
     });
   });
 
-  describe("POST .../mailbox/connect", () => {
+  /**
+   * Mailbox seats (Slice 1.6a Task 7) — supersedes slice 1.6 ruling 6.
+   *
+   * Its own organisation, with its own seat count, because seat limits gate
+   * connect and would otherwise interfere with every unrelated spec above.
+   */
+  describe("mailbox seats", () => {
+    let seatOrg: FixtureOrg;
+    let seatToken: string;
+
+    beforeAll(async () => {
+      seatOrg = await createOrgWithMembers(owner, "seats", ["owner"], "Seats Org Ltd", [
+        { moduleKey: "email_credit_controller", seats: 2 },
+      ]);
+      const member = seatOrg.members[0]!;
+      seatToken = await signToken({ sub: member.authUserId, email: member.email });
+    });
+
+    // Not async: supertest's Test is thenable, and awaiting it here would
+    // return a Response with no `.expect` left to chain.
+    function connect(emailAddress: string): request.Test {
+      return request(app.getHttpServer())
+        .post(`/organisations/${seatOrg.id}/mailboxes/connect`)
+        .set("Authorization", `Bearer ${seatToken}`)
+        .send({ emailAddress });
+    }
+
+    async function addMailbox(address: string, isPrimary = false) {
+      return owner.emailAccount.create({
+        data: {
+          organisationId: seatOrg.id,
+          provider: "microsoft",
+          emailAddress: address,
+          accessTokenEncrypted: encryptToken("fixture-access-token", TEST_TOKEN_ENCRYPTION_KEY),
+          refreshTokenEncrypted: encryptToken("fixture-refresh-token", TEST_TOKEN_ENCRYPTION_KEY),
+          tokenExpiresAt: new Date(Date.now() + 3_600_000),
+          scopes: ["Mail.Send"],
+          healthStatus: "active",
+          isPrimary,
+        },
+      });
+    }
+
+    async function clearMailboxes(): Promise<void> {
+      await owner.emailAccount.deleteMany({ where: { organisationId: seatOrg.id } });
+    }
+
+    it("connecting below the limit is allowed", async () => {
+      await clearMailboxes();
+      await addMailbox("one@seats.example", true);
+      await connect("two@seats.example").expect(200);
+    });
+
+    /** The friendly pre-check. Refusing here means nobody is sent to Microsoft
+     *  to grant Eva access to their mail and THEN told it was pointless. */
+    it("refuses before sending anyone to Microsoft once every seat is taken", async () => {
+      await clearMailboxes();
+      await addMailbox("one@seats.example", true);
+      await addMailbox("two@seats.example");
+      const response = await connect("three@seats.example").expect(400);
+      expect(response.body.message).toContain("seats");
+      expect(graphStub.buildAuthorizeUrl).not.toHaveBeenCalled();
+    });
+
+    /** Reconnecting an address reuses its row and consumes no new seat.
+     *  Refusing it would strand a customer whose only mailbox has an expired
+     *  grant at exactly the moment they are trying to fix it. */
+    it("always allows reconnecting an address that already has a seat, even when full", async () => {
+      await clearMailboxes();
+      await addMailbox("one@seats.example", true);
+      await addMailbox("two@seats.example");
+      await connect("two@seats.example").expect(200);
+      // Case-insensitively, because Microsoft is and the index is.
+      await connect("TWO@seats.example").expect(200);
+    });
+
+    it("the callback refuses the connection and stores nothing when full", async () => {
+      await clearMailboxes();
+      await addMailbox("one@seats.example", true);
+      await addMailbox("two@seats.example");
+      graphStub.getProfile.mockResolvedValueOnce({
+        emailAddress: "three@seats.example",
+        displayName: "Third",
+      });
+      const state = await signOAuthState(TEST_OAUTH_STATE_SECRET, {
+        organisationId: seatOrg.id,
+        userId: seatOrg.members[0]!.id,
+        nonce: randomUUID(),
+      });
+
+      const response = await request(app.getHttpServer())
+        .get(`/integrations/microsoft/callback?code=fake&state=${state}`)
+        .expect(302);
+
+      expect(response.headers.location).toContain("error=seat_limit_reached");
+      const live = await owner.emailAccount.count({
+        where: { organisationId: seatOrg.id, deletedAt: null },
+      });
+      expect(live).toBe(2);
+    });
+
+    /**
+     * THE RACE, and it is the reason the callback locks the module row.
+     *
+     * A COUNT followed by an INSERT is not atomic just because both sit in a
+     * transaction. Two administrators connecting at the same moment each read
+     * `count = seats - 1`, each decide there is room, and both insert — the
+     * organisation ends up over its limit with no error raised anywhere.
+     *
+     * This test FAILS without `SELECT … FOR UPDATE`, and would pass vacuously
+     * if the two callbacks were awaited in sequence — the same class of
+     * mistake as the eight RLS INSERT tests that passed on a not-null
+     * violation. They must be in flight together.
+     */
+    it("two simultaneous connects with ONE seat left: exactly one wins", async () => {
+      await clearMailboxes();
+      await addMailbox("one@seats.example", true);
+
+      graphStub.getProfile
+        .mockResolvedValueOnce({ emailAddress: "racer-a@seats.example", displayName: "A" })
+        .mockResolvedValueOnce({ emailAddress: "racer-b@seats.example", displayName: "B" });
+
+      const mintState = async (): Promise<string> =>
+        signOAuthState(TEST_OAUTH_STATE_SECRET, {
+          organisationId: seatOrg.id,
+          userId: seatOrg.members[0]!.id,
+          nonce: randomUUID(),
+        });
+
+      const [first, second] = await Promise.all([
+        request(app.getHttpServer()).get(
+          `/integrations/microsoft/callback?code=a&state=${await mintState()}`,
+        ),
+        request(app.getHttpServer()).get(
+          `/integrations/microsoft/callback?code=b&state=${await mintState()}`,
+        ),
+      ]);
+
+      const locations = [first.headers.location, second.headers.location];
+      const refused = locations.filter((location) => location?.includes("seat_limit_reached"));
+      const accepted = locations.filter((location) => location?.includes("connected=1"));
+      expect(refused).toHaveLength(1);
+      expect(accepted).toHaveLength(1);
+
+      const live = await owner.emailAccount.count({
+        where: { organisationId: seatOrg.id, deletedAt: null },
+      });
+      expect(live).toBe(2);
+    });
+
+    it("refuses to lower seats below the number of mailboxes in use, and says by how many", async () => {
+      await clearMailboxes();
+      await addMailbox("one@seats.example", true);
+      await addMailbox("two@seats.example");
+
+      const response = await request(app.getHttpServer())
+        .put(`/organisations/${seatOrg.id}/modules/email_credit_controller`)
+        .set("Authorization", `Bearer ${seatToken}`)
+        .send({ enabled: true, seats: 1 })
+        .expect(400);
+      expect(response.body.message).toContain("disconnect 1");
+    });
+
+    it("disconnecting the primary promotes the oldest remaining, and audits it", async () => {
+      await clearMailboxes();
+      const primary = await addMailbox("one@seats.example", true);
+      const successor = await addMailbox("two@seats.example");
+
+      await request(app.getHttpServer())
+        .post(`/organisations/${seatOrg.id}/mailboxes/${primary.id}/disconnect`)
+        .set("Authorization", `Bearer ${seatToken}`)
+        .expect(204);
+
+      const promoted = await owner.emailAccount.findUniqueOrThrow({ where: { id: successor.id } });
+      expect(promoted.isPrimary).toBe(true);
+      await owner.auditLog.findFirstOrThrow({
+        where: {
+          organisationId: seatOrg.id,
+          action: "mailbox.primary_changed",
+          entityId: successor.id,
+        },
+      });
+    });
+
+    it("choosing a different primary moves it, and never leaves two", async () => {
+      await clearMailboxes();
+      const first = await addMailbox("one@seats.example", true);
+      const second = await addMailbox("two@seats.example");
+
+      await request(app.getHttpServer())
+        .put(`/organisations/${seatOrg.id}/mailboxes/${second.id}/primary`)
+        .set("Authorization", `Bearer ${seatToken}`)
+        .expect(200);
+
+      const primaries = await owner.emailAccount.findMany({
+        where: { organisationId: seatOrg.id, deletedAt: null, isPrimary: true },
+      });
+      expect(primaries).toHaveLength(1);
+      expect(primaries[0]!.id).toBe(second.id);
+      expect(
+        (await owner.emailAccount.findUniqueOrThrow({ where: { id: first.id } })).isPrimary,
+      ).toBe(false);
+    });
+  });
+
+  describe("POST .../mailboxes/connect", () => {
     it("403s for a member without mailbox:manage (finance is read-only)", async () => {
       await request(app.getHttpServer())
-        .post(`/organisations/${org.id}/mailbox/connect`)
+        .post(`/organisations/${org.id}/mailboxes/connect`)
         .set("Authorization", `Bearer ${tokenFor("finance")}`)
         .expect(403);
     });
 
     it("404s for a non-member", async () => {
       await request(app.getHttpServer())
-        .post(`/organisations/${otherOrg.id}/mailbox/connect`)
+        .post(`/organisations/${otherOrg.id}/mailboxes/connect`)
         .set("Authorization", `Bearer ${tokenFor("owner")}`)
         .expect(404);
     });
 
     it("200s with an authorize URL whose state binds this org + user (30-min JWT)", async () => {
       const response = await request(app.getHttpServer())
-        .post(`/organisations/${org.id}/mailbox/connect`)
+        .post(`/organisations/${org.id}/mailboxes/connect`)
         .set("Authorization", `Bearer ${tokenFor("owner")}`)
         .expect(200);
       const url = new URL(response.body.authorizeUrl);
@@ -247,9 +456,9 @@ describe("Mailboxes (Slice 1.6)", () => {
    * to offer BOTH readings of a decline, and this endpoint supplies the
    * administrator half â€” the link the customer forwards to their IT contact.
    */
-  describe("GET .../mailbox/admin-consent (F1)", () => {
+  describe("GET .../mailboxes/admin-consent (F1)", () => {
     const adminConsentUrl = (email?: string) =>
-      `/organisations/${org.id}/mailbox/admin-consent${email ? `?email=${encodeURIComponent(email)}` : ""}`;
+      `/organisations/${org.id}/mailboxes/admin-consent${email ? `?email=${encodeURIComponent(email)}` : ""}`;
 
     it("builds a TENANT-SPECIFIC link and names the customer's own organisation", async () => {
       discoveryStub.describeDomain.mockResolvedValueOnce({
@@ -331,16 +540,16 @@ describe("Mailboxes (Slice 1.6)", () => {
 
     it("404s for a non-member (cross-tenant is invisible, BRD 15)", async () => {
       await request(app.getHttpServer())
-        .get(`/organisations/${otherOrg.id}/mailbox/admin-consent`)
+        .get(`/organisations/${otherOrg.id}/mailboxes/admin-consent`)
         .set("Authorization", `Bearer ${tokenFor("owner")}`)
         .expect(404);
     });
   });
 
-  describe("POST .../mailbox/connect â€” login_hint (F5)", () => {
+  describe("POST .../mailboxes/connect â€” login_hint (F5)", () => {
     it("passes the address to Microsoft and records it on the state", async () => {
       const response = await request(app.getHttpServer())
-        .post(`/organisations/${org.id}/mailbox/connect`)
+        .post(`/organisations/${org.id}/mailboxes/connect`)
         .set("Authorization", `Bearer ${tokenFor("owner")}`)
         .send({ emailAddress: "sara@acme.example" })
         .expect(200);
@@ -356,7 +565,7 @@ describe("Mailboxes (Slice 1.6)", () => {
 
     it("rejects a malformed address rather than passing it to Microsoft", async () => {
       await request(app.getHttpServer())
-        .post(`/organisations/${org.id}/mailbox/connect`)
+        .post(`/organisations/${org.id}/mailboxes/connect`)
         .set("Authorization", `Bearer ${tokenFor("owner")}`)
         .send({ emailAddress: "not-an-email" })
         .expect(400);
@@ -364,7 +573,7 @@ describe("Mailboxes (Slice 1.6)", () => {
 
     it("still works with no address at all", async () => {
       await request(app.getHttpServer())
-        .post(`/organisations/${org.id}/mailbox/connect`)
+        .post(`/organisations/${org.id}/mailboxes/connect`)
         .set("Authorization", `Bearer ${tokenFor("owner")}`)
         .expect(200);
     });
@@ -374,7 +583,7 @@ describe("Mailboxes (Slice 1.6)", () => {
      *  customer is dropped on the settings page mid-setup. */
     it("carries the requested flow onto the signed state", async () => {
       const response = await request(app.getHttpServer())
-        .post(`/organisations/${org.id}/mailbox/connect`)
+        .post(`/organisations/${org.id}/mailboxes/connect`)
         .set("Authorization", `Bearer ${tokenFor("owner")}`)
         .send({ emailAddress: "sara@acme.example", flow: "onboarding" })
         .expect(200);
@@ -385,7 +594,7 @@ describe("Mailboxes (Slice 1.6)", () => {
 
     it("rejects a flow outside the known set rather than trusting the caller", async () => {
       await request(app.getHttpServer())
-        .post(`/organisations/${org.id}/mailbox/connect`)
+        .post(`/organisations/${org.id}/mailboxes/connect`)
         .set("Authorization", `Bearer ${tokenFor("owner")}`)
         .send({ flow: "https://evil.example" })
         .expect(400);
@@ -887,7 +1096,7 @@ describe("Mailboxes (Slice 1.6)", () => {
     it("wipes tokens + soft-deletes in one transaction, audited (ruling 8)", async () => {
       const account = await insertConnectedMailbox(owner, org.id);
       await request(app.getHttpServer())
-        .post(`/organisations/${org.id}/mailbox/disconnect`)
+        .post(`/organisations/${org.id}/mailboxes/${account.id}/disconnect`)
         .set("Authorization", `Bearer ${tokenFor("owner")}`)
         .expect(204);
       const after = await owner.emailAccount.findUniqueOrThrow({ where: { id: account.id } });
@@ -900,25 +1109,25 @@ describe("Mailboxes (Slice 1.6)", () => {
       });
     });
 
-    it("404s when nothing is connected", async () => {
-      await owner.emailAccount.updateMany({
-        where: { organisationId: org.id, deletedAt: null },
-        data: { deletedAt: new Date() },
-      });
+    it("404s for a mailbox id that is not connected", async () => {
+      // Slice 1.6a: the route names a mailbox, so "nothing is connected" is no
+      // longer the shape of this failure — an unknown id is.
       await request(app.getHttpServer())
-        .post(`/organisations/${org.id}/mailbox/disconnect`)
+        .post(`/organisations/${org.id}/mailboxes/${randomUUID()}/disconnect`)
         .set("Authorization", `Bearer ${tokenFor("owner")}`)
         .expect(404);
     });
 
     it("403s for finance (read-only), 404s cross-tenant", async () => {
-      await insertConnectedMailbox(owner, org.id);
+      const account = await insertConnectedMailbox(owner, org.id);
       await request(app.getHttpServer())
-        .post(`/organisations/${org.id}/mailbox/disconnect`)
+        .post(`/organisations/${org.id}/mailboxes/${account.id}/disconnect`)
         .set("Authorization", `Bearer ${tokenFor("finance")}`)
         .expect(403);
+      // Another organisation's mailbox is invisible, not forbidden: RLS filters
+      // the row out entirely, so 404 is what the query genuinely returns.
       await request(app.getHttpServer())
-        .post(`/organisations/${otherOrg.id}/mailbox/disconnect`)
+        .post(`/organisations/${otherOrg.id}/mailboxes/${account.id}/disconnect`)
         .set("Authorization", `Bearer ${tokenFor("owner")}`)
         .expect(404);
     });
@@ -928,7 +1137,7 @@ describe("Mailboxes (Slice 1.6)", () => {
     it("sends with the stored token, stamps health, audits", async () => {
       const account = await insertConnectedMailbox(owner, org.id);
       const response = await request(app.getHttpServer())
-        .post(`/organisations/${org.id}/mailbox/test-email`)
+        .post(`/organisations/${org.id}/mailboxes/${account.id}/test-email`)
         .set("Authorization", `Bearer ${tokenFor("owner")}`)
         .expect(200);
       expect(response.body).toEqual({ sent: true, to: SANDBOX_EMAIL });
@@ -950,7 +1159,7 @@ describe("Mailboxes (Slice 1.6)", () => {
         tokenExpiresAt: new Date(Date.now() - 60_000),
       });
       await request(app.getHttpServer())
-        .post(`/organisations/${org.id}/mailbox/test-email`)
+        .post(`/organisations/${org.id}/mailboxes/${account.id}/test-email`)
         .set("Authorization", `Bearer ${tokenFor("owner")}`)
         .expect(200);
       expect(graphStub.refreshTokens).toHaveBeenCalledWith("fixture-refresh-token");
@@ -974,7 +1183,7 @@ describe("Mailboxes (Slice 1.6)", () => {
       });
       graphStub.refreshTokens.mockRejectedValueOnce(new ReauthRequiredError());
       const response = await request(app.getHttpServer())
-        .post(`/organisations/${org.id}/mailbox/test-email`)
+        .post(`/organisations/${org.id}/mailboxes/${account.id}/test-email`)
         .set("Authorization", `Bearer ${tokenFor("owner")}`)
         .expect(400);
       expect(response.body.message).toContain("reconnect");
@@ -1002,7 +1211,7 @@ describe("Mailboxes (Slice 1.6)", () => {
         accessTokenEncrypted: encryptToken("token-under-a-different-key", OTHER_TOKEN_KEY),
       });
       const response = await request(app.getHttpServer())
-        .post(`/organisations/${org.id}/mailbox/test-email`)
+        .post(`/organisations/${org.id}/mailboxes/${account.id}/test-email`)
         .set("Authorization", `Bearer ${tokenFor("owner")}`)
         .expect(400);
       expect(response.body.message).toContain("reconnect");
@@ -1012,10 +1221,10 @@ describe("Mailboxes (Slice 1.6)", () => {
     });
 
     it("Graph failure â†’ 502", async () => {
-      await insertConnectedMailbox(owner, org.id);
+      const account = await insertConnectedMailbox(owner, org.id);
       graphStub.sendMail.mockRejectedValueOnce(new GraphRequestError("nope", 500));
       await request(app.getHttpServer())
-        .post(`/organisations/${org.id}/mailbox/test-email`)
+        .post(`/organisations/${org.id}/mailboxes/${account.id}/test-email`)
         .set("Authorization", `Bearer ${tokenFor("owner")}`)
         .expect(502);
     });
@@ -1034,7 +1243,7 @@ describe("Mailboxes (Slice 1.6)", () => {
       });
       graphStub.sendMail.mockRejectedValueOnce(new GraphRequestError("nope", 500));
       await request(app.getHttpServer())
-        .post(`/organisations/${org.id}/mailbox/test-email`)
+        .post(`/organisations/${org.id}/mailboxes/${account.id}/test-email`)
         .set("Authorization", `Bearer ${tokenFor("owner")}`)
         .expect(502);
       expect(graphStub.refreshTokens).toHaveBeenCalledWith("fixture-refresh-token");
@@ -1048,40 +1257,92 @@ describe("Mailboxes (Slice 1.6)", () => {
       expect(after.tokenExpiresAt!.getTime()).toBeGreaterThan(Date.now());
     });
 
-    it("404s when nothing is connected; 403s for finance", async () => {
-      await owner.emailAccount.updateMany({
-        where: { organisationId: org.id, deletedAt: null },
-        data: { deletedAt: new Date() },
-      });
+    it("404s for an unknown mailbox id; 403s for finance", async () => {
       await request(app.getHttpServer())
-        .post(`/organisations/${org.id}/mailbox/test-email`)
+        .post(`/organisations/${org.id}/mailboxes/${randomUUID()}/test-email`)
         .set("Authorization", `Bearer ${tokenFor("owner")}`)
         .expect(404);
-      await insertConnectedMailbox(owner, org.id);
+      const account = await insertConnectedMailbox(owner, org.id);
       await request(app.getHttpServer())
-        .post(`/organisations/${org.id}/mailbox/test-email`)
+        .post(`/organisations/${org.id}/mailboxes/${account.id}/test-email`)
         .set("Authorization", `Bearer ${tokenFor("finance")}`)
         .expect(403);
     });
 
-    /** The status endpoint is how the UI learns a reconnect is needed
+    /** The list endpoint is how the UI learns a reconnect is needed
      *  (ruling 10) â€” prove the auth_expired stamp actually surfaces. */
-    it("surfaces auth_expired through the status endpoint after a dead grant", async () => {
-      await insertConnectedMailbox(owner, org.id, {
+    it("surfaces auth_expired through the list endpoint after a dead grant", async () => {
+      const account = await insertConnectedMailbox(owner, org.id, {
         tokenExpiresAt: new Date(Date.now() - 60_000),
       });
       graphStub.refreshTokens.mockRejectedValueOnce(new ReauthRequiredError());
       await request(app.getHttpServer())
-        .post(`/organisations/${org.id}/mailbox/test-email`)
+        .post(`/organisations/${org.id}/mailboxes/${account.id}/test-email`)
         .set("Authorization", `Bearer ${tokenFor("owner")}`)
         .expect(400);
       const status = await request(app.getHttpServer())
-        .get(`/organisations/${org.id}/mailbox`)
+        .get(`/organisations/${org.id}/mailboxes`)
         .set("Authorization", `Bearer ${tokenFor("owner")}`)
         .expect(200);
-      expect(status.body.healthStatus).toBe("auth_expired");
-      expect(status.body.lastError).toContain("reconnect");
+      const listed = status.body.mailboxes.find((row: { id: string }) => row.id === account.id);
+      expect(listed.healthStatus).toBe("auth_expired");
+      expect(listed.lastError).toContain("reconnect");
       expect(JSON.stringify(status.body)).not.toContain("fixture-refresh-token");
+    });
+
+    /**
+     * THE defect seats introduce, and it is silent (slice 1.6a Task 7c).
+     *
+     * `markUnhealthy` used to re-find "the" live mailbox rather than taking an
+     * id. With one mailbox that was harmless. With two, a failure on mailbox B
+     * could mark mailbox A dead instead — a healthy mailbox stops sending
+     * while the broken one still reads "Connected", and nothing tells anyone.
+     */
+    it("marks the mailbox that actually failed, and no other", async () => {
+      await owner.emailAccount.updateMany({
+        where: { organisationId: org.id, deletedAt: null },
+        data: { deletedAt: new Date() },
+      });
+      const healthy = await owner.emailAccount.create({
+        data: {
+          organisationId: org.id,
+          provider: "microsoft",
+          emailAddress: `healthy-${randomUUID().slice(0, 8)}@example.com`,
+          accessTokenEncrypted: encryptToken("fixture-access-token", TEST_TOKEN_ENCRYPTION_KEY),
+          refreshTokenEncrypted: encryptToken("fixture-refresh-token", TEST_TOKEN_ENCRYPTION_KEY),
+          tokenExpiresAt: new Date(Date.now() + 3_600_000),
+          scopes: ["Mail.Send"],
+          healthStatus: "active",
+          isPrimary: true,
+        },
+      });
+      const broken = await owner.emailAccount.create({
+        data: {
+          organisationId: org.id,
+          provider: "microsoft",
+          emailAddress: `broken-${randomUUID().slice(0, 8)}@example.com`,
+          accessTokenEncrypted: encryptToken("fixture-access-token", TEST_TOKEN_ENCRYPTION_KEY),
+          refreshTokenEncrypted: encryptToken("fixture-refresh-token", TEST_TOKEN_ENCRYPTION_KEY),
+          // Expired, so the send path refreshes — and the refresh is what fails.
+          tokenExpiresAt: new Date(Date.now() - 60_000),
+          scopes: ["Mail.Send"],
+          healthStatus: "active",
+        },
+      });
+      graphStub.refreshTokens.mockRejectedValueOnce(new ReauthRequiredError());
+
+      await request(app.getHttpServer())
+        .post(`/organisations/${org.id}/mailboxes/${broken.id}/test-email`)
+        .set("Authorization", `Bearer ${tokenFor("owner")}`)
+        .expect(400);
+
+      expect(
+        (await owner.emailAccount.findUniqueOrThrow({ where: { id: broken.id } })).healthStatus,
+      ).toBe("auth_expired");
+      // The one that did nothing wrong must be untouched.
+      const other = await owner.emailAccount.findUniqueOrThrow({ where: { id: healthy.id } });
+      expect(other.healthStatus).toBe("active");
+      expect(other.lastError).toBeNull();
     });
   });
 });

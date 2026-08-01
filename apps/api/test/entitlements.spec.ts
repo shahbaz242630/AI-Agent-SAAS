@@ -32,7 +32,7 @@ import {
 const EMAIL_MODULE_ROUTES = [
   { name: "imports", path: (org: string) => `/organisations/${org}/imports` },
   { name: "reminder sequence", path: (org: string) => `/organisations/${org}/reminder-sequence` },
-  { name: "mailbox", path: (org: string) => `/organisations/${org}/mailbox` },
+  { name: "mailbox", path: (org: string) => `/organisations/${org}/mailboxes` },
 ];
 
 describe("Module entitlements (Slice 1.6a)", () => {
@@ -117,7 +117,7 @@ describe("Module entitlements (Slice 1.6a)", () => {
       await owner.organisationModule.update({ where: { id: module.id }, data: { enabled: false } });
       try {
         await request(app.getHttpServer())
-          .get(`/organisations/${entitled.id}/mailbox`)
+          .get(`/organisations/${entitled.id}/mailboxes`)
           .set("Authorization", `Bearer ${tokenFor(entitled, "owner")}`)
           .expect(402);
       } finally {
@@ -138,7 +138,7 @@ describe("Module entitlements (Slice 1.6a)", () => {
       });
       try {
         await request(app.getHttpServer())
-          .get(`/organisations/${entitled.id}/mailbox`)
+          .get(`/organisations/${entitled.id}/mailboxes`)
           .set("Authorization", `Bearer ${tokenFor(entitled, "owner")}`)
           .expect(402);
       } finally {
@@ -183,14 +183,14 @@ describe("Module entitlements (Slice 1.6a)", () => {
   describe("gate ordering is an information-disclosure decision", () => {
     it("404 beats 402: a non-member never learns what an org has bought", async () => {
       await request(app.getHttpServer())
-        .get(`/organisations/${bare.id}/mailbox`)
+        .get(`/organisations/${bare.id}/mailboxes`)
         .set("Authorization", `Bearer ${tokenFor(stranger, "owner")}`)
         .expect(404);
     });
 
     it("404 beats 402 even when the org IS entitled", async () => {
       await request(app.getHttpServer())
-        .get(`/organisations/${entitled.id}/mailbox`)
+        .get(`/organisations/${entitled.id}/mailboxes`)
         .set("Authorization", `Bearer ${tokenFor(stranger, "owner")}`)
         .expect(404);
     });
@@ -199,7 +199,7 @@ describe("Module entitlements (Slice 1.6a)", () => {
       // sales holds no mailbox:read, and this org holds no module — 403 wins,
       // so the subscription state stays invisible to a junior member.
       await request(app.getHttpServer())
-        .get(`/organisations/${bare.id}/mailbox`)
+        .get(`/organisations/${bare.id}/mailboxes`)
         .set("Authorization", `Bearer ${tokenFor(bare, "sales")}`)
         .expect(403);
     });

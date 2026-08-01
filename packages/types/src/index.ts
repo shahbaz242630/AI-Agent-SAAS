@@ -497,20 +497,39 @@ export type EmailAccountHealthStatus = (typeof EMAIL_ACCOUNT_HEALTH_STATUSES)[nu
  * GET .../mailbox — the sanitized connection status (plan §3). Tokens are
  * NEVER exposed; `connected: false` collapses every other field to null.
  */
-export interface MailboxStatusDto {
-  connected: boolean;
-  provider: EmailAccountProvider | null;
-  emailAddress: string | null;
+/**
+ * ONE connected mailbox (Slice 1.6a — was a single nullable status object).
+ *
+ * An organisation may now hold as many as it has seats for, so every field
+ * that used to be "null when nothing is connected" is simply present: an empty
+ * list means nothing is connected, and each entry describes a real mailbox.
+ */
+export interface MailboxDto {
+  id: string;
+  provider: EmailAccountProvider;
+  emailAddress: string;
   displayName: string | null;
-  healthStatus: EmailAccountHealthStatus | null;
+  healthStatus: EmailAccountHealthStatus;
+  /** The mailbox slice 1.7 sends from. Exactly one per organisation. */
+  isPrimary: boolean;
   /** ISO-8601 UTC timestamp; null until a test email / send attempt runs. */
   lastHealthCheckAt: string | null;
   /** Sanitized, actionable message (e.g. "reconnect the mailbox"); null when healthy. */
   lastError: string | null;
-  /** Connecting user's id; null when not connected. */
+  /** Connecting user's id. */
   connectedBy: string | null;
-  /** ISO-8601 UTC timestamp; null when not connected. */
-  connectedAt: string | null;
+  /** ISO-8601 UTC timestamp. */
+  connectedAt: string;
+}
+
+/** GET .../mailboxes — the list, plus what the organisation may hold. */
+export interface MailboxListDto {
+  mailboxes: MailboxDto[];
+  /** Seats bought for the email credit controller. */
+  seats: number;
+  /** True when `mailboxes.length >= seats` — the UI hides Connect rather than
+   *  letting someone consent at Microsoft for nothing. */
+  seatLimitReached: boolean;
 }
 
 /** POST .../mailbox/connect — the Microsoft authorize URL to redirect the browser to. */

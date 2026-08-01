@@ -62,7 +62,7 @@ async function resolveConnectTarget(
 ): Promise<string> {
   try {
     const response = await apiFetch(
-      `/organisations/${organisationId}/mailbox/connect`,
+      `/organisations/${organisationId}/mailboxes/connect`,
       accessToken,
       {
         method: "POST",
@@ -107,11 +107,37 @@ export async function disconnectMailbox(
   formData: FormData,
 ): Promise<MailboxActionState> {
   const organisationId = String(formData.get("organisationId") ?? "");
+  const mailboxId = String(formData.get("mailboxId") ?? "");
   const accessToken = await getAccessToken();
   if (!accessToken) redirect("/sign-in");
   try {
-    await apiFetch(`/organisations/${organisationId}/mailbox/disconnect`, accessToken, {
-      method: "POST",
+    await apiFetch(
+      `/organisations/${organisationId}/mailboxes/${mailboxId}/disconnect`,
+      accessToken,
+      { method: "POST" },
+    );
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 401) redirect("/sign-in");
+    return {
+      error: error instanceof ApiError ? error.message : "Something went wrong. Please try again.",
+    };
+  }
+  revalidatePath(MAILBOX_PATH);
+  return { success: "Mailbox disconnected." };
+}
+
+/** Which mailbox Eva sends reminders from. */
+export async function setPrimaryMailbox(
+  _prevState: MailboxActionState,
+  formData: FormData,
+): Promise<MailboxActionState> {
+  const organisationId = String(formData.get("organisationId") ?? "");
+  const mailboxId = String(formData.get("mailboxId") ?? "");
+  const accessToken = await getAccessToken();
+  if (!accessToken) redirect("/sign-in");
+  try {
+    await apiFetch(`/organisations/${organisationId}/mailboxes/${mailboxId}/primary`, accessToken, {
+      method: "PUT",
     });
   } catch (error) {
     if (error instanceof ApiError && error.status === 401) redirect("/sign-in");
@@ -120,7 +146,7 @@ export async function disconnectMailbox(
     };
   }
   revalidatePath(MAILBOX_PATH);
-  return { success: "Mailbox disconnected. Reminders can't be sent until you reconnect." };
+  return { success: "Eva will send reminders from that mailbox." };
 }
 
 export async function sendTestEmail(
@@ -128,12 +154,13 @@ export async function sendTestEmail(
   formData: FormData,
 ): Promise<MailboxActionState> {
   const organisationId = String(formData.get("organisationId") ?? "");
+  const mailboxId = String(formData.get("mailboxId") ?? "");
   const accessToken = await getAccessToken();
   if (!accessToken) redirect("/sign-in");
   let to = "";
   try {
     const response = await apiFetch(
-      `/organisations/${organisationId}/mailbox/test-email`,
+      `/organisations/${organisationId}/mailboxes/${mailboxId}/test-email`,
       accessToken,
       { method: "POST" },
     );

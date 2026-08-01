@@ -38,6 +38,11 @@ export const MAILBOX_ERROR_MESSAGES: Record<string, string> = {
   // exists because people cannot tell our permissions from Microsoft's.
   not_authorised:
     "Your permissions changed while you were connecting, so the mailbox wasn't linked. Ask an owner of this Eva organisation to connect it.",
+  // Slice 1.6a. Reachable despite the pre-check on connect, because the
+  // authoritative check runs after the Microsoft round trip — two people
+  // connecting at once, or a seat taken while this one was at Microsoft.
+  seat_limit_reached:
+    "Every mailbox seat is already in use, so that mailbox wasn't connected. Disconnect one, or add a seat, then try again.",
   invalid_address: "That doesn't look like an email address — check it and try again.",
   // Was "did not return an authorisation code", which is our plumbing, not
   // anything the reader can act on.
