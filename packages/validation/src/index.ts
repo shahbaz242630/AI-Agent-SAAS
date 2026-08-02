@@ -1,5 +1,6 @@
 import { z } from "zod";
 import {
+  MAX_CLIENTS_PER_ALLOCATION,
   MODULE_KEYS,
   ORGANISATION_ROLES,
   PERMISSION_KEYS,
@@ -65,6 +66,22 @@ export type CreateCustomerRequest = z.infer<typeof createCustomerRequestSchema>;
 export const updateCustomerRequestSchema = createCustomerRequestSchema.partial();
 
 export type UpdateCustomerRequest = z.infer<typeof updateCustomerRequestSchema>;
+
+/**
+ * PUT /organisations/:id/customers/allocation payload (Slice 1.6b).
+ *
+ * `emailAccountId: null` is a LEGAL, deliberate value meaning "back to the
+ * default mailbox" — the explicit un-file action (ruling 1). It is `nullable`
+ * rather than `optional` on purpose: omitting the key entirely would be
+ * ambiguous between "un-file these" and "I forgot to say", and this endpoint
+ * moves other people's customer relationships around.
+ */
+export const allocateClientsRequestSchema = z.object({
+  customerIds: z.array(z.uuid()).min(1).max(MAX_CLIENTS_PER_ALLOCATION),
+  emailAccountId: z.uuid().nullable(),
+});
+
+export type AllocateClientsRequest = z.infer<typeof allocateClientsRequestSchema>;
 
 /** POST /organisations/:id/customers/:customerId/contacts payload (Slice 1.1). */
 export const createContactRequestSchema = z.object({
@@ -364,6 +381,16 @@ export const mailboxConnectSchema = z
      *  there. A closed enum, never a URL — the API maps it to a path from its
      *  own table, so a caller cannot choose where the browser lands. */
     flow: z.enum(["onboarding", "settings"]).optional(),
+    /**
+     * Replace this mailbox rather than adding another (slice 1.6b, ruling 3).
+     * The new address inherits the old one's clients and its default status,
+     * and the old row is disconnected in the same transaction.
+     *
+     * It is its own action, NOT "disconnect then reconnect": disconnecting
+     * first drops every allocation to the default, so the clients would be
+     * chased from the wrong address in the gap and nobody would be told.
+     */
+    replacesMailboxId: z.uuid().optional(),
   })
   // The whole body is optional: connect worked without one before onboarding
   // existed, and the settings page still calls it that way. Without the default

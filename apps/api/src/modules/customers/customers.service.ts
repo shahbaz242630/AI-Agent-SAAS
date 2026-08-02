@@ -15,6 +15,15 @@ export interface CustomerSummary {
   email: string | null;
   phone: string | null;
   reference: string | null;
+  /**
+   * Which mailbox chases this client (slice 1.6b). Declared explicitly rather
+   * than left to ride along with the row: the clients screen reads it, and an
+   * undeclared field is one refactor away from disappearing silently.
+   *
+   * NULL means "chased from the default" (ruling 1), never "not chased". It is
+   * written through the allocation endpoint, which audits — never here.
+   */
+  emailAccountId: string | null;
   createdAt: Date;
   updatedAt: Date;
 }

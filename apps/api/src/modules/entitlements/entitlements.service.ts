@@ -157,8 +157,24 @@ export class EntitlementsService {
       // read by a customer at the moment they are being told no.
       const connected = used === 1 ? "1 mailbox is" : `${used} mailboxes are`;
       const seatWord = input.seats === 1 ? "seat" : "seats";
+      /**
+       * Name the clients too (slice 1.6b, ALLOCATION-SCOPE trap 6).
+       *
+       * Mailboxes are not the whole cost of this decision. Disconnecting one
+       * moves every client filed under it back to the default (ruling 3), and
+       * somebody lowering a seat count to save money deserves to know that
+       * before they start rather than discover it after. Only mentioned when
+       * there is something to lose.
+       */
+      const filed = await tx.customer.count({
+        where: { deletedAt: null, emailAccountId: { not: null } },
+      });
+      const clientNote =
+        filed > 0
+          ? ` ${filed === 1 ? "1 client is" : `${filed} clients are`} filed under your mailboxes; any whose mailbox is disconnected will be chased from your default mailbox instead.`
+          : "";
       throw new BadRequestException(
-        `${connected} connected; disconnect ${used - input.seats} before lowering to ${input.seats} ${seatWord}`,
+        `${connected} connected; disconnect ${used - input.seats} before lowering to ${input.seats} ${seatWord}.${clientNote}`,
       );
     }
     return input.seats;

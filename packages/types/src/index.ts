@@ -515,8 +515,18 @@ export interface MailboxDto {
   emailAddress: string;
   displayName: string | null;
   healthStatus: EmailAccountHealthStatus;
-  /** The mailbox slice 1.7 sends from. Exactly one per organisation. */
+  /**
+   * The organisation's DEFAULT mailbox — the one that chases any client with no
+   * allocation of its own (slice 1.6b, ruling 1). Exactly one per organisation.
+   *
+   * Renamed in meaning, not in shape: before 1.6b this was "the only mailbox
+   * that sends". Every seat sends now, so UI copy calling this "sends from this
+   * one" is wrong.
+   */
   isPrimary: boolean;
+  /** How many clients are filed under this mailbox (slice 1.6b). Excludes the
+   *  unallocated ones that merely fall back to the default. */
+  allocatedClientCount: number;
   /** ISO-8601 UTC timestamp; null until a test email / send attempt runs. */
   lastHealthCheckAt: string | null;
   /** Sanitized, actionable message (e.g. "reconnect the mailbox"); null when healthy. */
@@ -547,6 +557,84 @@ export interface MailboxTestEmailResultDto {
   sent: true;
   to: string;
 }
+
+// --- Slice 1.6b: client allocation across mailbox seats ---
+
+/**
+ * POST .../mailboxes/:mailboxId/disconnect.
+ *
+ * `clientsMoved` exists because ruling 3 forbids a silent move: when a mailbox
+ * goes, its clients fall back to the default, and the customer is told how many
+ * did. Discovering months later that a book of clients quietly changed the
+ * address they are chased from is the failure this number prevents.
+ */
+export interface MailboxDisconnectResultDto {
+  /** Clients that were FILED under the disconnected mailbox and have been
+   *  un-filed back to the default. */
+  clientsMoved: number;
+  /**
+   * Clients that were never filed anywhere and have ALSO changed address,
+   * because the mailbox disconnected was the default and another was promoted.
+   *
+   * Counted separately, and it is usually the bigger number: ruling 1 sends
+   * every unallocated client from the default, so disconnecting the default
+   * re-routes everyone who was never filed. Reporting only `clientsMoved`
+   * would say "0 clients moved" while several hundred quietly changed the
+   * address they are chased from — exactly the silence ruling 3 forbids.
+   */
+  unfiledClientsMoved: number;
+  /** Where they went — null when the organisation has no mailbox left at all. */
+  movedToEmailAddress: string | null;
+}
+
+/**
+ * One row of the allocation screen (slice 1.6b, ruling 2 — per client, never
+ * per invoice).
+ */
+export interface CustomerAllocationDto {
+  customerId: string;
+  customerName: string;
+  /** NULL means unallocated — this client is chased from the DEFAULT mailbox
+   *  (ruling 1). It is a real, normal state and not a missing value. */
+  emailAccountId: string | null;
+  /**
+   * The address this client would actually be chased from today, resolved now
+   * and NEVER stored — a stamped answer goes stale the moment the default
+   * changes (ALLOCATION-SCOPE trap 1). Null when the organisation has no
+   * healthy mailbox at all, which is the case the UI must warn about loudly.
+   */
+  resolvedEmailAddress: string | null;
+  /** True when `resolvedEmailAddress` came from the default rather than from an
+   *  allocation of this client's own. Lets the screen show "Default (…)"
+   *  distinctly from a deliberate filing. */
+  isFallback: boolean;
+}
+
+/** GET .../customers/allocation — the whole book, with who chases whom. */
+export interface CustomerAllocationListDto {
+  allocations: CustomerAllocationDto[];
+  /** The default mailbox's address, for the "Default (…)" label. Null when the
+   *  organisation has no live mailbox. */
+  defaultEmailAddress: string | null;
+}
+
+/** PUT .../customers/allocation — what actually moved. */
+export interface AllocateClientsResultDto {
+  /** Rows whose allocation genuinely changed. Re-filing a client under the
+   *  mailbox it is already on counts as zero, so the UI never claims work it
+   *  did not do. */
+  moved: number;
+}
+
+/**
+ * The most clients one allocation request may carry.
+ *
+ * Bounded so a single request cannot open an unbounded transaction: the whole
+ * batch commits together (trap 3 — 500 clients must not be 500 commits), and an
+ * unbounded batch would hold row locks across the entire customers table for as
+ * long as it took. 500 is comfortably above any real book handled in one screen.
+ */
+export const MAX_CLIENTS_PER_ALLOCATION = 500;
 
 /** What kind of Microsoft account an address belongs to (onboarding Part A). */
 export const MICROSOFT_ACCOUNT_KINDS = ["work", "personal", "unknown"] as const;

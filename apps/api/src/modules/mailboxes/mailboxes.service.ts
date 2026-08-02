@@ -16,6 +16,7 @@ import type {
   EmailAccountHealthStatus,
   MailboxAdminConsentDto,
   MailboxConnectDto,
+  MailboxDisconnectResultDto,
   MailboxDto,
   MailboxListDto,
   MailboxTestEmailResultDto,
@@ -29,7 +30,7 @@ import { PrismaService } from "../../common/database/prisma.service.js";
 import { UsersService } from "../users/users.service.js";
 import { requirePermission, type TenantTx } from "../../common/permissions/permissions.js";
 import { ModuleNotEntitledException } from "../../common/permissions/module-not-entitled.exception.js";
-import { writeAuditLog } from "../../common/audit/audit-log.js";
+import { writeAuditLog, writeAuditLogs } from "../../common/audit/audit-log.js";
 import {
   decryptToken,
   encryptToken,
@@ -116,6 +117,27 @@ type ConnectedAccount = NonNullable<Awaited<ReturnType<TenantTx["emailAccount"][
 /** The product whose seats a mailbox occupies (slice 1.6a). */
 const MAILBOX_MODULE = "email_credit_controller";
 
+/**
+ * What `resolveSendingMailbox` answered, and HOW (slice 1.6b, Task 6).
+ *
+ * `source` is not decoration: `substituted` means the mailbox a customer chose
+ * is not the one that will send, which is the state ruling 6 requires the
+ * settings screen to warn about loudly. Losing that distinction would make a
+ * dead mailbox invisible — the reminders would keep going out and nobody would
+ * ever reconnect it.
+ */
+export interface SendingMailboxResolution {
+  account: ConnectedAccount;
+  /**
+   * `allocated` — the client's own mailbox.
+   * `default`   — the client was never filed, so the default chases it
+   *               (ruling 1: normal, not a problem).
+   * `substituted` — the intended mailbox is dead or gone and a healthy one is
+   *               standing in (ruling 6: WARN, this needs fixing).
+   */
+  source: "allocated" | "default" | "substituted";
+}
+
 /** Internal signal from inside the callback's write transaction. Not an
  *  HttpException: this route's contract is ALWAYS a redirect, never JSON. */
 class SeatLimitReachedError extends Error {
@@ -130,7 +152,7 @@ class SeatLimitReachedError extends Error {
  *  backfill so it can never look like a downgrade. */
 const DEFAULT_SEATS = 1;
 
-function toMailboxDto(account: ConnectedAccount): MailboxDto {
+function toMailboxDto(account: ConnectedAccount, allocatedClientCount = 0): MailboxDto {
   return {
     id: account.id,
     provider: "microsoft",
@@ -138,6 +160,7 @@ function toMailboxDto(account: ConnectedAccount): MailboxDto {
     displayName: account.displayName,
     healthStatus: account.healthStatus as EmailAccountHealthStatus,
     isPrimary: account.isPrimary,
+    allocatedClientCount,
     lastHealthCheckAt: account.lastHealthCheckAt?.toISOString() ?? null,
     lastError: account.lastError,
     connectedBy: account.connectedBy,
@@ -171,12 +194,126 @@ export class MailboxesService {
         orderBy: [{ isPrimary: "desc" }, { createdAt: "asc" }],
       });
       const seats = await this.seatsFor(tx);
+      /**
+       * How many clients each mailbox actually chases (slice 1.6b). ONE grouped
+       * query rather than one per mailbox — this runs on every settings render,
+       * and the 1.5 PR #36 lesson is that round trips are what hurt at
+       * US↔London latency.
+       *
+       * Unallocated clients are deliberately absent: they fall back to the
+       * default at SEND time (ruling 1) and counting them here would freeze
+       * today's default into a number the customer reads as a filing.
+       */
+      const counts = await tx.customer.groupBy({
+        by: ["emailAccountId"],
+        where: { deletedAt: null, emailAccountId: { not: null } },
+        _count: { _all: true },
+      });
+      const countByMailbox = new Map(
+        counts.map((row) => [row.emailAccountId, row._count._all] as const),
+      );
       return {
-        mailboxes: accounts.map(toMailboxDto),
+        mailboxes: accounts.map((account) =>
+          toMailboxDto(account, countByMailbox.get(account.id) ?? 0),
+        ),
         seats,
         seatLimitReached: accounts.length >= seats,
       };
     });
+  }
+
+  /**
+   * WHICH MAILBOX CHASES THIS CLIENT, right now (slice 1.6b, Task 6).
+   *
+   * The seam slice 1.7 calls, once per reminder, and the ONLY place this
+   * question is ever answered. It takes a `tx` so the sender can resolve inside
+   * its claim transaction; it is a pure read and writes nothing.
+   *
+   * ⚠️ RESOLVED AT SEND TIME, EVERY TIME — never stored (ALLOCATION-SCOPE trap
+   * 1). Stamping the answer onto a client would work perfectly on the day it
+   * was written and go wrong months later, after somebody changed their default
+   * mailbox, with no error and no failing test. That is why this is a function
+   * and not a column.
+   *
+   * The ladder, and ruling 6 is the third rung:
+   *
+   *   the client's own mailbox, if live and healthy
+   *     ↳ else the organisation's DEFAULT, if live and healthy   (ruling 1)
+   *       ↳ else ANY live healthy mailbox, oldest first          (ruling 6)
+   *         ↳ else null — the caller must not send
+   *
+   * Ruling 6 matters more than it looks, and that is why it is here rather than
+   * in the sender. Ruling 1 sends every UNALLOCATED client from the default, so
+   * a dead default does not strand a handful of specially-filed clients — it
+   * strands everyone who was never filed, which is most of them. Sending from
+   * another address belonging to the same business is the smaller harm, and it
+   * is visible and correctable; a silent revenue stall is neither.
+   *
+   * `null` is a real outcome, not an error: an organisation whose every mailbox
+   * is dead must not send from nowhere. What 1.7 does with it is 1.7's
+   * decision; this function's job is to answer honestly.
+   */
+  async resolveSendingMailbox(
+    tx: TenantTx,
+    organisationId: string,
+    customer: { organisationId: string; emailAccountId: string | null },
+  ): Promise<SendingMailboxResolution | null> {
+    /**
+     * ⚠️ The caller must not hand us a customer from a different tenant than
+     * the transaction is scoped to, and this is the ONLY place that can tell.
+     *
+     * RLS hides the other organisation's mailboxes rather than erroring, so
+     * without this guard a mis-scoped customer would silently fall past its own
+     * (invisible) allocation, match THIS organisation's primary, and return it
+     * as a `substituted` mailbox. Org A's debtor would then be chased from org
+     * B's address — the failure migration 0020's own comment calls the worst
+     * this product could have. The composite foreign key cannot catch it: it
+     * constrains what is written, not what a read-only resolver returns.
+     *
+     * Loud, not a null: this can only happen through a caller bug (1.7 batching
+     * per organisation), and a quiet answer would hide it until a customer
+     * noticed. `ensureAccessToken` guards itself the same way.
+     */
+    if (customer.organisationId !== organisationId) {
+      throw new Error("resolveSendingMailbox: customer belongs to a different organisation");
+    }
+    /**
+     * One query, then decide in memory. An organisation holds at most a handful
+     * of mailboxes (it pays per seat), and this runs once per reminder — three
+     * round trips to walk the ladder would cost more than reading all of them.
+     *
+     * Ordered oldest-first so the ruling-6 substitution is DETERMINISTIC: the
+     * same client must not be chased from a different address on each run, or
+     * the debtor sees a conversation scattered across mailboxes.
+     */
+    const live = await tx.emailAccount.findMany({
+      where: { deletedAt: null },
+      orderBy: { createdAt: "asc" },
+    });
+    const healthy = live.filter((account) => account.healthStatus === "active");
+
+    if (customer.emailAccountId) {
+      const allocated = healthy.find((account) => account.id === customer.emailAccountId);
+      if (allocated) return { account: allocated, source: "allocated" };
+    }
+
+    /**
+     * The default. Reached both by a client that was never filed (ruling 1) and
+     * by one whose own mailbox is dead — and in the second case it is already a
+     * substitution, so it is reported as one. The customer needs to know their
+     * filing is not being honoured.
+     */
+    const wasAllocated = customer.emailAccountId !== null;
+    const primary = healthy.find((account) => account.isPrimary);
+    if (primary) {
+      return { account: primary, source: wasAllocated ? "substituted" : "default" };
+    }
+
+    // Ruling 6's last rung: the default itself is dead or gone.
+    const standIn = healthy[0];
+    if (standIn) return { account: standIn, source: "substituted" };
+
+    return null;
   }
 
   /** Seats bought for the mailbox-bearing product. Fails CLOSED: a missing or
@@ -215,15 +352,38 @@ export class MailboxesService {
       const seats = await this.seatsFor(tx);
       const live = await tx.emailAccount.findMany({
         where: { deletedAt: null },
-        select: { emailAddress: true },
+        select: { id: true, emailAddress: true },
       });
+      /**
+       * A replace must name a mailbox that actually exists here. 404 rather
+       * than 403 — under RLS another tenant's mailbox is invisible, so that is
+       * what the query genuinely returns (BRD 15).
+       */
+      if (
+        input.replacesMailboxId !== undefined &&
+        !live.some((account) => account.id === input.replacesMailboxId)
+      ) {
+        throw new NotFoundException("Mailbox not found");
+      }
       const reconnecting =
         input.emailAddress !== undefined &&
         live.some(
           (account) =>
             account.emailAddress.toLowerCase() === input.emailAddress!.trim().toLowerCase(),
         );
-      if (!reconnecting && live.length >= seats) {
+      /**
+       * ⚠️ THE SEAT TRAP (slice 1.6b, plan Task 5). A replace frees the seat it
+       * takes, so the mailbox being replaced must not be counted against the
+       * limit.
+       *
+       * Without this exemption an organisation sitting at its seat limit — the
+       * normal state for anyone who bought exactly what they use — could never
+       * replace an address. They would be told to disconnect one first, which
+       * is the very thing ruling 3 forbids, because disconnecting drops every
+       * allocation to the default in the gap.
+       */
+      const occupied = input.replacesMailboxId ? live.length - 1 : live.length;
+      if (!reconnecting && occupied >= seats) {
         throw new BadRequestException(
           `All ${seats} mailbox ${seats === 1 ? "seat is" : "seats are"} in use. Disconnect one, or add a seat, before connecting another.`,
         );
@@ -238,6 +398,7 @@ export class MailboxesService {
       // nothing else survives the round trip â€” the browser is at Microsoft in
       // between, so we cannot hold this in a cookie we control.
       ...(input.flow ? { flow: input.flow } : {}),
+      ...(input.replacesMailboxId ? { replacesMailboxId: input.replacesMailboxId } : {}),
     });
     return {
       authorizeUrl: this.graph.buildAuthorizeUrl(state, {
@@ -435,6 +596,19 @@ export class MailboxesService {
             FOR UPDATE`;
           const seats = locked[0]?.seats ?? DEFAULT_SEATS;
 
+          /**
+           * The mailbox this connection replaces (ruling 3), re-read INSIDE the
+           * transaction rather than trusted from the state. It is signed, so it
+           * is ours — but a colleague may have disconnected that mailbox during
+           * the Microsoft round trip, and a replace of something that is
+           * already gone must degrade to a plain connect, not fail.
+           */
+          const replacing = claims.replacesMailboxId
+            ? await tx.emailAccount.findFirst({
+                where: { id: claims.replacesMailboxId, deletedAt: null },
+              })
+            : null;
+
           // Reconnecting an address reuses its row and consumes no new seat.
           // Case-insensitive to match the database index, so Sara@ and sara@
           // cannot end up as two rows and two seats.
@@ -445,7 +619,12 @@ export class MailboxesService {
             },
           });
           if (!existing) {
-            const live = await tx.emailAccount.count({ where: { deletedAt: null } });
+            // The replaced mailbox is about to free its seat, so it must not be
+            // counted against the limit — see the trap note in `connect`. This
+            // is the authoritative check; the one in `connect` is only friendly.
+            const live = await tx.emailAccount.count({
+              where: { deletedAt: null, ...(replacing ? { id: { not: replacing.id } } : {}) },
+            });
             if (live >= seats) throw new SeatLimitReachedError();
           }
 
@@ -469,8 +648,109 @@ export class MailboxesService {
             entityId: account.id,
             metadata: { emailAddress: profile.emailAddress, provider: "microsoft" },
           });
+
+          /**
+           * THE REPLACE (ruling 3): the clients follow the address.
+           *
+           * All of it in this one transaction, because a half-done replace is
+           * the worst of both worlds — the old mailbox gone and its clients
+           * still pointing at it, or the new one live with nobody filed under
+           * it. Skipped when the "replacement" turns out to be the same row,
+           * which happens if someone reconnects the very address they meant to
+           * replace; that is a reconnect and needs none of this.
+           */
+          if (replacing && replacing.id !== account.id) {
+            const moving = await tx.customer.findMany({
+              where: { emailAccountId: replacing.id, deletedAt: null },
+              select: { id: true },
+            });
+            await tx.customer.updateMany({
+              where: { emailAccountId: replacing.id },
+              data: { emailAccountId: account.id },
+            });
+            await writeAuditLogs(
+              tx,
+              moving.map((customer) => ({
+                organisationId: claims.organisationId,
+                actorUserId: claims.userId,
+                action: "customer.reassigned",
+                entityType: "customer",
+                entityId: customer.id,
+                metadata: { from: replacing.id, to: account.id, reason: "mailbox_replaced" },
+              })),
+            );
+            /**
+             * The default status follows too. Demote first: a partial unique
+             * index allows only one primary per organisation, so promoting
+             * before demoting is a constraint violation rather than a swap.
+             */
+            if (replacing.isPrimary) {
+              await tx.emailAccount.update({
+                where: { id: replacing.id },
+                data: { isPrimary: false },
+              });
+              await tx.emailAccount.update({
+                where: { id: account.id },
+                data: { isPrimary: true },
+              });
+              /**
+               * Audited as its own event, not left implicit in `mailbox.replaced`.
+               *
+               * The default is the mailbox that chases every UNFILED client
+               * (ruling 1) — usually most of the book — so this is the change
+               * somebody will later need explained. The two other paths that
+               * move it (`setPrimary`, and disconnect's auto-promotion) both
+               * write this row; a replace that did not would leave the question
+               * "when did our unfiled clients start being chased from here?"
+               * answerable only by someone who already knew to look for
+               * `mailbox.replaced` and to infer it.
+               */
+              await writeAuditLog(tx, {
+                organisationId: claims.organisationId,
+                actorUserId: claims.userId,
+                action: "mailbox.primary_changed",
+                entityType: "email_account",
+                entityId: account.id,
+                metadata: { reason: "mailbox_replaced", previousMailboxId: replacing.id },
+              });
+            }
+            // Tokens hard-gone, row kept as history — the same contract as a
+            // plain disconnect (ruling 8).
+            await tx.emailAccount.update({
+              where: { id: replacing.id },
+              data: {
+                accessTokenEncrypted: null,
+                refreshTokenEncrypted: null,
+                tokenExpiresAt: null,
+                deletedAt: new Date(),
+              },
+            });
+            await writeAuditLog(tx, {
+              organisationId: claims.organisationId,
+              actorUserId: claims.userId,
+              action: "mailbox.replaced",
+              entityType: "email_account",
+              entityId: account.id,
+              metadata: {
+                replacedMailboxId: replacing.id,
+                replacedEmailAddress: replacing.emailAddress,
+                clientsCarried: moving.length,
+              },
+            });
+          }
+
           return { accountId: account.id, isNewConnection: existing === null };
         },
+        /**
+         * 30s, not Prisma's 5s default (the 1.5 PR #36 lesson). A replace grew
+         * this transaction from about five statements to thirteen, one of them
+         * a `createMany` of one audit row per carried client. Timing out here
+         * is worse than anywhere else in the codebase: the Microsoft tokens
+         * have already been exchanged and are discarded on rollback, so the
+         * customer must walk the entire consent journey again — including the
+         * administrator-approval detour if their tenant requires one.
+         */
+        { timeout: 30_000 },
       ));
     } catch (error) {
       /**
@@ -639,61 +919,135 @@ export class MailboxesService {
   /** POST .../mailboxes/:mailboxId/disconnect â€” mailbox:manage. Tokens hard-gone
    *  (columns nulled) + soft delete in ONE transaction (ruling 8); the row
    *  stays as audit history and does not block reconnect (partial index). */
-  async disconnect(authUser: AuthUser, organisationId: string, mailboxId: string): Promise<void> {
+  async disconnect(
+    authUser: AuthUser,
+    organisationId: string,
+    mailboxId: string,
+  ): Promise<MailboxDisconnectResultDto> {
     const user = await this.usersService.resolveOrProvision(authUser);
-    await withTenant(this.prisma.db, { organisationId, userId: user.id }, async (tx) => {
-      await requirePermission(tx, organisationId, user.id, "mailbox:manage");
-      const account = await this.findMailbox(tx, mailboxId);
-      await tx.emailAccount.update({
-        where: { id: account.id },
-        data: {
-          accessTokenEncrypted: null,
-          refreshTokenEncrypted: null,
-          tokenExpiresAt: null,
-          deletedAt: new Date(),
-        },
-      });
-      await writeAuditLog(tx, {
-        organisationId,
-        actorUserId: user.id,
-        action: "mailbox.disconnected",
-        entityType: "email_account",
-        entityId: account.id,
-      });
-      /**
-       * Disconnecting the primary auto-promotes the oldest remaining mailbox
-       * rather than refusing. Refusing would force a customer into a two-step
-       * dance — promote another, then delete this one — to do something they
-       * have already clearly decided on. Leaving the organisation with no
-       * primary is worse still: 1.7 would have nothing to send from and the
-       * failure would not surface until a reminder was due.
-       *
-       * Audited, because a mailbox silently becoming the one that speaks to
-       * customers is exactly the kind of change someone will later need to
-       * explain.
-       */
-      if (account.isPrimary) {
-        const successor = await tx.emailAccount.findFirst({
-          where: { deletedAt: null },
-          orderBy: { createdAt: "asc" },
+    const result = await withTenant(
+      this.prisma.db,
+      { organisationId, userId: user.id },
+      async (tx) => {
+        await requirePermission(tx, organisationId, user.id, "mailbox:manage");
+        const account = await this.findMailbox(tx, mailboxId);
+
+        /**
+         * The clients fall back to the default, and we COUNT them (ruling 3).
+         *
+         * Never silent: discovering months later that a book of clients quietly
+         * changed the address they are chased from is the failure this number
+         * exists to prevent. The count is of LIVE clients, because those are the
+         * ones that will actually be chased from somewhere else — soft-deleted
+         * rows are cleared too so nothing dangles, but nobody needs telling
+         * about them.
+         *
+         * Clearing to NULL rather than to the default's id is ruling 1 and trap
+         * 1 together: NULL resolves at send time, an id freezes today's default
+         * into history.
+         */
+        const moving = await tx.customer.findMany({
+          where: { emailAccountId: account.id, deletedAt: null },
+          select: { id: true },
         });
-        if (successor) {
-          await tx.emailAccount.update({
-            where: { id: successor.id },
-            data: { isPrimary: true },
-          });
-          await writeAuditLog(tx, {
+        await tx.customer.updateMany({
+          where: { emailAccountId: account.id },
+          data: { emailAccountId: null },
+        });
+        await writeAuditLogs(
+          tx,
+          moving.map((customer) => ({
             organisationId,
             actorUserId: user.id,
-            action: "mailbox.primary_changed",
-            entityType: "email_account",
-            entityId: successor.id,
-            metadata: { reason: "previous_primary_disconnected" },
+            action: "customer.reassigned",
+            entityType: "customer",
+            entityId: customer.id,
+            metadata: { from: account.id, to: null, reason: "mailbox_disconnected" },
+          })),
+        );
+
+        await tx.emailAccount.update({
+          where: { id: account.id },
+          data: {
+            accessTokenEncrypted: null,
+            refreshTokenEncrypted: null,
+            tokenExpiresAt: null,
+            deletedAt: new Date(),
+          },
+        });
+        await writeAuditLog(tx, {
+          organisationId,
+          actorUserId: user.id,
+          action: "mailbox.disconnected",
+          entityType: "email_account",
+          entityId: account.id,
+        });
+        /**
+         * Disconnecting the primary auto-promotes the oldest remaining mailbox
+         * rather than refusing. Refusing would force a customer into a two-step
+         * dance — promote another, then delete this one — to do something they
+         * have already clearly decided on. Leaving the organisation with no
+         * primary is worse still: 1.7 would have nothing to send from and the
+         * failure would not surface until a reminder was due.
+         *
+         * Audited, because a mailbox silently becoming the one that speaks to
+         * customers is exactly the kind of change someone will later need to
+         * explain.
+         */
+        if (account.isPrimary) {
+          const successor = await tx.emailAccount.findFirst({
+            where: { deletedAt: null },
+            orderBy: { createdAt: "asc" },
           });
+          if (successor) {
+            await tx.emailAccount.update({
+              where: { id: successor.id },
+              data: { isPrimary: true },
+            });
+            await writeAuditLog(tx, {
+              organisationId,
+              actorUserId: user.id,
+              action: "mailbox.primary_changed",
+              entityType: "email_account",
+              entityId: successor.id,
+              metadata: { reason: "previous_primary_disconnected" },
+            });
+          }
         }
-      }
-    });
-    this.logger.info({ organisationId }, "mailbox disconnected");
+
+        /**
+         * Read AFTER the promotion above, so it names where the clients actually
+         * land rather than the mailbox that just went. Null when this was the
+         * last one — an organisation with nothing connected has no default, and
+         * saying so is more honest than naming an address that no longer exists.
+         */
+        const fallback = await tx.emailAccount.findFirst({
+          where: { deletedAt: null, isPrimary: true },
+          select: { emailAddress: true },
+        });
+        /**
+         * The clients nobody ever filed ALSO change address when the mailbox
+         * being disconnected is the default — and by ruling 1 they are usually
+         * the majority, not an afterthought. Counting only the filed ones would
+         * report "0 clients moved" while several hundred quietly started being
+         * chased from somewhere else, which is the precise silence ruling 3
+         * exists to forbid.
+         *
+         * Zero when a non-default mailbox goes: the default those clients fall
+         * back to has not moved, so nothing about them changed.
+         */
+        const unfiledClientsMoved = account.isPrimary
+          ? await tx.customer.count({ where: { deletedAt: null, emailAccountId: null } })
+          : 0;
+        return {
+          unfiledClientsMoved,
+          clientsMoved: moving.length,
+          movedToEmailAddress: fallback?.emailAddress ?? null,
+        };
+      },
+    );
+    this.logger.info({ organisationId, clientsMoved: result.clientsMoved }, "mailbox disconnected");
+    return result;
   }
 
   /**

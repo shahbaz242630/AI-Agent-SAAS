@@ -4,6 +4,7 @@ import { AdminConsentHelp } from "@/components/admin-consent-help";
 import { MailboxCard, type MailboxSummary } from "@/components/mailbox-card";
 import { ApiError, apiFetch } from "@/lib/api";
 import { mailboxErrorMessage, needsConsentHelp } from "@/lib/mailbox-errors";
+import { disconnectMessage } from "@/lib/mailbox-messages";
 import { createClient } from "@/lib/supabase/server";
 import { ConnectMailboxForm, MailboxActions } from "./mailbox-controls";
 
@@ -126,6 +127,22 @@ export default async function MailboxSettingsPage({
       {/* An approving administrator no longer lands here at all — they get the
           public /microsoft-approved receipt, because they usually have no Eva
           account and this route would bounce them to sign-in. */}
+      {/* RULING 3, and it has to outlive the card it describes — see
+          `disconnectMailbox`. Both groups are named because they are different
+          people: the ones filed under that mailbox, and everyone who was never
+          filed and follows the default wherever it goes. */}
+      {params.disconnected === "1" && (
+        <p
+          role="status"
+          className="w-full max-w-2xl rounded-[var(--radius-card)] bg-muted px-6 py-3 text-sm"
+        >
+          {disconnectMessage(
+            Number(params.moved ?? 0),
+            Number(params.unfiled ?? 0),
+            typeof params.to === "string" ? params.to : null,
+          )}
+        </p>
+      )}
       {flashError && (
         <p
           role="alert"
@@ -194,6 +211,15 @@ export default async function MailboxSettingsPage({
                   key={mailbox.id}
                   mailbox={mailbox}
                   showPrimary={status!.mailboxes.length > 1}
+                  // Through to this mailbox's own book, where adding a client
+                  // files it here automatically (slice 1.6b).
+                  clientsHref={`/app/clients?mailbox=${mailbox.id}`}
+                  // Ruling 6: is there anywhere healthy left to stand in for
+                  // this one? Decides between "chasing continues elsewhere"
+                  // and "chasing has stopped" — see the card.
+                  hasHealthyAlternative={status!.mailboxes.some(
+                    (other) => other.id !== mailbox.id && other.healthStatus === "active",
+                  )}
                   actions={
                     <MailboxActions
                       organisationId={organisation.id}
@@ -234,9 +260,14 @@ export default async function MailboxSettingsPage({
         </section>
       ) : null}
 
-      <Link href="/app" className="text-sm font-medium text-muted-foreground hover:underline">
-        Back to your organisations
-      </Link>
+      <div className="flex flex-wrap items-center gap-4">
+        <Link href="/app/clients" className="text-sm font-medium text-primary hover:underline">
+          Your clients
+        </Link>
+        <Link href="/app" className="text-sm font-medium text-muted-foreground hover:underline">
+          Back to your organisations
+        </Link>
+      </div>
     </main>
   );
 }

@@ -48,6 +48,8 @@ export function MailboxActions({
   // page for browser automation (the e2e drives this button), and an inline
   // step states the consequence where the user is looking.
   const [confirming, setConfirming] = useState(false);
+  const [replacing, setReplacing] = useState(false);
+  const filed = mailbox.allocatedClientCount ?? 0;
 
   const hidden = (
     <>
@@ -69,23 +71,74 @@ export function MailboxActions({
           <form action={primaryAction}>
             {hidden}
             <button type="submit" disabled={primaryPending} className={SMALL_BUTTON_CLASS}>
-              {primaryPending ? "Switching…" : "Send reminders from this one"}
+              {primaryPending ? "Switching…" : "Make this the default"}
             </button>
           </form>
         )}
-        {!confirming && (
+        {/* Its own affordance, visually apart from Disconnect (ruling 3).
+            "Disconnect then reconnect" is NOT the same thing: it drops every
+            allocation to the default in the gap and tells nobody. */}
+        {!replacing && !confirming && (
+          <button type="button" onClick={() => setReplacing(true)} className={SMALL_BUTTON_CLASS}>
+            Replace this address
+          </button>
+        )}
+        {!confirming && !replacing && (
           <button type="button" onClick={() => setConfirming(true)} className={SMALL_BUTTON_CLASS}>
             Disconnect
           </button>
         )}
       </div>
 
+      {replacing && (
+        <div className="flex flex-col gap-2 rounded-[var(--radius-card)] bg-muted p-3">
+          <p className="text-sm">
+            {filed > 0
+              ? `Swap ${mailbox.emailAddress} for a different address. Its ${filed === 1 ? "client moves" : `${filed} clients move`} across, and so does its default status.`
+              : `Swap ${mailbox.emailAddress} for a different address. Anything filed under it moves across.`}
+          </p>
+          <ConnectMailboxForm
+            organisationId={organisationId}
+            replacesMailboxId={mailbox.id}
+            label="Sign in to the new mailbox"
+          />
+          <div>
+            <button
+              type="button"
+              onClick={() => setReplacing(false)}
+              className={SMALL_BUTTON_CLASS}
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
       {confirming && (
         <div className="flex flex-col gap-2 rounded-[var(--radius-card)] bg-muted p-3">
           <p className="text-sm">
             Disconnect <span className="font-medium">{mailbox.emailAddress}</span>?
-            {mailbox.isPrimary && " Eva will send from your next oldest mailbox instead."}
+            {/* Gated on there actually BEING another mailbox. `canPromote` was
+                already passed in and ignored here, so a single-mailbox
+                organisation was promised a fallback that does not exist — and
+                the truth is the opposite: everything stops. */}
+            {mailbox.isPrimary &&
+              canPromote &&
+              " Eva will send from your next oldest mailbox instead."}
           </p>
+          {!canPromote && (
+            <p className="text-sm text-danger">
+              This is your only mailbox. Eva will have nowhere to send from and will stop chasing
+              everyone until you connect another.
+            </p>
+          )}
+          {/* Say the cost BEFORE the click, not only after it. Someone
+              disconnecting to tidy up needs to know a book of clients moves. */}
+          {filed > 0 && (
+            <p className="text-sm text-danger">
+              {`${filed === 1 ? "1 client is" : `${filed} clients are`} filed under it and will be chased from your default mailbox instead. Use Replace this address to keep them together.`}
+            </p>
+          )}
           <div className="flex flex-wrap gap-2">
             <form action={disconnectAction}>
               {hidden}
@@ -128,10 +181,14 @@ export function ConnectMailboxForm({
   organisationId,
   defaultAddress,
   label = "Connect Outlook mailbox",
+  replacesMailboxId,
 }: {
   organisationId: string;
   defaultAddress?: string | null;
   label?: string;
+  /** Set by Replace this address (slice 1.6b). Rides the signed OAuth state, so
+   *  the callback can carry the old mailbox's clients across. */
+  replacesMailboxId?: string;
 }) {
   return (
     <form action={connectMailbox} className="flex flex-col gap-3">
@@ -139,6 +196,9 @@ export function ConnectMailboxForm({
       {/* Rides the signed OAuth state so the return from Microsoft lands back
           here rather than in the setup flow. */}
       <input type="hidden" name="flow" value="settings" />
+      {replacesMailboxId && (
+        <input type="hidden" name="replacesMailboxId" value={replacesMailboxId} />
+      )}
       <div className="flex flex-col gap-1">
         <label htmlFor="emailAddress" className="text-sm font-medium">
           Which mailbox?

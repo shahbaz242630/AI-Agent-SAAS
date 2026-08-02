@@ -13,6 +13,7 @@ import { Throttle } from "@nestjs/throttler";
 import type {
   MailboxAdminConsentDto,
   MailboxConnectDto,
+  MailboxDisconnectResultDto,
   MailboxListDto,
   MailboxTestEmailResultDto,
 } from "@eva/types";
@@ -67,13 +68,20 @@ export class MailboxesController {
     return this.mailboxesService.getAdminConsent(authUser, organisationId, email);
   }
 
+  /**
+   * 200 with a body, NOT 204 (changed in slice 1.6b).
+   *
+   * Ruling 3 requires the customer to be told how many clients moved to the
+   * default mailbox, and a 204 has nowhere to say it. The alternative — leaving
+   * the caller to re-read the list and diff it — is how a silent move happens.
+   */
   @Post(":mailboxId/disconnect")
-  @HttpCode(204)
+  @HttpCode(200)
   disconnect(
     @CurrentAuthUser() authUser: AuthUser,
     @Param("organisationId", ParseUUIDPipe) organisationId: string,
     @Param("mailboxId", ParseUUIDPipe) mailboxId: string,
-  ): Promise<void> {
+  ): Promise<MailboxDisconnectResultDto> {
     return this.mailboxesService.disconnect(authUser, organisationId, mailboxId);
   }
 
