@@ -1,5 +1,6 @@
 import { z } from "zod";
 import {
+  MODULE_KEYS,
   ORGANISATION_ROLES,
   PERMISSION_KEYS,
   type HealthResponse,
@@ -370,3 +371,23 @@ export const mailboxConnectSchema = z
   .default({});
 
 export type MailboxConnectInput = z.infer<typeof mailboxConnectSchema>;
+
+/** The `:moduleKey` path parameter. Validated against the same closed list the
+ *  database CHECK enforces, so an unknown product is a 400 rather than a 500
+ *  from a constraint violation. */
+export const moduleKeyParamSchema = z.enum(MODULE_KEYS);
+
+/**
+ * PUT .../modules/:moduleKey body.
+ *
+ * `seats` is optional because enabling and resizing are the same endpoint, and
+ * an enable that omits it must not silently reset a customer's seat count to
+ * the default. Capped: the point of a cap is to be a number a human chose, and
+ * nothing here should be able to write four billion.
+ */
+export const setModuleSchema = z.object({
+  enabled: z.boolean(),
+  seats: z.number().int().min(1).max(1000).optional(),
+});
+
+export type SetModuleInput = z.infer<typeof setModuleSchema>;

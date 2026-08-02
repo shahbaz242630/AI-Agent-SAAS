@@ -5,13 +5,19 @@ import { MailboxCard, type MailboxSummary } from "@/components/mailbox-card";
 import { ApiError, apiFetch } from "@/lib/api";
 import { mailboxErrorMessage, needsConsentHelp } from "@/lib/mailbox-errors";
 import { createClient } from "@/lib/supabase/server";
-import { MailboxControls } from "./mailbox-controls";
+import { ConnectMailboxForm, MailboxActions } from "./mailbox-controls";
 
 // Response shapes mirror the API contracts (apps/api modules/mailboxes).
 interface OrganisationSummary {
   id: string;
   name: string;
   roleKey: string;
+}
+
+interface MailboxList {
+  mailboxes: MailboxSummary[];
+  seats: number;
+  seatLimitReached: boolean;
 }
 
 interface AdminConsent {
@@ -39,16 +45,20 @@ export default async function MailboxSettingsPage({
   ).json()) as OrganisationSummary[];
   const organisation = organisations[0];
 
-  let status: MailboxSummary | null = null;
+  let status: MailboxList | null = null;
   let forbidden = false;
+  let notEntitled = false;
   if (organisation) {
     try {
       status = (await (
-        await apiFetch(`/organisations/${organisation.id}/mailbox`, accessToken)
-      ).json()) as MailboxSummary;
+        await apiFetch(`/organisations/${organisation.id}/mailboxes`, accessToken)
+      ).json()) as MailboxList;
     } catch (error) {
       if (error instanceof ApiError && error.status === 401) redirect("/sign-in");
       if (error instanceof ApiError && error.status === 403) forbidden = true;
+      // 402 is not 403: "your organisation hasn't got this product" needs an
+      // upgrade prompt, not "ask your owner for permission" (slice 1.6a).
+      else if (error instanceof ApiError && error.status === 402) notEntitled = true;
       else throw error;
     }
   }
@@ -70,7 +80,7 @@ export default async function MailboxSettingsPage({
       const query = attemptedAddress ? `?email=${encodeURIComponent(attemptedAddress)}` : "";
       adminConsent = (await (
         await apiFetch(
-          `/organisations/${organisation.id}/mailbox/admin-consent${query}`,
+          `/organisations/${organisation.id}/mailboxes/admin-consent${query}`,
           accessToken,
         )
       ).json()) as AdminConsent;
@@ -145,20 +155,82 @@ export default async function MailboxSettingsPage({
           Your role doesn&apos;t have access to mailbox settings for {organisation.name}. Ask an
           owner or administrator.
         </p>
+      ) : notEntitled ? (
+        <section className="flex w-full max-w-2xl flex-col gap-3 rounded-[var(--radius-card)] bg-muted px-6 py-4">
+          {/*
+            One interpolated string, deliberately — NOT `{organisation.name}`
+            followed by JSX text. Next 16's build drops the space between an
+            expression and text that wraps onto the following line, so the
+            obvious spelling rendered "Malik Test Org Ltddoesn't have…" on
+            staging while the source looked correct, and standalone @swc/core
+            compiled it correctly. `{" "}` does not survive either: Prettier
+            rejoins it on format. Same shape as the "If you arethe
+            administrator" defect of 2026-07-31.
+          */}
+          <p className="text-sm">
+            {`${organisation.name} doesn't have Invoice Chasing, so there's no mailbox to connect yet.`}
+          </p>
+          <div>
+            <Link
+              href="/app/settings/modules"
+              className="rounded-[var(--radius-card)] bg-primary px-4 py-2 text-sm font-medium text-primary-foreground"
+            >
+              See your products
+            </Link>
+          </div>
+        </section>
       ) : status ? (
         <section className="flex w-full max-w-2xl flex-col gap-4 rounded-[var(--radius-card)] bg-muted px-6 py-4">
-          {/* A list of one today; 1.6a's seats turn it into a list of several. */}
-          {status.connected ? (
-            [status].map((mailbox) => <MailboxCard key={mailbox.emailAddress} mailbox={mailbox} />)
-          ) : (
+          {status.mailboxes.length === 0 ? (
             <p className="text-sm text-muted-foreground">No mailbox connected yet.</p>
+          ) : (
+            <>
+              <p className="text-sm text-muted-foreground">
+                {status.mailboxes.length} of {status.seats} {status.seats === 1 ? "seat" : "seats"}{" "}
+                in use
+              </p>
+              {status.mailboxes.map((mailbox) => (
+                <MailboxCard
+                  key={mailbox.id}
+                  mailbox={mailbox}
+                  showPrimary={status!.mailboxes.length > 1}
+                  actions={
+                    <MailboxActions
+                      organisationId={organisation.id}
+                      mailbox={mailbox}
+                      canPromote={status!.mailboxes.length > 1}
+                    />
+                  }
+                />
+              ))}
+            </>
           )}
-          <MailboxControls
-            organisationId={organisation.id}
-            connected={status.connected}
-            reconnectNeeded={status.healthStatus === "auth_expired"}
-            defaultAddress={attemptedAddress}
-          />
+
+          {/* Hidden entirely at the limit rather than shown-and-refused: the
+              seat check the API does here is a pre-check for exactly this
+              reason — nobody should consent at Microsoft for nothing. */}
+          {status.seatLimitReached ? (
+            <p className="text-sm text-muted-foreground">
+              Every seat is in use. Disconnect one, or add a seat on{" "}
+              <Link
+                href="/app/settings/modules"
+                className="font-medium text-primary hover:underline"
+              >
+                your products
+              </Link>
+              , to connect another.
+            </p>
+          ) : (
+            <ConnectMailboxForm
+              organisationId={organisation.id}
+              defaultAddress={attemptedAddress}
+              label={
+                status.mailboxes.length === 0
+                  ? "Connect Outlook mailbox"
+                  : "Connect another mailbox"
+              }
+            />
+          )}
         </section>
       ) : null}
 

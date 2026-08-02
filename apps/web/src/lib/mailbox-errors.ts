@@ -38,6 +38,16 @@ export const MAILBOX_ERROR_MESSAGES: Record<string, string> = {
   // exists because people cannot tell our permissions from Microsoft's.
   not_authorised:
     "Your permissions changed while you were connecting, so the mailbox wasn't linked. Ask an owner of this Eva organisation to connect it.",
+  // Slice 1.6a. Reachable despite the pre-check on connect, because the
+  // authoritative check runs after the Microsoft round trip — two people
+  // connecting at once, or a seat taken while this one was at Microsoft.
+  // The @Public() callback inherits requirePermission's 402. Reachable when a
+  // product is switched off while someone is away at Microsoft — rare, but
+  // "try again" would be advice that can never work.
+  module_not_entitled:
+    "Your organisation doesn't have Invoice Chasing, so the mailbox wasn't connected. Turn it on under Your products, then try again.",
+  seat_limit_reached:
+    "Every mailbox seat is already in use, so that mailbox wasn't connected. Disconnect one, or add a seat, then try again.",
   invalid_address: "That doesn't look like an email address — check it and try again.",
   // Was "did not return an authorisation code", which is our plumbing, not
   // anything the reader can act on.

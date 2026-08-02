@@ -122,6 +122,25 @@ export class OrganisationsService {
           createdBy: user.id,
         },
       });
+      // Slice 1.6a: entitlement fails CLOSED, so a new organisation with no
+      // module rows can do nothing at all — not import an invoice, not connect
+      // a mailbox. Granted in the same transaction as the organisation itself,
+      // because an organisation that exists without its entitlement is a
+      // customer locked out of the product they just signed up for.
+      //
+      // `manual` until billing exists; Paddle webhooks will write
+      // `subscription` over the top later.
+      await tx.organisationModule.create({
+        data: {
+          organisationId,
+          moduleKey: "email_credit_controller",
+          enabled: true,
+          source: "manual",
+          seats: 1,
+          enabledAt: new Date(),
+          createdBy: user.id,
+        },
+      });
       return { id: organisation.id, name: organisation.name, roleKey: ownerRole.key };
     });
   }

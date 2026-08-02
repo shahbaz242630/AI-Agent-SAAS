@@ -178,12 +178,33 @@ export async function createOrgWithMembers(
   prefix: string,
   roleKeys: string[],
   name = `${prefix} Test Org Ltd`,
+  /** Slice 1.6a — override to build a fixture that is deliberately NOT
+   *  entitled, which is how the 402 tests get an organisation to fail against. */
+  modules: { moduleKey: string; enabled?: boolean; seats?: number }[] = [
+    { moduleKey: "email_credit_controller" },
+  ],
 ): Promise<FixtureOrg> {
   const orgId = randomUUID();
   await owner.organisation.create({ data: { id: orgId, name } });
   await owner.organisationSettings.create({
     data: { organisationId: orgId, timezone: "Europe/London", locale: "en-GB" },
   });
+  // Mirrors what OrganisationsService.create does for a real signup. Without
+  // it every fixture org is un-entitled and each of the ~400 api tests that
+  // touches an invoice, import, reminder or mailbox 402s — enforcement fails
+  // closed, and fixtures are not exempt from that.
+  for (const module of modules) {
+    await owner.organisationModule.create({
+      data: {
+        organisationId: orgId,
+        moduleKey: module.moduleKey,
+        enabled: module.enabled ?? true,
+        source: "manual",
+        seats: module.seats ?? 1,
+        enabledAt: new Date(),
+      },
+    });
+  }
 
   const members: FixtureUser[] = [];
   for (const [index, roleKey] of roleKeys.entries()) {

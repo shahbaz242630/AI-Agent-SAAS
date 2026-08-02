@@ -62,7 +62,7 @@ async function resolveConnectTarget(
 ): Promise<string> {
   try {
     const response = await apiFetch(
-      `/organisations/${organisationId}/mailbox/connect`,
+      `/organisations/${organisationId}/mailboxes/connect`,
       accessToken,
       {
         method: "POST",
@@ -102,16 +102,90 @@ export async function connectMailbox(formData: FormData): Promise<void> {
   );
 }
 
+const MODULES_PATH = "/app/settings/modules";
+
+/**
+ * Turn a product on or off, or change how many seats it has (slice 1.6a).
+ *
+ * `seats` is only sent when the form actually carries it, because omitting it
+ * means "leave it alone" on the API side — an enable must never silently reset
+ * a seat count somebody paid for.
+ *
+ * The form submits an `intent`, not a raw `enabled` flag. Both buttons live in
+ * one form alongside the seats input, so "buy a seat" and "turn it on" arrive
+ * looking identical; the intent is what separates them, and it decides both
+ * the message shown here and the verb audited by the API.
+ */
+export async function setModule(
+  _prevState: MailboxActionState,
+  formData: FormData,
+): Promise<MailboxActionState> {
+  const organisationId = String(formData.get("organisationId") ?? "");
+  const moduleKey = String(formData.get("moduleKey") ?? "");
+  const intent = String(formData.get("intent") ?? "");
+  if (intent !== "enable" && intent !== "disable" && intent !== "seats") {
+    return { error: "Something went wrong. Please try again." };
+  }
+  const enabled = intent !== "disable";
+  const rawSeats = String(formData.get("seats") ?? "").trim();
+  const accessToken = await getAccessToken();
+  if (!accessToken) redirect("/sign-in");
+  try {
+    await apiFetch(`/organisations/${organisationId}/modules/${moduleKey}`, accessToken, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ enabled, ...(rawSeats ? { seats: Number(rawSeats) } : {}) }),
+    });
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 401) redirect("/sign-in");
+    // The API's own message names the missing prerequisite, or how many
+    // mailboxes must be disconnected first — both are things only it knows,
+    // and both survive apiFetch now (F4).
+    return {
+      error: error instanceof ApiError ? error.message : "Something went wrong. Please try again.",
+    };
+  }
+  revalidatePath(MODULES_PATH);
+  if (intent === "seats") return { success: "Mailbox seats saved." };
+  return { success: enabled ? "Product turned on." : "Product turned off." };
+}
+
 export async function disconnectMailbox(
   _prevState: MailboxActionState,
   formData: FormData,
 ): Promise<MailboxActionState> {
   const organisationId = String(formData.get("organisationId") ?? "");
+  const mailboxId = String(formData.get("mailboxId") ?? "");
   const accessToken = await getAccessToken();
   if (!accessToken) redirect("/sign-in");
   try {
-    await apiFetch(`/organisations/${organisationId}/mailbox/disconnect`, accessToken, {
-      method: "POST",
+    await apiFetch(
+      `/organisations/${organisationId}/mailboxes/${mailboxId}/disconnect`,
+      accessToken,
+      { method: "POST" },
+    );
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 401) redirect("/sign-in");
+    return {
+      error: error instanceof ApiError ? error.message : "Something went wrong. Please try again.",
+    };
+  }
+  revalidatePath(MAILBOX_PATH);
+  return { success: "Mailbox disconnected." };
+}
+
+/** Which mailbox Eva sends reminders from. */
+export async function setPrimaryMailbox(
+  _prevState: MailboxActionState,
+  formData: FormData,
+): Promise<MailboxActionState> {
+  const organisationId = String(formData.get("organisationId") ?? "");
+  const mailboxId = String(formData.get("mailboxId") ?? "");
+  const accessToken = await getAccessToken();
+  if (!accessToken) redirect("/sign-in");
+  try {
+    await apiFetch(`/organisations/${organisationId}/mailboxes/${mailboxId}/primary`, accessToken, {
+      method: "PUT",
     });
   } catch (error) {
     if (error instanceof ApiError && error.status === 401) redirect("/sign-in");
@@ -120,7 +194,7 @@ export async function disconnectMailbox(
     };
   }
   revalidatePath(MAILBOX_PATH);
-  return { success: "Mailbox disconnected. Reminders can't be sent until you reconnect." };
+  return { success: "Eva will send reminders from that mailbox." };
 }
 
 export async function sendTestEmail(
@@ -128,12 +202,13 @@ export async function sendTestEmail(
   formData: FormData,
 ): Promise<MailboxActionState> {
   const organisationId = String(formData.get("organisationId") ?? "");
+  const mailboxId = String(formData.get("mailboxId") ?? "");
   const accessToken = await getAccessToken();
   if (!accessToken) redirect("/sign-in");
   let to = "";
   try {
     const response = await apiFetch(
-      `/organisations/${organisationId}/mailbox/test-email`,
+      `/organisations/${organisationId}/mailboxes/${mailboxId}/test-email`,
       accessToken,
       { method: "POST" },
     );

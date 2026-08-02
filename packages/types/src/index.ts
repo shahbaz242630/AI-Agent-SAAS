@@ -56,6 +56,10 @@ export const PERMISSION_KEYS = [
   "reminders:write",
   "mailbox:read",
   "mailbox:manage",
+  /** Slice 1.6a. Both are `core`: an organisation with no modules must still be
+   *  able to see what exists and buy one, or it can never become a customer. */
+  "modules:read",
+  "modules:manage",
 ] as const;
 
 export type PermissionKey = (typeof PERMISSION_KEYS)[number];
@@ -68,7 +72,15 @@ export type PermissionKey = (typeof PERMISSION_KEYS)[number];
  */
 export const DEFAULT_ROLE_PERMISSIONS: Record<OrganisationRole, readonly PermissionKey[]> = {
   owner: PERMISSION_KEYS,
-  administrator: PERMISSION_KEYS,
+  /**
+   * Everything EXCEPT `modules:manage` (slice 1.6a). Turning a product on is
+   * the one action here that commits the business to money, and that belongs
+   * to whoever owns the account rather than to anyone they delegate
+   * administration to. Written as a filter rather than a hand-maintained list
+   * so an administrator keeps inheriting every future permission by default,
+   * which is the existing intent.
+   */
+  administrator: PERMISSION_KEYS.filter((key) => key !== "modules:manage"),
   finance: [
     "customers:read",
     "customers:write",
@@ -83,11 +95,108 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<OrganisationRole, readonly Permiss
     "reminders:write",
     // BRD §6 adjacency: finance lives with mailbox connection health day-to-day.
     "mailbox:read",
+    // Which products the organisation holds is not billing detail, and finance
+    // needs it to make sense of a 402 rather than reading it as a fault.
+    "modules:read",
   ],
   sales: ["customers:read", "contacts:read", "invoices:read", "imports:read", "reminders:read"],
   reception: ["customers:read", "contacts:read", "invoices:read", "imports:read", "reminders:read"],
   read_only: ["customers:read", "contacts:read", "invoices:read", "imports:read", "reminders:read"],
 };
+
+// --- Slice 1.6a: module entitlements ---
+
+/** The four products an organisation can hold (BRD entitlement model). */
+export const MODULE_KEYS = [
+  "email_credit_controller",
+  "voice_credit_controller",
+  "lead_follow_up_agent",
+  "ai_receptionist",
+] as const;
+
+export type ModuleKey = (typeof MODULE_KEYS)[number];
+
+/**
+ * Which product owns each permission.
+ *
+ * The `Record<PermissionKey, …>` type IS the exhaustiveness guarantee: adding a
+ * permission key without assigning it a module fails the build. There is no
+ * rule for anyone to remember and nothing to rot — which matters, because the
+ * failure mode of a forgotten mapping is a permission silently escaping
+ * enforcement forever.
+ *
+ * **`core` is not a loophole, it is a requirement.** An organisation with zero
+ * modules must still reach organisation, member and billing management, or it
+ * can never buy anything — the lockout trap. Customers and contacts are shared
+ * by all four products, so they are core too.
+ */
+export const PERMISSION_MODULE: Record<PermissionKey, ModuleKey | "core"> = {
+  "customers:read": "core",
+  "customers:write": "core",
+  "contacts:read": "core",
+  "contacts:write": "core",
+  "permissions:read": "core",
+  "permissions:manage": "core",
+  "modules:read": "core",
+  "modules:manage": "core",
+  "invoices:read": "email_credit_controller",
+  "invoices:write": "email_credit_controller",
+  "imports:read": "email_credit_controller",
+  "imports:write": "email_credit_controller",
+  "reminders:read": "email_credit_controller",
+  "reminders:write": "email_credit_controller",
+  "mailbox:read": "email_credit_controller",
+  "mailbox:manage": "email_credit_controller",
+};
+
+/**
+ * What each product needs underneath it (BRD): lead follow-up and the
+ * receptionist need the voice platform; voice credit control needs the email
+ * credit controller's data model.
+ *
+ * Validated when ENABLING, never re-derived per request — a stored invalid
+ * combination is a bug to prevent at the write, not to pay for on every check.
+ */
+export const MODULE_DEPENDENCIES: Record<ModuleKey, readonly ModuleKey[]> = {
+  email_credit_controller: [],
+  voice_credit_controller: ["email_credit_controller"],
+  lead_follow_up_agent: ["voice_credit_controller"],
+  ai_receptionist: ["voice_credit_controller"],
+};
+
+/** How a module came to be enabled. `subscription` is written by Paddle
+ *  webhooks later; the table stays authoritative for ENFORCEMENT and Paddle
+ *  for BILLING, because deriving entitlement live from Paddle would let a
+ *  Paddle outage disable every customer at once. */
+export const MODULE_SOURCES = ["subscription", "manual", "trial"] as const;
+
+export type ModuleSource = (typeof MODULE_SOURCES)[number];
+
+/** GET /organisations/:id/modules — one entry per product, always all four,
+ *  so the UI can show what is available to buy as well as what is held. */
+export interface ModuleStatusDto {
+  moduleKey: ModuleKey;
+  enabled: boolean;
+  source: ModuleSource | null;
+  /** Units paid for. Meaningless while `enabled` is false. */
+  seats: number;
+  /** Units in use — connected mailboxes for the email credit controller.
+   *  Null for products with nothing countable yet. */
+  seatsUsed: number | null;
+  enabledAt: string | null;
+  disabledAt: string | null;
+  /** Products this one needs first, and which are not currently enabled. */
+  missingDependencies: readonly ModuleKey[];
+}
+
+/** The machine-readable body of a 402, so the web app can show an upgrade
+ *  prompt instead of a dead end. */
+export interface ModuleNotEntitledBody {
+  statusCode: 402;
+  code: "module_not_entitled";
+  module: ModuleKey;
+  message: string;
+}
 
 // --- Slice 1.2: invoice records ---
 
@@ -393,28 +502,47 @@ export type EmailAccountHealthStatus = (typeof EMAIL_ACCOUNT_HEALTH_STATUSES)[nu
  * GET .../mailbox — the sanitized connection status (plan §3). Tokens are
  * NEVER exposed; `connected: false` collapses every other field to null.
  */
-export interface MailboxStatusDto {
-  connected: boolean;
-  provider: EmailAccountProvider | null;
-  emailAddress: string | null;
+/**
+ * ONE connected mailbox (Slice 1.6a — was a single nullable status object).
+ *
+ * An organisation may now hold as many as it has seats for, so every field
+ * that used to be "null when nothing is connected" is simply present: an empty
+ * list means nothing is connected, and each entry describes a real mailbox.
+ */
+export interface MailboxDto {
+  id: string;
+  provider: EmailAccountProvider;
+  emailAddress: string;
   displayName: string | null;
-  healthStatus: EmailAccountHealthStatus | null;
+  healthStatus: EmailAccountHealthStatus;
+  /** The mailbox slice 1.7 sends from. Exactly one per organisation. */
+  isPrimary: boolean;
   /** ISO-8601 UTC timestamp; null until a test email / send attempt runs. */
   lastHealthCheckAt: string | null;
   /** Sanitized, actionable message (e.g. "reconnect the mailbox"); null when healthy. */
   lastError: string | null;
-  /** Connecting user's id; null when not connected. */
+  /** Connecting user's id. */
   connectedBy: string | null;
-  /** ISO-8601 UTC timestamp; null when not connected. */
-  connectedAt: string | null;
+  /** ISO-8601 UTC timestamp. */
+  connectedAt: string;
 }
 
-/** POST .../mailbox/connect — the Microsoft authorize URL to redirect the browser to. */
+/** GET .../mailboxes — the list, plus what the organisation may hold. */
+export interface MailboxListDto {
+  mailboxes: MailboxDto[];
+  /** Seats bought for the email credit controller. */
+  seats: number;
+  /** True when `mailboxes.length >= seats` — the UI hides Connect rather than
+   *  letting someone consent at Microsoft for nothing. */
+  seatLimitReached: boolean;
+}
+
+/** POST .../mailboxes/connect — the Microsoft authorize URL to redirect the browser to. */
 export interface MailboxConnectDto {
   authorizeUrl: string;
 }
 
-/** POST .../mailbox/test-email — self-addressed send (ruling 7). */
+/** POST .../mailboxes/:mailboxId/test-email — self-addressed send (ruling 7). */
 export interface MailboxTestEmailResultDto {
   sent: true;
   to: string;
@@ -426,7 +554,7 @@ export const MICROSOFT_ACCOUNT_KINDS = ["work", "personal", "unknown"] as const;
 export type MicrosoftAccountKind = (typeof MICROSOFT_ACCOUNT_KINDS)[number];
 
 /**
- * GET .../mailbox/admin-consent — what to show someone whose connection was
+ * GET .../mailboxes/admin-consent — what to show someone whose connection was
  * declined (defect F1).
  *
  * Microsoft reports "your administrator must approve this" and "you pressed

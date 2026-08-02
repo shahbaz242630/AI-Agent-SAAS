@@ -8,6 +8,7 @@ import {
   type ExceptionFilter,
 } from "@nestjs/common";
 import type { Request, Response } from "express";
+import { StructuredHttpException } from "../errors/structured-http.exception.js";
 import { stripCredentialQuery } from "../logging/log-redaction.js";
 import { ERROR_REPORTER, type ErrorReporter } from "../monitoring/error-reporter.js";
 
@@ -60,6 +61,18 @@ export class GlobalExceptionFilter implements ExceptionFilter {
       });
     }
 
-    response.status(status).json({ statusCode: status, message });
+    // A StructuredHttpException's body is deliberate — a machine-readable code
+    // the client branches on, not prose. Flattening it here would be the same
+    // defect as F4 (slice 1.6), where the API's real answer was discarded and
+    // the customer read "please try again" instead. Opt-in, so everything else
+    // keeps the flattening that stops internals leaking. `statusCode` is
+    // stamped last so a body can never disagree with the status actually sent.
+    response
+      .status(status)
+      .json(
+        exception instanceof StructuredHttpException
+          ? { ...(exception.getResponse() as Record<string, unknown>), statusCode: status }
+          : { statusCode: status, message },
+      );
   }
 }

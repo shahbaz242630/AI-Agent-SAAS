@@ -558,6 +558,78 @@ describe("Reminders (Slice 1.5)", () => {
       backfillFixture = await createActiveInvoice(reconcileOrg.id, { dueInDays: 20 });
     });
 
+    /**
+     * Slice 1.6a Task 5 — the real teeth of BRD §3.4.
+     *
+     * `requirePermission` only guards someone clicking in a browser. It does
+     * nothing about this sweep, which enumerates organisations through
+     * `list_active_organisations()` and schedules reminders for each. Before
+     * migration 0018 a customer could switch Invoice Chasing off and Eva would
+     * carry on quietly scheduling chases against their customers — a disabled
+     * module that hides a button but keeps acting is worse than no switch at
+     * all, because the customer believes they have stopped it.
+     *
+     * Asserted at the enumeration rather than through the sweep's counters,
+     * because that is the property: an un-entitled organisation must not even
+     * be handed to the loop.
+     */
+    describe("a disabled module stops the sweep (Slice 1.6a)", () => {
+      async function setEmailModule(enabled: boolean): Promise<void> {
+        await owner.organisationModule.updateMany({
+          where: { organisationId: reconcileOrg.id, moduleKey: "email_credit_controller" },
+          data: { enabled },
+        });
+      }
+
+      async function sweptOrganisations(): Promise<string[]> {
+        const rows = await owner.$queryRaw<{ list_active_organisations: string }[]>`
+          SELECT * FROM list_active_organisations()`;
+        return rows.map((row) => row.list_active_organisations);
+      }
+
+      it("enumerates the organisation while its module is enabled", async () => {
+        await setEmailModule(true);
+        expect(await sweptOrganisations()).toContain(reconcileOrg.id);
+      });
+
+      it("skips it once the module is disabled, and resumes when re-enabled", async () => {
+        await setEmailModule(false);
+        try {
+          expect(await sweptOrganisations()).not.toContain(reconcileOrg.id);
+        } finally {
+          await setEmailModule(true);
+        }
+        // Switching a product back on must resume it — a one-way door would be
+        // a worse bug than never stopping.
+        expect(await sweptOrganisations()).toContain(reconcileOrg.id);
+      });
+
+      it("a soft-deleted module row also stops the sweep — fail closed", async () => {
+        await owner.organisationModule.updateMany({
+          where: { organisationId: reconcileOrg.id, moduleKey: "email_credit_controller" },
+          data: { deletedAt: new Date() },
+        });
+        try {
+          expect(await sweptOrganisations()).not.toContain(reconcileOrg.id);
+        } finally {
+          await owner.organisationModule.updateMany({
+            where: { organisationId: reconcileOrg.id, moduleKey: "email_credit_controller" },
+            data: { deletedAt: null },
+          });
+        }
+      });
+
+      /** The function is the only controlled cross-tenant path in the schema
+       *  (SECURITY DEFINER, migration 0010). Replacing its body must not have
+       *  cost eva_app the grant it runs on — `CREATE OR REPLACE` preserves the
+       *  ACL, but the sweep dies at runtime if that is ever wrong. */
+      it("eva_app can still execute the replaced function", async () => {
+        const rows = await owner.$queryRaw<{ has: boolean }[]>`
+          SELECT has_function_privilege('eva_app', 'list_active_organisations()', 'EXECUTE') AS has`;
+        expect(rows[0]?.has).toBe(true);
+      });
+    });
+
     it("missing secret → 401", async () => {
       await reconcile().expect(401);
     });

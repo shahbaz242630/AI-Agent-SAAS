@@ -16,7 +16,8 @@ import type {
   EmailAccountHealthStatus,
   MailboxAdminConsentDto,
   MailboxConnectDto,
-  MailboxStatusDto,
+  MailboxDto,
+  MailboxListDto,
   MailboxTestEmailResultDto,
 } from "@eva/types";
 import type { MailboxConnectInput, MicrosoftCallbackQuery } from "@eva/validation";
@@ -27,6 +28,7 @@ import { PrismaService } from "../../common/database/prisma.service.js";
 // eslint-disable-next-line @typescript-eslint/consistent-type-imports
 import { UsersService } from "../users/users.service.js";
 import { requirePermission, type TenantTx } from "../../common/permissions/permissions.js";
+import { ModuleNotEntitledException } from "../../common/permissions/module-not-entitled.exception.js";
 import { writeAuditLog } from "../../common/audit/audit-log.js";
 import {
   decryptToken,
@@ -111,18 +113,37 @@ const TEST_EMAIL = {
  *  wrestling Prisma's GetPayload generics under exactOptionalPropertyTypes). */
 type ConnectedAccount = NonNullable<Awaited<ReturnType<TenantTx["emailAccount"]["findFirst"]>>>;
 
-/** GET .../mailbox payload when nothing is connected (plan Â§3). */
-const EMPTY_STATUS: MailboxStatusDto = {
-  connected: false,
-  provider: null,
-  emailAddress: null,
-  displayName: null,
-  healthStatus: null,
-  lastHealthCheckAt: null,
-  lastError: null,
-  connectedBy: null,
-  connectedAt: null,
-};
+/** The product whose seats a mailbox occupies (slice 1.6a). */
+const MAILBOX_MODULE = "email_credit_controller";
+
+/** Internal signal from inside the callback's write transaction. Not an
+ *  HttpException: this route's contract is ALWAYS a redirect, never JSON. */
+class SeatLimitReachedError extends Error {
+  constructor() {
+    super("seat limit reached");
+    this.name = "SeatLimitReachedError";
+  }
+}
+
+/** Seats an organisation gets when no module row can be read. One, not
+ *  unlimited: this is the fail-closed direction, and it matches the migration
+ *  backfill so it can never look like a downgrade. */
+const DEFAULT_SEATS = 1;
+
+function toMailboxDto(account: ConnectedAccount): MailboxDto {
+  return {
+    id: account.id,
+    provider: "microsoft",
+    emailAddress: account.emailAddress,
+    displayName: account.displayName,
+    healthStatus: account.healthStatus as EmailAccountHealthStatus,
+    isPrimary: account.isPrimary,
+    lastHealthCheckAt: account.lastHealthCheckAt?.toISOString() ?? null,
+    lastError: account.lastError,
+    connectedBy: account.connectedBy,
+    connectedAt: account.createdAt.toISOString(),
+  };
+}
 
 @Injectable()
 export class MailboxesService {
@@ -137,29 +158,37 @@ export class MailboxesService {
     this.logger.setContext(MailboxesService.name);
   }
 
-  /** GET .../mailbox â€” mailbox:read. Sanitized status; tokens NEVER leave
-   *  the database (plan Â§8 risk 1). Reads are not audited. */
-  async getMailboxStatus(authUser: AuthUser, organisationId: string): Promise<MailboxStatusDto> {
+  /** GET .../mailboxes â€” mailbox:read. Sanitized; tokens NEVER leave the
+   *  database (plan Â§8 risk 1). Reads are not audited. */
+  async listMailboxes(authUser: AuthUser, organisationId: string): Promise<MailboxListDto> {
     const user = await this.usersService.resolveOrProvision(authUser);
     return withTenant(this.prisma.db, { organisationId, userId: user.id }, async (tx) => {
       await requirePermission(tx, organisationId, user.id, "mailbox:read");
-      const account = await tx.emailAccount.findFirst({ where: { deletedAt: null } });
-      if (!account) return EMPTY_STATUS;
+      const accounts = await tx.emailAccount.findMany({
+        where: { deletedAt: null },
+        // Primary first, then oldest — a stable order so the list does not
+        // reshuffle under the customer between renders.
+        orderBy: [{ isPrimary: "desc" }, { createdAt: "asc" }],
+      });
+      const seats = await this.seatsFor(tx);
       return {
-        connected: true,
-        provider: "microsoft",
-        emailAddress: account.emailAddress,
-        displayName: account.displayName,
-        healthStatus: account.healthStatus as EmailAccountHealthStatus,
-        lastHealthCheckAt: account.lastHealthCheckAt?.toISOString() ?? null,
-        lastError: account.lastError,
-        connectedBy: account.connectedBy,
-        connectedAt: account.createdAt.toISOString(),
+        mailboxes: accounts.map(toMailboxDto),
+        seats,
+        seatLimitReached: accounts.length >= seats,
       };
     });
   }
 
-  /** POST .../mailbox/connect â€” mailbox:manage. Mints the 30-minute state
+  /** Seats bought for the mailbox-bearing product. Fails CLOSED: a missing or
+   *  disabled module row reads as the default rather than as unlimited. */
+  private async seatsFor(tx: TenantTx): Promise<number> {
+    const module = await tx.organisationModule.findFirst({
+      where: { moduleKey: MAILBOX_MODULE, deletedAt: null },
+    });
+    return module?.seats ?? DEFAULT_SEATS;
+  }
+
+  /** POST .../mailboxes/connect â€” mailbox:manage. Mints the 30-minute state
    *  JWT (ruling 4) and returns the Microsoft authorize URL; the web app
    *  redirects the browser there. The optional address becomes Microsoft's
    *  `login_hint` (F5) and is carried on the state so a declined callback can
@@ -172,6 +201,33 @@ export class MailboxesService {
     const user = await this.usersService.resolveOrProvision(authUser);
     await withTenant(this.prisma.db, { organisationId, userId: user.id }, async (tx) => {
       await requirePermission(tx, organisationId, user.id, "mailbox:manage");
+      /**
+       * A FRIENDLY pre-check, not the authoritative one — that lives in the
+       * callback, inside the write transaction, because this reads and the
+       * write happens a Microsoft round trip later.
+       *
+       * It exists so nobody is sent off to grant Eva access to their mail and
+       * then told it was pointless. Reconnecting an address that already has a
+       * row is always allowed: it reuses that row and consumes no new seat,
+       * and refusing it would strand a customer whose only mailbox has an
+       * expired grant at exactly the moment they are trying to fix it.
+       */
+      const seats = await this.seatsFor(tx);
+      const live = await tx.emailAccount.findMany({
+        where: { deletedAt: null },
+        select: { emailAddress: true },
+      });
+      const reconnecting =
+        input.emailAddress !== undefined &&
+        live.some(
+          (account) =>
+            account.emailAddress.toLowerCase() === input.emailAddress!.trim().toLowerCase(),
+        );
+      if (!reconnecting && live.length >= seats) {
+        throw new BadRequestException(
+          `All ${seats} mailbox ${seats === 1 ? "seat is" : "seats are"} in use. Disconnect one, or add a seat, before connecting another.`,
+        );
+      }
     });
     const state = await signOAuthState(this.env.OAUTH_STATE_SECRET, {
       organisationId,
@@ -191,7 +247,7 @@ export class MailboxesService {
   }
 
   /**
-   * GET .../mailbox/admin-consent â€” mailbox:manage. The administrator half of
+   * GET .../mailboxes/admin-consent â€” mailbox:manage. The administrator half of
    * the declined-consent screen (defect F1).
    *
    * The state carried into the approval link lives for SEVEN DAYS, not ten
@@ -296,6 +352,19 @@ export class MailboxesService {
         },
       );
     } catch (error) {
+      /**
+       * This @Public() route calls requirePermission internally, so as of
+       * slice 1.6a it inherits the 402 — and its contract is ALWAYS a redirect,
+       * never JSON. Falling through to `connect_failed` would have been a
+       * redirect too, so nothing would have crashed; it would just have told
+       * someone whose organisation switched Invoice Chasing off mid-flow to
+       * "try again", which can never work. The same shape of wrong advice as
+       * defect F3, so it gets its own code.
+       */
+      if (error instanceof ModuleNotEntitledException) {
+        this.logger.info("mailbox callback rejected â€” organisation is not entitled");
+        return `${base}?error=module_not_entitled`;
+      }
       if (error instanceof ForbiddenException || error instanceof NotFoundException) {
         this.logger.info("mailbox callback rejected â€” initiator no longer authorised");
         return `${base}?error=not_authorised`;
@@ -346,12 +415,51 @@ export class MailboxesService {
         this.prisma.db,
         { organisationId: claims.organisationId, userId: claims.userId },
         async (tx) => {
-          // One live connection per org (ruling 6): replace in place.
-          const existing = await tx.emailAccount.findFirst({ where: { deletedAt: null } });
+          /**
+           * THE SEAT CHECK, and it must serialise (slice 1.6a).
+           *
+           * A COUNT followed by an INSERT is not atomic just because both sit
+           * in a transaction. Two administrators connecting at the same moment
+           * each read `count = seats - 1`, each decide there is room, and both
+           * insert — the organisation ends up over its limit with no error
+           * raised anywhere and nobody ever finds out.
+           *
+           * `FOR UPDATE` on the module row is what makes the pair atomic: the
+           * second transaction blocks until the first commits, then counts
+           * again and sees the truth. It locks per organisation, so unrelated
+           * customers never queue behind each other.
+           */
+          const locked = await tx.$queryRaw<{ seats: number }[]>`
+            SELECT seats FROM organisation_modules
+            WHERE module_key = ${MAILBOX_MODULE} AND deleted_at IS NULL
+            FOR UPDATE`;
+          const seats = locked[0]?.seats ?? DEFAULT_SEATS;
+
+          // Reconnecting an address reuses its row and consumes no new seat.
+          // Case-insensitive to match the database index, so Sara@ and sara@
+          // cannot end up as two rows and two seats.
+          const existing = await tx.emailAccount.findFirst({
+            where: {
+              deletedAt: null,
+              emailAddress: { equals: profile.emailAddress, mode: "insensitive" },
+            },
+          });
+          if (!existing) {
+            const live = await tx.emailAccount.count({ where: { deletedAt: null } });
+            if (live >= seats) throw new SeatLimitReachedError();
+          }
+
           const account = existing
             ? await tx.emailAccount.update({ where: { id: existing.id }, data })
             : await tx.emailAccount.create({
-                data: { ...data, organisationId: claims.organisationId, createdBy: claims.userId },
+                data: {
+                  ...data,
+                  organisationId: claims.organisationId,
+                  createdBy: claims.userId,
+                  // The first mailbox an organisation connects becomes the one
+                  // 1.7 sends from; later ones are added alongside it.
+                  isPrimary: (await tx.emailAccount.count({ where: { deletedAt: null } })) === 0,
+                },
               });
           await writeAuditLog(tx, {
             organisationId: claims.organisationId,
@@ -365,6 +473,17 @@ export class MailboxesService {
         },
       ));
     } catch (error) {
+      /**
+       * Over the seat limit. This runs AFTER the token exchange, because the
+       * standing 1.6 ruling forbids a network call inside a transaction — so
+       * the rejection discards tokens Microsoft has already issued. They are
+       * never stored and never logged, and the grant expires on its own; the
+       * connect-time pre-check exists precisely to make this rare.
+       */
+      if (error instanceof SeatLimitReachedError) {
+        this.logger.info("mailbox connection refused â€” seat limit reached");
+        return `${base}?error=seat_limit_reached`;
+      }
       // A DB outage, or the org being deleted between consent and write.
       // (Revoked membership is caught by the authorisation re-check above, not
       // here â€” RLS alone would let that write through.) Logged with the cause,
@@ -517,15 +636,14 @@ export class MailboxesService {
     }
   }
 
-  /** POST .../mailbox/disconnect â€” mailbox:manage. Tokens hard-gone
+  /** POST .../mailboxes/:mailboxId/disconnect â€” mailbox:manage. Tokens hard-gone
    *  (columns nulled) + soft delete in ONE transaction (ruling 8); the row
    *  stays as audit history and does not block reconnect (partial index). */
-  async disconnect(authUser: AuthUser, organisationId: string): Promise<void> {
+  async disconnect(authUser: AuthUser, organisationId: string, mailboxId: string): Promise<void> {
     const user = await this.usersService.resolveOrProvision(authUser);
     await withTenant(this.prisma.db, { organisationId, userId: user.id }, async (tx) => {
       await requirePermission(tx, organisationId, user.id, "mailbox:manage");
-      const account = await tx.emailAccount.findFirst({ where: { deletedAt: null } });
-      if (!account) throw new NotFoundException("No connected mailbox");
+      const account = await this.findMailbox(tx, mailboxId);
       await tx.emailAccount.update({
         where: { id: account.id },
         data: {
@@ -542,12 +660,93 @@ export class MailboxesService {
         entityType: "email_account",
         entityId: account.id,
       });
+      /**
+       * Disconnecting the primary auto-promotes the oldest remaining mailbox
+       * rather than refusing. Refusing would force a customer into a two-step
+       * dance — promote another, then delete this one — to do something they
+       * have already clearly decided on. Leaving the organisation with no
+       * primary is worse still: 1.7 would have nothing to send from and the
+       * failure would not surface until a reminder was due.
+       *
+       * Audited, because a mailbox silently becoming the one that speaks to
+       * customers is exactly the kind of change someone will later need to
+       * explain.
+       */
+      if (account.isPrimary) {
+        const successor = await tx.emailAccount.findFirst({
+          where: { deletedAt: null },
+          orderBy: { createdAt: "asc" },
+        });
+        if (successor) {
+          await tx.emailAccount.update({
+            where: { id: successor.id },
+            data: { isPrimary: true },
+          });
+          await writeAuditLog(tx, {
+            organisationId,
+            actorUserId: user.id,
+            action: "mailbox.primary_changed",
+            entityType: "email_account",
+            entityId: successor.id,
+            metadata: { reason: "previous_primary_disconnected" },
+          });
+        }
+      }
     });
     this.logger.info({ organisationId }, "mailbox disconnected");
   }
 
   /**
-   * POST .../mailbox/test-email â€” mailbox:manage. Self-addressed send
+   * PUT .../mailboxes/:mailboxId/primary â€” mailbox:manage. Choose which mailbox
+   * slice 1.7 sends from.
+   *
+   * The demotion and the promotion are one transaction because a partial
+   * unique index enforces at most one primary: two primaries is not a state
+   * the database will hold, and no primary is a state 1.7 cannot send from.
+   */
+  async setPrimary(
+    authUser: AuthUser,
+    organisationId: string,
+    mailboxId: string,
+  ): Promise<MailboxListDto> {
+    const user = await this.usersService.resolveOrProvision(authUser);
+    await withTenant(this.prisma.db, { organisationId, userId: user.id }, async (tx) => {
+      await requirePermission(tx, organisationId, user.id, "mailbox:manage");
+      const account = await this.findMailbox(tx, mailboxId);
+      if (account.isPrimary) return;
+      // Demote first: the index would reject the promotion otherwise.
+      await tx.emailAccount.updateMany({
+        where: { deletedAt: null, isPrimary: true },
+        data: { isPrimary: false },
+      });
+      await tx.emailAccount.update({ where: { id: account.id }, data: { isPrimary: true } });
+      await writeAuditLog(tx, {
+        organisationId,
+        actorUserId: user.id,
+        action: "mailbox.primary_changed",
+        entityType: "email_account",
+        entityId: account.id,
+        metadata: { reason: "chosen_by_user" },
+      });
+    });
+    return this.listMailboxes(authUser, organisationId);
+  }
+
+  /**
+   * One mailbox by id, scoped to the caller's organisation by RLS.
+   *
+   * 404 rather than 403 for a mailbox belonging to someone else: RLS filters
+   * it out entirely, so "not found" is not a euphemism here â€” it is what the
+   * query genuinely returns (BRD 15).
+   */
+  private async findMailbox(tx: TenantTx, mailboxId: string): Promise<ConnectedAccount> {
+    const account = await tx.emailAccount.findFirst({ where: { id: mailboxId, deletedAt: null } });
+    if (!account) throw new NotFoundException("Mailbox not found");
+    return account;
+  }
+
+  /**
+   * POST .../mailboxes/:mailboxId/test-email â€” mailbox:manage. Self-addressed send
    * (ruling 7) proving the full path: valid token â†’ Graph â†’ Sent Items.
    *
    * FOUR independently committed steps, deliberately NOT one transaction
@@ -567,6 +766,7 @@ export class MailboxesService {
   async sendTestEmail(
     authUser: AuthUser,
     organisationId: string,
+    mailboxId: string,
   ): Promise<MailboxTestEmailResultDto> {
     const user = await this.usersService.resolveOrProvision(authUser);
     // 1. Authorize + load. Read-only, so nothing to lose on rollback.
@@ -575,9 +775,7 @@ export class MailboxesService {
       { organisationId, userId: user.id },
       async (tx) => {
         await requirePermission(tx, organisationId, user.id, "mailbox:manage");
-        const found = await tx.emailAccount.findFirst({ where: { deletedAt: null } });
-        if (!found) throw new NotFoundException("No connected mailbox");
-        return found;
+        return this.findMailbox(tx, mailboxId);
       },
     );
     try {
@@ -590,7 +788,7 @@ export class MailboxesService {
       // F3). Not auth_expired â€” reconnecting cannot conjure a mailbox â€” so it
       // gets health 'error' and its own advice.
       if (error instanceof MailboxUnavailableError) {
-        await this.markUnhealthy(organisationId, user.id, {
+        await this.markUnhealthy(organisationId, user.id, account.id, {
           healthStatus: "error",
           lastError: error.message,
           auditAction: "mailbox.mailbox_unavailable",
@@ -598,7 +796,7 @@ export class MailboxesService {
         throw new BadRequestException(error.message);
       }
       if (error instanceof ReauthRequiredError) {
-        await this.markUnhealthy(organisationId, user.id, {
+        await this.markUnhealthy(organisationId, user.id, account.id, {
           healthStatus: "auth_expired",
           lastError: AUTH_EXPIRED_MESSAGE,
           auditAction: "mailbox.auth_expired",
@@ -710,18 +908,30 @@ export class MailboxesService {
     }
   }
 
-  /** Surfaces a broken mailbox to the UI (ruling 10): the status endpoint reads
-   *  health_status, so the right advice shows without another Graph call.
-   *  Audited in the same transaction like every other tenant mutation â€” "when
-   *  did this mailbox die, and why?" must be answerable from the audit trail,
-   *  not from a mutable column with no timestamp. */
+  /**
+   * Surfaces a broken mailbox to the UI (ruling 10): the status endpoint reads
+   * health_status, so the right advice shows without another Graph call.
+   * Audited in the same transaction like every other tenant mutation â€” "when
+   * did this mailbox die, and why?" must be answerable from the audit trail,
+   * not from a mutable column with no timestamp.
+   *
+   * **Takes the account id, and that is the whole point (slice 1.6a).** It used
+   * to re-find "the" live mailbox, which was harmless only while an
+   * organisation could have exactly one. With seats it is a real defect: when
+   * mailbox B's grant dies, `findFirst` could return mailbox A and mark IT
+   * dead instead â€” a healthy mailbox stops sending while the broken one still
+   * reads "Connected". Silent, and it only appears once a customer has two.
+   */
   private async markUnhealthy(
     organisationId: string,
     userId: string,
+    accountId: string,
     outcome: { healthStatus: EmailAccountHealthStatus; lastError: string; auditAction: string },
   ): Promise<void> {
     await withTenant(this.prisma.db, { organisationId, userId }, async (tx) => {
-      const account = await tx.emailAccount.findFirst({ where: { deletedAt: null } });
+      const account = await tx.emailAccount.findFirst({
+        where: { id: accountId, deletedAt: null },
+      });
       if (!account) return;
       await tx.emailAccount.update({
         where: { id: account.id },
