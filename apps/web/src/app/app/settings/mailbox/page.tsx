@@ -143,6 +143,21 @@ export default async function MailboxSettingsPage({
           )}
         </p>
       )}
+      {/* A replace was asked for and could not be done — the mailbox it named
+          had already been disconnected. Degrading to a plain connect is right;
+          doing it silently was not, because the outcome is exactly what ruling
+          3 forbids: the old address is gone and its clients fell back to the
+          default while the customer believes their book followed. */}
+      {params.replace === "degraded" && (
+        <p
+          role="alert"
+          className="w-full max-w-2xl rounded-[var(--radius-card)] bg-muted px-6 py-3 text-sm text-danger"
+        >
+          The mailbox you asked to replace had already been disconnected, so this address was added
+          as a new one instead. Any clients filed under the old address are now chased from your
+          default mailbox and need re-filing.
+        </p>
+      )}
       {flashError && (
         <p
           role="alert"

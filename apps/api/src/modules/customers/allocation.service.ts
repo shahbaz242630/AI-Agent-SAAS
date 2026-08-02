@@ -192,10 +192,30 @@ export class AllocationService {
    */
   private async resolveTargetMailbox(tx: TenantTx, emailAccountId: string | null) {
     if (emailAccountId === null) return null;
-    const mailbox = await tx.emailAccount.findFirst({
-      where: { id: emailAccountId, deletedAt: null },
-      select: { id: true },
-    });
+    /**
+     * `FOR UPDATE`, because reading it as live is not enough.
+     *
+     * Filing a client under a mailbox at the same moment somebody disconnects
+     * it used to leave the client pointing at a soft-deleted row forever:
+     * disconnect only clears clients that ALREADY pointed at it, and under READ
+     * COMMITTED the two transactions never touched the same row, so both
+     * committed. The orphan is invisible on every screen and blocks a future
+     * hard delete.
+     *
+     * Locking the mailbox row serialises the pair in either order. If disconnect
+     * wins, this blocks and then sees `deleted_at` set — a clean 404. If this
+     * wins, disconnect blocks and its own `updateMany` then catches the newly
+     * filed client, so it is counted and audited like any other.
+     *
+     * Raw, because Prisma has no `FOR UPDATE`. RLS still applies (eva_app runs
+     * under FORCE ROW LEVEL SECURITY), so another tenant's mailbox stays
+     * invisible and yields the same 404 rather than a leak.
+     */
+    const locked = await tx.$queryRaw<{ id: string }[]>`
+      SELECT id FROM email_accounts
+      WHERE id = ${emailAccountId}::uuid AND deleted_at IS NULL
+      FOR UPDATE`;
+    const mailbox = locked[0];
     if (!mailbox) throw new NotFoundException("Mailbox not found");
     return mailbox.id;
   }
