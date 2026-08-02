@@ -157,9 +157,18 @@ export default async function MailboxSettingsPage({
         </p>
       ) : notEntitled ? (
         <section className="flex w-full max-w-2xl flex-col gap-3 rounded-[var(--radius-card)] bg-muted px-6 py-4">
+          {/*
+            One interpolated string, deliberately — NOT `{organisation.name}`
+            followed by JSX text. Next 16's build drops the space between an
+            expression and text that wraps onto the following line, so the
+            obvious spelling rendered "Malik Test Org Ltddoesn't have…" on
+            staging while the source looked correct, and standalone @swc/core
+            compiled it correctly. `{" "}` does not survive either: Prettier
+            rejoins it on format. Same shape as the "If you arethe
+            administrator" defect of 2026-07-31.
+          */}
           <p className="text-sm">
-            {organisation.name} doesn&apos;t have Invoice Chasing, so there&apos;s no mailbox to
-            connect yet.
+            {`${organisation.name} doesn't have Invoice Chasing, so there's no mailbox to connect yet.`}
           </p>
           <div>
             <Link
