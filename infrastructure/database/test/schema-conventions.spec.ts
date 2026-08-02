@@ -924,4 +924,87 @@ describe("Schema conventions (BRD 10)", () => {
       expect(orphaned).toEqual([]);
     });
   });
+
+  /**
+   * Migration 0019 — what Eva needs to chase, and nothing more.
+   * Founder ruling: "Eva is only a follow-up agent, not an accountant."
+   * Design notes: docs/DATA-MODEL-REVIEW.md
+   */
+  describe("Slice 1.6b groundwork: invoice balance and provenance (0019)", () => {
+    it("invoices carry a paid amount, so a part-paid debtor is chased for the BALANCE", async () => {
+      const columns = await prisma.$queryRaw<
+        { column_name: string; column_default: string | null }[]
+      >`
+        SELECT column_name, column_default
+        FROM information_schema.columns
+        WHERE table_name = 'invoices'
+          AND column_name IN (
+            'amount_paid_minor_units', 'last_payment_at', 'customer_reference',
+            'payment_terms', 'description', 'source', 'external_id')`;
+      expect(columns.map((c) => c.column_name).sort()).toEqual([
+        "amount_paid_minor_units",
+        "customer_reference",
+        "description",
+        "external_id",
+        "last_payment_at",
+        "payment_terms",
+        "source",
+      ]);
+      // Defaulted, so the migration needs no backfill and every pre-existing
+      // invoice reads as "nothing paid" rather than NULL.
+      const paid = columns.find((c) => c.column_name === "amount_paid_minor_units");
+      expect(paid?.column_default).toContain("0");
+    });
+
+    /**
+     * THE RULING, encoded. Overpayment is allowed: refusing an import because a
+     * debtor paid too much is an accounting objection, and Eva is not an
+     * accountant. The balance clamps at zero and chasing stops.
+     */
+    it("allows overpayment — the CHECK bounds paid at zero and NOT at the invoice total", async () => {
+      const [check] = await prisma.$queryRaw<{ def: string }[]>`
+        SELECT pg_get_constraintdef(oid) AS def
+        FROM pg_constraint
+        WHERE conname = 'invoices_amount_paid_check'`;
+      expect(check?.def).toContain("amount_paid_minor_units");
+      expect(check?.def).toContain(">= 0");
+      // If this ever starts referencing the invoice total, someone has quietly
+      // reversed the ruling and a legitimate overpaid import will be rejected.
+      expect(check?.def).not.toContain("amount_minor_units)");
+    });
+
+    it("scopes remote identity per organisation AND system, and only when there is one", async () => {
+      const indexes = await prisma.$queryRaw<{ indexname: string; indexdef: string }[]>`
+        SELECT indexname, indexdef FROM pg_indexes
+        WHERE indexname IN ('invoices_external_ref_key', 'customers_external_ref_key')`;
+      expect(indexes.length).toBe(2);
+      for (const index of indexes) {
+        expect(index.indexdef).toContain("UNIQUE");
+        expect(index.indexdef).toContain("organisation_id");
+        expect(index.indexdef).toContain("source");
+        expect(index.indexdef).toContain("external_id");
+        // Partial on both counts: manually created rows carry no external_id and
+        // must not collide, and soft-deleted history must never block a
+        // re-import of the same remote invoice.
+        expect(index.indexdef).toContain("external_id IS NOT NULL");
+        expect(index.indexdef).toContain("deleted_at IS NULL");
+      }
+    });
+
+    it("keeps payment instructions on the organisation, not on every invoice", async () => {
+      const columns = await prisma.$queryRaw<{ column_name: string }[]>`
+        SELECT column_name FROM information_schema.columns
+        WHERE table_name = 'organisation_settings' AND column_name = 'payment_instructions'`;
+      expect(columns.length).toBe(1);
+    });
+
+    /** Contact details were NOT added by 0019 — they already existed, and the
+     *  voice module will read contacts.phone with no schema change. */
+    it("already had the email and phone the follow-up and voice agents need", async () => {
+      const columns = await prisma.$queryRaw<{ table_name: string; column_name: string }[]>`
+        SELECT table_name, column_name FROM information_schema.columns
+        WHERE table_name IN ('customers', 'contacts') AND column_name IN ('email', 'phone')`;
+      expect(columns.length).toBe(4);
+    });
+  });
 });
