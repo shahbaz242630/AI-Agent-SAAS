@@ -117,6 +117,27 @@ type ConnectedAccount = NonNullable<Awaited<ReturnType<TenantTx["emailAccount"][
 /** The product whose seats a mailbox occupies (slice 1.6a). */
 const MAILBOX_MODULE = "email_credit_controller";
 
+/**
+ * What `resolveSendingMailbox` answered, and HOW (slice 1.6b, Task 6).
+ *
+ * `source` is not decoration: `substituted` means the mailbox a customer chose
+ * is not the one that will send, which is the state ruling 6 requires the
+ * settings screen to warn about loudly. Losing that distinction would make a
+ * dead mailbox invisible — the reminders would keep going out and nobody would
+ * ever reconnect it.
+ */
+export interface SendingMailboxResolution {
+  account: ConnectedAccount;
+  /**
+   * `allocated` — the client's own mailbox.
+   * `default`   — the client was never filed, so the default chases it
+   *               (ruling 1: normal, not a problem).
+   * `substituted` — the intended mailbox is dead or gone and a healthy one is
+   *               standing in (ruling 6: WARN, this needs fixing).
+   */
+  source: "allocated" | "default" | "substituted";
+}
+
 /** Internal signal from inside the callback's write transaction. Not an
  *  HttpException: this route's contract is ALWAYS a redirect, never JSON. */
 class SeatLimitReachedError extends Error {
@@ -199,6 +220,80 @@ export class MailboxesService {
         seatLimitReached: accounts.length >= seats,
       };
     });
+  }
+
+  /**
+   * WHICH MAILBOX CHASES THIS CLIENT, right now (slice 1.6b, Task 6).
+   *
+   * The seam slice 1.7 calls, once per reminder, and the ONLY place this
+   * question is ever answered. It takes a `tx` so the sender can resolve inside
+   * its claim transaction; it is a pure read and writes nothing.
+   *
+   * ⚠️ RESOLVED AT SEND TIME, EVERY TIME — never stored (ALLOCATION-SCOPE trap
+   * 1). Stamping the answer onto a client would work perfectly on the day it
+   * was written and go wrong months later, after somebody changed their default
+   * mailbox, with no error and no failing test. That is why this is a function
+   * and not a column.
+   *
+   * The ladder, and ruling 6 is the third rung:
+   *
+   *   the client's own mailbox, if live and healthy
+   *     ↳ else the organisation's DEFAULT, if live and healthy   (ruling 1)
+   *       ↳ else ANY live healthy mailbox, oldest first          (ruling 6)
+   *         ↳ else null — the caller must not send
+   *
+   * Ruling 6 matters more than it looks, and that is why it is here rather than
+   * in the sender. Ruling 1 sends every UNALLOCATED client from the default, so
+   * a dead default does not strand a handful of specially-filed clients — it
+   * strands everyone who was never filed, which is most of them. Sending from
+   * another address belonging to the same business is the smaller harm, and it
+   * is visible and correctable; a silent revenue stall is neither.
+   *
+   * `null` is a real outcome, not an error: an organisation whose every mailbox
+   * is dead must not send from nowhere. What 1.7 does with it is 1.7's
+   * decision; this function's job is to answer honestly.
+   */
+  async resolveSendingMailbox(
+    tx: TenantTx,
+    customer: { emailAccountId: string | null },
+  ): Promise<SendingMailboxResolution | null> {
+    /**
+     * One query, then decide in memory. An organisation holds at most a handful
+     * of mailboxes (it pays per seat), and this runs once per reminder — three
+     * round trips to walk the ladder would cost more than reading all of them.
+     *
+     * Ordered oldest-first so the ruling-6 substitution is DETERMINISTIC: the
+     * same client must not be chased from a different address on each run, or
+     * the debtor sees a conversation scattered across mailboxes.
+     */
+    const live = await tx.emailAccount.findMany({
+      where: { deletedAt: null },
+      orderBy: { createdAt: "asc" },
+    });
+    const healthy = live.filter((account) => account.healthStatus === "active");
+
+    if (customer.emailAccountId) {
+      const allocated = healthy.find((account) => account.id === customer.emailAccountId);
+      if (allocated) return { account: allocated, source: "allocated" };
+    }
+
+    /**
+     * The default. Reached both by a client that was never filed (ruling 1) and
+     * by one whose own mailbox is dead — and in the second case it is already a
+     * substitution, so it is reported as one. The customer needs to know their
+     * filing is not being honoured.
+     */
+    const wasAllocated = customer.emailAccountId !== null;
+    const primary = healthy.find((account) => account.isPrimary);
+    if (primary) {
+      return { account: primary, source: wasAllocated ? "substituted" : "default" };
+    }
+
+    // Ruling 6's last rung: the default itself is dead or gone.
+    const standIn = healthy[0];
+    if (standIn) return { account: standIn, source: "substituted" };
+
+    return null;
   }
 
   /** Seats bought for the mailbox-bearing product. Fails CLOSED: a missing or
