@@ -381,6 +381,16 @@ export const mailboxConnectSchema = z
      *  there. A closed enum, never a URL — the API maps it to a path from its
      *  own table, so a caller cannot choose where the browser lands. */
     flow: z.enum(["onboarding", "settings"]).optional(),
+    /**
+     * Replace this mailbox rather than adding another (slice 1.6b, ruling 3).
+     * The new address inherits the old one's clients and its default status,
+     * and the old row is disconnected in the same transaction.
+     *
+     * It is its own action, NOT "disconnect then reconnect": disconnecting
+     * first drops every allocation to the default, so the clients would be
+     * chased from the wrong address in the gap and nobody would be told.
+     */
+    replacesMailboxId: z.uuid().optional(),
   })
   // The whole body is optional: connect worked without one before onboarding
   // existed, and the settings page still calls it that way. Without the default

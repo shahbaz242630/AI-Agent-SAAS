@@ -262,7 +262,21 @@ describe("Mailboxes (Slice 1.6)", () => {
       });
     }
 
+    /**
+     * Clear the allocations FIRST (slice 1.6b). `customers.email_account_id` is
+     * ON DELETE RESTRICT, so hard-deleting a mailbox that still has clients
+     * filed under it is refused — deliberately, because in production that
+     * would silently re-file somebody's whole book onto the default address.
+     *
+     * The application never does this: disconnect soft-deletes and clears the
+     * allocations in one transaction. Only a test tearing state down hard-
+     * deletes, and it has to follow the same order.
+     */
     async function clearMailboxes(): Promise<void> {
+      await owner.customer.updateMany({
+        where: { organisationId: seatOrg.id },
+        data: { emailAccountId: null },
+      });
       await owner.emailAccount.deleteMany({ where: { organisationId: seatOrg.id } });
     }
 
@@ -369,6 +383,224 @@ describe("Mailboxes (Slice 1.6)", () => {
       expect(live).toBe(2);
     });
 
+    /**
+     * Slice 1.6b, ruling 3 and Task 4/5.
+     *
+     * Allocation makes disconnect and replace two DIFFERENT actions, and the
+     * difference is whose clients end up where. Getting it wrong is invisible:
+     * the mailboxes look right and the wrong address quietly starts chasing.
+     */
+    describe("allocation follows the mailbox (Slice 1.6b)", () => {
+      async function addClient(name: string, emailAccountId?: string) {
+        const customer = await owner.customer.create({
+          data: {
+            id: randomUUID(),
+            organisationId: seatOrg.id,
+            name: `${name}-${randomUUID().slice(0, 8)}`,
+            ...(emailAccountId ? { emailAccountId } : {}),
+          },
+        });
+        return customer.id;
+      }
+
+      /** Ruling 3: never silent. The count is the whole point of the change. */
+      it("disconnect moves the clients to the default and SAYS how many", async () => {
+        await clearMailboxes();
+        await addMailbox("one@seats.example", true);
+        const second = await addMailbox("two@seats.example");
+        const filed = await Promise.all([
+          addClient("filed-a", second.id),
+          addClient("filed-b", second.id),
+        ]);
+
+        const response = await request(app.getHttpServer())
+          .post(`/organisations/${seatOrg.id}/mailboxes/${second.id}/disconnect`)
+          .set("Authorization", `Bearer ${seatToken}`)
+          .expect(200);
+
+        expect(response.body).toEqual({
+          clientsMoved: 2,
+          movedToEmailAddress: "one@seats.example",
+        });
+        const moved = await owner.customer.findMany({ where: { id: { in: filed } } });
+        // NULL, not the primary's id — resolution stays at send time (trap 1).
+        expect(moved.every((customer) => customer.emailAccountId === null)).toBe(true);
+        for (const id of filed) {
+          await owner.auditLog.findFirstOrThrow({
+            where: { action: "customer.reassigned", entityId: id },
+          });
+        }
+      });
+
+      /** Ruling 1 is what makes the fallback safe, so the address reported must
+       *  be the SUCCESSOR when the disconnected mailbox was itself the default. */
+      it("names the promoted successor when the default itself is disconnected", async () => {
+        await clearMailboxes();
+        const primary = await addMailbox("one@seats.example", true);
+        await addMailbox("two@seats.example");
+        await addClient("filed-c", primary.id);
+
+        const response = await request(app.getHttpServer())
+          .post(`/organisations/${seatOrg.id}/mailboxes/${primary.id}/disconnect`)
+          .set("Authorization", `Bearer ${seatToken}`)
+          .expect(200);
+
+        expect(response.body).toEqual({
+          clientsMoved: 1,
+          movedToEmailAddress: "two@seats.example",
+        });
+      });
+
+      it("reports no default when the last mailbox goes, rather than naming a dead address", async () => {
+        await clearMailboxes();
+        const only = await addMailbox("one@seats.example", true);
+        await addClient("filed-d", only.id);
+
+        const response = await request(app.getHttpServer())
+          .post(`/organisations/${seatOrg.id}/mailboxes/${only.id}/disconnect`)
+          .set("Authorization", `Bearer ${seatToken}`)
+          .expect(200);
+
+        expect(response.body).toEqual({ clientsMoved: 1, movedToEmailAddress: null });
+      });
+
+      /** Task 5. "Disconnect then reconnect" is NOT a substitute: it drops every
+       *  allocation to the default in the gap, with nobody told. */
+      it("replace carries the clients and the default status to the new address", async () => {
+        await clearMailboxes();
+        const old = await addMailbox("old@seats.example", true);
+        const filed = await addClient("carried", old.id);
+        graphStub.getProfile.mockResolvedValueOnce({
+          emailAddress: "new@seats.example",
+          displayName: "New",
+        });
+        const state = await signOAuthState(TEST_OAUTH_STATE_SECRET, {
+          organisationId: seatOrg.id,
+          userId: seatOrg.members[0]!.id,
+          nonce: randomUUID(),
+          replacesMailboxId: old.id,
+        });
+
+        await request(app.getHttpServer())
+          .get(`/integrations/microsoft/callback?code=fake&state=${state}`)
+          .expect(302);
+
+        const created = await owner.emailAccount.findFirstOrThrow({
+          where: { organisationId: seatOrg.id, emailAddress: "new@seats.example" },
+        });
+        const carried = await owner.customer.findUniqueOrThrow({ where: { id: filed } });
+        expect(carried.emailAccountId).toBe(created.id);
+        expect(created.isPrimary).toBe(true);
+
+        const retired = await owner.emailAccount.findUniqueOrThrow({ where: { id: old.id } });
+        expect(retired.deletedAt).not.toBeNull();
+        expect(retired.isPrimary).toBe(false);
+        expect(retired.accessTokenEncrypted).toBeNull();
+        expect(retired.refreshTokenEncrypted).toBeNull();
+        await owner.auditLog.findFirstOrThrow({
+          where: { action: "mailbox.replaced", entityId: created.id },
+        });
+      });
+
+      /**
+       * ⚠️ THE TRAP. An organisation at its seat limit is the NORMAL state for
+       * anyone who bought exactly what they use. Without exempting the mailbox
+       * being replaced, they could never replace an address at all — they would
+       * be told to disconnect one first, which is precisely the loss ruling 3
+       * exists to prevent.
+       *
+       * Fails without the exemption in `connect` and in the callback.
+       */
+      it("replaces successfully even when EVERY seat is taken", async () => {
+        await clearMailboxes();
+        const old = await addMailbox("old@seats.example", true);
+        await addMailbox("other@seats.example");
+        const filed = await addClient("at-the-limit", old.id);
+
+        // The friendly pre-check must let them through to Microsoft at all.
+        await request(app.getHttpServer())
+          .post(`/organisations/${seatOrg.id}/mailboxes/connect`)
+          .set("Authorization", `Bearer ${seatToken}`)
+          .send({ emailAddress: "fresh@seats.example", replacesMailboxId: old.id })
+          .expect(200);
+
+        graphStub.getProfile.mockResolvedValueOnce({
+          emailAddress: "fresh@seats.example",
+          displayName: "Fresh",
+        });
+        const state = await signOAuthState(TEST_OAUTH_STATE_SECRET, {
+          organisationId: seatOrg.id,
+          userId: seatOrg.members[0]!.id,
+          nonce: randomUUID(),
+          replacesMailboxId: old.id,
+        });
+        const response = await request(app.getHttpServer())
+          .get(`/integrations/microsoft/callback?code=fake&state=${state}`)
+          .expect(302);
+
+        expect(response.headers.location).not.toContain("seat_limit_reached");
+        const created = await owner.emailAccount.findFirstOrThrow({
+          where: { organisationId: seatOrg.id, emailAddress: "fresh@seats.example" },
+        });
+        expect(
+          (await owner.customer.findUniqueOrThrow({ where: { id: filed } })).emailAccountId,
+        ).toBe(created.id);
+        // Still exactly two live: one replaced, not one added.
+        const live = await owner.emailAccount.count({
+          where: { organisationId: seatOrg.id, deletedAt: null },
+        });
+        expect(live).toBe(2);
+      });
+
+      /** A colleague may disconnect the mailbox during the Microsoft round
+       *  trip. Degrade to a plain connect rather than 500. */
+      it("degrades to a plain connect when the replaced mailbox is already gone", async () => {
+        await clearMailboxes();
+        const old = await addMailbox("old@seats.example", true);
+        const goneId = old.id;
+        await owner.emailAccount.update({
+          where: { id: goneId },
+          data: { deletedAt: new Date() },
+        });
+        graphStub.getProfile.mockResolvedValueOnce({
+          emailAddress: "fresh2@seats.example",
+          displayName: "Fresh",
+        });
+        const state = await signOAuthState(TEST_OAUTH_STATE_SECRET, {
+          organisationId: seatOrg.id,
+          userId: seatOrg.members[0]!.id,
+          nonce: randomUUID(),
+          replacesMailboxId: goneId,
+        });
+
+        const response = await request(app.getHttpServer())
+          .get(`/integrations/microsoft/callback?code=fake&state=${state}`)
+          .expect(302);
+
+        expect(response.headers.location).toContain("connected=1");
+        await owner.emailAccount.findFirstOrThrow({
+          where: { organisationId: seatOrg.id, emailAddress: "fresh2@seats.example" },
+        });
+      });
+
+      it("refuses to start a replace of a mailbox belonging to another organisation", async () => {
+        await clearMailboxes();
+        await addMailbox("one@seats.example", true);
+        const foreign = await owner.emailAccount.create({
+          data: {
+            organisationId: org.id,
+            provider: "microsoft",
+            emailAddress: `foreign-${randomUUID().slice(0, 8)}@example.com`,
+          },
+        });
+        await request(app.getHttpServer())
+          .post(`/organisations/${seatOrg.id}/mailboxes/connect`)
+          .set("Authorization", `Bearer ${seatToken}`)
+          .send({ emailAddress: "fresh3@seats.example", replacesMailboxId: foreign.id })
+          .expect(404);
+      });
+    });
+
     it("refuses to lower seats below the number of mailboxes in use, and says by how many", async () => {
       await clearMailboxes();
       await addMailbox("one@seats.example", true);
@@ -390,7 +622,7 @@ describe("Mailboxes (Slice 1.6)", () => {
       await request(app.getHttpServer())
         .post(`/organisations/${seatOrg.id}/mailboxes/${primary.id}/disconnect`)
         .set("Authorization", `Bearer ${seatToken}`)
-        .expect(204);
+        .expect(200);
 
       const promoted = await owner.emailAccount.findUniqueOrThrow({ where: { id: successor.id } });
       expect(promoted.isPrimary).toBe(true);
@@ -1104,7 +1336,7 @@ describe("Mailboxes (Slice 1.6)", () => {
       await request(app.getHttpServer())
         .post(`/organisations/${org.id}/mailboxes/${account.id}/disconnect`)
         .set("Authorization", `Bearer ${tokenFor("owner")}`)
-        .expect(204);
+        .expect(200);
       const after = await owner.emailAccount.findUniqueOrThrow({ where: { id: account.id } });
       expect(after.deletedAt).not.toBeNull();
       expect(after.accessTokenEncrypted).toBeNull();

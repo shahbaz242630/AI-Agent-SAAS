@@ -75,6 +75,18 @@ export interface OAuthStateClaims {
   /** The screen this started from. Absent on states minted before onboarding
    *  existed, which is why every reader falls back to DEFAULT_OAUTH_FLOW. */
   flow?: OAuthFlow;
+  /**
+   * The mailbox this connection REPLACES (slice 1.6b, ruling 3), so the new
+   * address inherits its clients and its default status.
+   *
+   * It rides on the signed state for the same reason `flow` does: the browser
+   * is at Microsoft in between and nothing else survives the round trip. Being
+   * signed proves we minted it, but it is still re-validated at the callback —
+   * the mailbox may have been disconnected by a colleague during the round
+   * trip, in which case the connection degrades to a plain one rather than
+   * failing.
+   */
+  replacesMailboxId?: string;
 }
 
 /** Thrown for any state that does not verify â€” signature, expiry, or shape. */
@@ -143,6 +155,14 @@ export async function verifyOAuthState(
     // would strand a mid-flight connection across a deploy. The reader falls
     // back to DEFAULT_OAUTH_FLOW, which lands the user somewhere real.
     const flow = payload.flow;
+    /**
+     * Dropped rather than rejected if it is not uuid-shaped, for the same
+     * reason as `flow`: the signature already proves we minted this token, so a
+     * malformed value means our own code changed, not that anyone is attacking.
+     * Dropping degrades a replace into a plain connect — the old mailbox and
+     * its clients stay exactly as they were, which is the safe direction.
+     */
+    const replacesMailboxId = payload.replacesMailboxId;
     return {
       organisationId: readUuidClaim(payload.organisationId),
       userId: readUuidClaim(payload.userId),
@@ -154,6 +174,9 @@ export async function verifyOAuthState(
         ? { loginHint }
         : {}),
       ...(isOAuthFlow(flow) ? { flow } : {}),
+      ...(typeof replacesMailboxId === "string" && UUID_PATTERN.test(replacesMailboxId)
+        ? { replacesMailboxId }
+        : {}),
     };
   } catch {
     throw new InvalidOAuthStateError();
