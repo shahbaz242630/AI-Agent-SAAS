@@ -155,11 +155,29 @@ model Customer {
   /// in the migration: partial indexes are not representable here.
   source         String       @default("manual")
   externalId     String?      @map("external_id")
+  /// Which mailbox chases this client (slice 1.6b, ruling 1). NULL is the
+  /// normal state and means "chase from the organisation's DEFAULT mailbox" —
+  /// never "do not chase". Resolution happens at SEND time, every time; nothing
+  /// stamps a mailbox id onto a client, or a change of default would silently
+  /// keep sending from the old address (ALLOCATION-SCOPE trap 1).
+  ///
+  /// The foreign key is COMPOSITE — (organisation_id, email_account_id) — so a
+  /// client can only ever point at a mailbox in its own organisation. RLS here
+  /// checks the customer's tenant and never looks at the mailbox, so without it
+  /// nothing but application code prevents one company's chasing letters going
+  /// out from another company's address. It lives in migration 0020 and is
+  /// mirrored below so Prisma does not see drift.
+  emailAccountId String?      @map("email_account_id") @db.Uuid
   createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt      DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
   createdBy      String?      @map("created_by") @db.Uuid
   deletedAt      DateTime?    @map("deleted_at") @db.Timestamptz(6)
   organisation   Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+  /// onDelete: Restrict — the application never hard-deletes a mailbox
+  /// (disconnect soft-deletes and nulls the tokens), so this only fires on
+  /// manual database surgery, where failing loudly beats silently re-filing a
+  /// whole book of clients onto the default address.
+  emailAccount   EmailAccount? @relation(fields: [organisationId, emailAccountId], references: [organisationId, id], onDelete: Restrict, map: "customers_email_account_same_org_fkey")
   contacts       Contact[]
   invoices       Invoice[]
 
@@ -549,8 +567,15 @@ model EmailAccount {
   createdBy             String?      @map("created_by") @db.Uuid
   deletedAt             DateTime?    @map("deleted_at") @db.Timestamptz(6)
   organisation          Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+  /// Clients filed under this mailbox (slice 1.6b). Unallocated clients are
+  /// NOT here — they fall back to the primary at send time (ruling 1).
+  customers             Customer[]
 
   @@index([organisationId])
+  /// Redundant against the primary key, and deliberately so: it is the target a
+  /// composite foreign key needs, and it is what makes a cross-tenant client
+  /// allocation impossible in the database rather than merely unlikely in code.
+  @@unique([organisationId, id])
   @@map("email_accounts")
 }
 

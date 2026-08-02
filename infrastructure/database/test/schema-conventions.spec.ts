@@ -1007,4 +1007,149 @@ describe("Schema conventions (BRD 10)", () => {
       expect(columns.length).toBe(4);
     });
   });
+
+  /**
+   * Migration 0020 — which mailbox chases which client (Slice 1.6b, Task 1).
+   *
+   * Design: docs/ALLOCATION-SCOPE.md §4a, plan Task 1 and decision D2.
+   * Ruling 1: NULL means "chase from the DEFAULT mailbox", NEVER "do not chase".
+   */
+  describe("Slice 1.6b: client allocation across mailbox seats (0020)", () => {
+    /** A throwaway second tenant, so cross-tenant attempts are real rather than
+     *  simulated. Created per-test and torn down, because these specs share
+     *  eva_test with others running in parallel. */
+    async function otherOrganisation() {
+      return prisma.organisation.create({
+        data: { id: randomUUID(), name: `Allocation Foreign Org ${randomUUID().slice(0, 8)}` },
+      });
+    }
+
+    async function mailboxFor(organisationId: string) {
+      return prisma.emailAccount.create({
+        data: {
+          organisationId,
+          provider: "microsoft",
+          emailAddress: `alloc-${randomUUID().slice(0, 8)}@example.com`,
+        },
+      });
+    }
+
+    async function customerFor(organisationId: string) {
+      return prisma.customer.create({
+        data: {
+          id: randomUUID(),
+          organisationId,
+          name: `Allocation Fixture ${randomUUID().slice(0, 8)}`,
+        },
+      });
+    }
+
+    it("gives a client an optional mailbox, nullable because unallocated is normal", async () => {
+      const [column] = await prisma.$queryRaw<
+        { is_nullable: string; data_type: string; column_default: string | null }[]
+      >`
+        SELECT is_nullable, data_type, column_default
+        FROM information_schema.columns
+        WHERE table_name = 'customers' AND column_name = 'email_account_id'`;
+      expect(column?.data_type).toBe("uuid");
+      // Ruling 1 lives in this one assertion. A NOT NULL column would force
+      // every client to be filed before it could be chased at all.
+      expect(column?.is_nullable).toBe("YES");
+      expect(column?.column_default).toBeNull();
+    });
+
+    /** POSITIVE CONTROL. Without this, the cross-tenant refusal below could pass
+     *  because allocation is broken for everyone, not because it is scoped. */
+    it("allows a client to be filed under a mailbox in its OWN organisation", async () => {
+      const mailbox = await mailboxFor(DEMO_ORGANISATION_ID);
+      const customer = await customerFor(DEMO_ORGANISATION_ID);
+      const filed = await prisma.customer.update({
+        where: { id: customer.id },
+        data: { emailAccountId: mailbox.id },
+      });
+      expect(filed.emailAccountId).toBe(mailbox.id);
+      await prisma.customer.delete({ where: { id: customer.id } });
+      await prisma.emailAccount.delete({ where: { id: mailbox.id } });
+    });
+
+    /**
+     * THE ONE THAT MATTERS (plan D2). RLS on `customers` checks the CUSTOMER's
+     * organisation and never looks at the mailbox, so nothing but application
+     * code stands between us and one company's chasing letters going out from
+     * another company's address. The composite foreign key makes it impossible
+     * in the database instead.
+     */
+    it("REFUSES to file a client under another organisation's mailbox", async () => {
+      const foreign = await otherOrganisation();
+      const foreignMailbox = await mailboxFor(foreign.id);
+      const customer = await customerFor(DEMO_ORGANISATION_ID);
+      await expect(
+        prisma.customer.update({
+          where: { id: customer.id },
+          data: { emailAccountId: foreignMailbox.id },
+        }),
+        // Assert the constraint's own message, not a bare rejection: a typo in
+        // the fixture would otherwise "pass" this test having proven nothing.
+      ).rejects.toThrow(/customers_email_account_same_org_fkey/);
+      await prisma.customer.delete({ where: { id: customer.id } });
+      await prisma.emailAccount.delete({ where: { id: foreignMailbox.id } });
+      await prisma.organisation.delete({ where: { id: foreign.id } });
+    });
+
+    /**
+     * ON DELETE RESTRICT, not SET NULL and never CASCADE. The application never
+     * hard-deletes a mailbox — disconnect soft-deletes and nulls the tokens —
+     * so this only fires on a manual DELETE against the database, and there it
+     * must fail loudly rather than silently re-file a whole book of clients.
+     */
+    it("refuses to hard-delete a mailbox that still has clients filed under it", async () => {
+      const mailbox = await mailboxFor(DEMO_ORGANISATION_ID);
+      const customer = await customerFor(DEMO_ORGANISATION_ID);
+      await prisma.customer.update({
+        where: { id: customer.id },
+        data: { emailAccountId: mailbox.id },
+      });
+      await expect(prisma.emailAccount.delete({ where: { id: mailbox.id } })).rejects.toThrow(
+        /customers_email_account_same_org_fkey/,
+      );
+      // The client is untouched — that is the point of RESTRICT.
+      const survivor = await prisma.customer.findUnique({ where: { id: customer.id } });
+      expect(survivor?.emailAccountId).toBe(mailbox.id);
+      await prisma.customer.delete({ where: { id: customer.id } });
+      await prisma.emailAccount.delete({ where: { id: mailbox.id } });
+    });
+
+    it("indexes the allocation, and only the rows that have one", async () => {
+      const [index] = await prisma.$queryRaw<{ indexdef: string }[]>`
+        SELECT indexdef FROM pg_indexes
+        WHERE tablename = 'customers' AND indexname = 'customers_email_account_id_idx'`;
+      expect(index?.indexdef).toContain("email_account_id");
+      // Partial on both counts: the vast majority of rows are unallocated by
+      // design (ruling 1), and soft-deleted clients are never chased.
+      expect(index?.indexdef).toContain("email_account_id IS NOT NULL");
+      expect(index?.indexdef).toContain("deleted_at IS NULL");
+    });
+
+    /**
+     * THE TRAP THIS MIGRATION EXISTS TO AVOID (`ALLOCATION-SCOPE` trap 1).
+     *
+     * The opposite of 1.6a, where a MISSING backfill was the rollout risk. Here
+     * a backfill IS the risk: stamping today's primary onto every existing
+     * client freezes it into history, and the day someone changes their default
+     * mailbox those clients get chased from the old address with no error, no
+     * log line and no failing test. Resolution belongs at send time, every time.
+     *
+     * Scoped to rows that predate the migration, because specs in this file
+     * deliberately file clients under mailboxes.
+     */
+    it("backfilled NOTHING — every client that predates the migration is still unallocated", async () => {
+      const stamped = await prisma.$queryRaw<{ id: string }[]>`
+        SELECT id FROM customers
+        WHERE email_account_id IS NOT NULL
+          AND created_at < (
+            SELECT finished_at FROM _prisma_migrations
+            WHERE migration_name = '20260802160000_customer_mailbox_allocation')`;
+      expect(stamped).toEqual([]);
+    });
+  });
 });
