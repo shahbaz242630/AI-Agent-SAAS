@@ -180,6 +180,10 @@ export function ClientTable({
     );
   }
 
+  // Resolved once, and the source of truth for whether the edit panel renders
+  // at all — see the note where it is used.
+  const editingClient = editing ? (clients.find((row) => row.id === editing) ?? null) : null;
+
   if (totalCount === 0) {
     return (
       <p className="w-full max-w-4xl text-sm text-muted-foreground">
@@ -316,11 +320,19 @@ export function ClientTable({
       </form>
 
       {/* Edit sits OUTSIDE the bulk-assign form: nested forms are invalid HTML
-          and the inner submit would post to the outer action. */}
-      {editing && (
+          and the inner submit would post to the outer action.
+
+          Looked up by find() and rendered only if FOUND — never with a
+          non-null assertion. Removing a client revalidates the page, the row
+          leaves `clients`, and `editing` still holds its id: asserting here
+          passed `undefined` into a component that reads `client.name`, so a
+          SUCCESSFUL removal crashed the page into the error boundary and took
+          the "Client removed." message with it. The user could not tell whether
+          it had worked, and the natural response is to try again. */}
+      {editingClient && (
         <EditClientForm
           organisationId={organisationId}
-          client={clients.find((row) => row.id === editing)!}
+          client={editingClient}
           onClose={() => setEditing(null)}
         />
       )}

@@ -420,6 +420,8 @@ describe("Mailboxes (Slice 1.6)", () => {
 
         expect(response.body).toEqual({
           clientsMoved: 2,
+          // The default did not move, so nobody unfiled changed address.
+          unfiledClientsMoved: 0,
           movedToEmailAddress: "one@seats.example",
         });
         const moved = await owner.customer.findMany({ where: { id: { in: filed } } });
@@ -434,21 +436,34 @@ describe("Mailboxes (Slice 1.6)", () => {
 
       /** Ruling 1 is what makes the fallback safe, so the address reported must
        *  be the SUCCESSOR when the disconnected mailbox was itself the default. */
-      it("names the promoted successor when the default itself is disconnected", async () => {
+      /**
+       * ⚠️ The UNFILED clients are the ones this nearly missed, and by ruling 1
+       * they are usually the majority. Disconnecting the DEFAULT promotes a
+       * successor, so everyone who was never filed also changes the address
+       * they are chased from. Counting only the filed ones reported "0 clients
+       * moved" while several hundred quietly moved — the exact silence ruling 3
+       * forbids.
+       */
+      it("names the promoted successor, and counts the unfiled clients that moved with it", async () => {
         await clearMailboxes();
         const primary = await addMailbox("one@seats.example", true);
         await addMailbox("two@seats.example");
         await addClient("filed-c", primary.id);
+        await addClient("never-filed-a");
+        await addClient("never-filed-b");
 
         const response = await request(app.getHttpServer())
           .post(`/organisations/${seatOrg.id}/mailboxes/${primary.id}/disconnect`)
           .set("Authorization", `Bearer ${seatToken}`)
           .expect(200);
 
-        expect(response.body).toEqual({
+        expect(response.body).toMatchObject({
           clientsMoved: 1,
           movedToEmailAddress: "two@seats.example",
         });
+        // The one that was filed here is now unfiled too, so it counts in both
+        // — what matters is that the unfiled group is not reported as zero.
+        expect(response.body.unfiledClientsMoved).toBeGreaterThanOrEqual(2);
       });
 
       it("reports no default when the last mailbox goes, rather than naming a dead address", async () => {
@@ -461,7 +476,7 @@ describe("Mailboxes (Slice 1.6)", () => {
           .set("Authorization", `Bearer ${seatToken}`)
           .expect(200);
 
-        expect(response.body).toEqual({ clientsMoved: 1, movedToEmailAddress: null });
+        expect(response.body).toMatchObject({ clientsMoved: 1, movedToEmailAddress: null });
       });
 
       /** Task 5. "Disconnect then reconnect" is NOT a substitute: it drops every
@@ -500,6 +515,95 @@ describe("Mailboxes (Slice 1.6)", () => {
         await owner.auditLog.findFirstOrThrow({
           where: { action: "mailbox.replaced", entityId: created.id },
         });
+        /**
+         * Trap 2: ONE audit row per client, so somebody can answer "why was
+         * THIS client chased from THAT address". Deleting the `writeAuditLogs`
+         * call in the replace branch used to leave the whole suite green — the
+         * disconnect path asserted it and this one did not.
+         */
+        const carriedAudit = await owner.auditLog.findFirstOrThrow({
+          where: { action: "customer.reassigned", entityId: filed },
+        });
+        expect(carriedAudit.metadata).toMatchObject({ reason: "mailbox_replaced" });
+        /**
+         * The default moved, and that is its OWN event. It is the mailbox that
+         * chases every unfiled client (ruling 1) — usually most of the book —
+         * so leaving it implicit inside `mailbox.replaced` makes "when did our
+         * unfiled clients start being chased from here?" unanswerable by the
+         * query anyone would actually run.
+         */
+        await owner.auditLog.findFirstOrThrow({
+          where: { action: "mailbox.primary_changed", entityId: created.id },
+        });
+      });
+
+      /**
+       * ⚠️ THE LIKELY PATH, and it was entirely untested.
+       *
+       * Handoff §0c: Microsoft ignores `prompt=select_account` once a session
+       * exists. So a user who clicks "Replace this address" while signed into
+       * that very mailbox is signed straight back into it — the replaced row
+       * and the new row are the SAME row. Without the `replacing.id !==
+       * account.id` guard the branch soft-deletes and nulls the tokens of the
+       * mailbox it just connected: it disconnects itself, and still redirects
+       * `connected=1`. Removing that guard left 89 tests green.
+       */
+      it("a replace that reconnects the SAME address is a reconnect, not self-destruction", async () => {
+        await clearMailboxes();
+        const only = await addMailbox("same@seats.example", true);
+        const filed = await addClient("stays-put", only.id);
+        graphStub.getProfile.mockResolvedValueOnce({
+          emailAddress: "same@seats.example",
+          displayName: "Same",
+        });
+        const state = await signOAuthState(TEST_OAUTH_STATE_SECRET, {
+          organisationId: seatOrg.id,
+          userId: seatOrg.members[0]!.id,
+          nonce: randomUUID(),
+          replacesMailboxId: only.id,
+        });
+
+        await request(app.getHttpServer())
+          .get(`/integrations/microsoft/callback?code=fake&state=${state}`)
+          .expect(302);
+
+        const survivor = await owner.emailAccount.findUniqueOrThrow({ where: { id: only.id } });
+        expect(survivor.deletedAt).toBeNull();
+        expect(survivor.isPrimary).toBe(true);
+        expect(survivor.accessTokenEncrypted).not.toBeNull();
+        expect(
+          (await owner.customer.findUniqueOrThrow({ where: { id: filed } })).emailAccountId,
+        ).toBe(only.id);
+      });
+
+      /**
+       * The count every "say the cost before the click" message is built from —
+       * the Disconnect warning, the Replace copy, and the card's link. Replacing
+       * it with a hard-coded 0 left all 89 tests green, so none of that copy was
+       * proven to carry a real number.
+       */
+      it("reports how many clients each mailbox actually chases", async () => {
+        await clearMailboxes();
+        const primary = await addMailbox("one@seats.example", true);
+        const second = await addMailbox("two@seats.example");
+        await addClient("counted-a", second.id);
+        await addClient("counted-b", second.id);
+        await addClient("unfiled");
+
+        const response = await request(app.getHttpServer())
+          .get(`/organisations/${seatOrg.id}/mailboxes`)
+          .set("Authorization", `Bearer ${seatToken}`)
+          .expect(200);
+
+        const byId = new Map(
+          (response.body.mailboxes as { id: string; allocatedClientCount: number }[]).map(
+            (mailbox) => [mailbox.id, mailbox.allocatedClientCount],
+          ),
+        );
+        expect(byId.get(second.id)).toBe(2);
+        // Unfiled clients are NOT counted against the default: they fall back
+        // to it at send time (ruling 1), they are not filed under it.
+        expect(byId.get(primary.id)).toBe(0);
       });
 
       /**

@@ -236,75 +236,99 @@ describe("addClient", () => {
 });
 
 describe("disconnectMailbox", () => {
-  /** RULING 3: never silent. The count is the reason this endpoint stopped
-   *  being a 204. */
-  it("states how many clients moved and where they went", async () => {
+  /**
+   * The result goes back as a REDIRECT FLASH, not as action state.
+   *
+   * Returning it as state put ruling 3's one guarantee inside the mailbox
+   * card's own controls — and disconnecting removes that card from the
+   * re-rendered list, so the component holding the sentence unmounted as the
+   * sentence arrived. The connect flow already used a URL flash for exactly
+   * this reason; disconnect now does too.
+   */
+  it("redirects with both counts and the address, so the message outlives the card", async () => {
     apiFetch.mockResolvedValue(
-      jsonResponse({ clientsMoved: 4, movedToEmailAddress: "default@example.com" }),
+      jsonResponse({
+        clientsMoved: 4,
+        unfiledClientsMoved: 120,
+        movedToEmailAddress: "default@example.com",
+      }),
     );
     const { disconnectMailbox } = await import("../src/app/app/settings/actions");
 
-    const state = await disconnectMailbox(
-      {},
-      form([
-        ["organisationId", "org-1"],
-        ["mailboxId", "mailbox-1"],
-      ]),
-    );
+    await expect(
+      disconnectMailbox(
+        {},
+        form([
+          ["organisationId", "org-1"],
+          ["mailboxId", "mailbox-1"],
+        ]),
+      ),
+    ).rejects.toThrow(/^REDIRECT:/);
 
-    expect(state.success).toContain("4 clients");
-    expect(state.success).toContain("default@example.com");
+    const target = String(redirect.mock.calls.at(-1)?.[0]);
+    expect(target).toContain("/app/settings/mailbox?");
+    const params = new URLSearchParams(target.split("?")[1]);
+    expect(params.get("moved")).toBe("4");
+    // The group that was nearly lost: unfiled clients follow the default.
+    expect(params.get("unfiled")).toBe("120");
+    expect(params.get("to")).toBe("default@example.com");
+  });
+});
+
+/**
+ * The sentence itself, tested directly. Every branch is a number-agreement
+ * trap, and this project has shipped "lowering to 1 seats" and "If you arethe
+ * administrator" through a fully green gate.
+ */
+describe("disconnectMessage", () => {
+  it("names both groups, because they are different people", async () => {
+    const { disconnectMessage } = await import("../src/lib/mailbox-messages");
+
+    const message = disconnectMessage(3, 120, "default@example.com");
+
+    expect(message).toContain("3 clients filed there");
+    expect(message).toContain("120 clients you hadn't filed");
+    expect(message).toContain("default@example.com");
   });
 
-  it("says 1 client is, never 1 clients are", async () => {
-    apiFetch.mockResolvedValue(
-      jsonResponse({ clientsMoved: 1, movedToEmailAddress: "default@example.com" }),
-    );
-    const { disconnectMailbox } = await import("../src/app/app/settings/actions");
+  it("says is for exactly one client and are for more", async () => {
+    const { disconnectMessage } = await import("../src/lib/mailbox-messages");
 
-    const state = await disconnectMailbox(
-      {},
-      form([
-        ["organisationId", "org-1"],
-        ["mailboxId", "mailbox-1"],
-      ]),
-    );
-
-    expect(state.success).toContain("1 client is");
-    expect(state.success).not.toContain("1 clients");
+    expect(disconnectMessage(1, 0, "d@example.com")).toContain("1 client filed there is now");
+    expect(disconnectMessage(0, 1, "d@example.com")).toContain("1 client you hadn't filed is now");
+    expect(disconnectMessage(2, 0, "d@example.com")).toContain("are now");
+    // The trap in the obvious spelling: keying "is/are" off which branch built
+    // the phrase gives "1 client you hadn't filed are now chased".
+    expect(disconnectMessage(0, 1, "d@example.com")).not.toContain("are now");
   });
 
-  /** Disconnecting the LAST mailbox leaves nowhere to fall back to. Naming a
-   *  dead address would be worse than admitting it. */
-  it("warns when there is no mailbox left to chase from", async () => {
-    apiFetch.mockResolvedValue(jsonResponse({ clientsMoved: 2, movedToEmailAddress: null }));
-    const { disconnectMailbox } = await import("../src/app/app/settings/actions");
+  it("omits a group that did not move rather than saying zero", async () => {
+    const { disconnectMessage } = await import("../src/lib/mailbox-messages");
 
-    const state = await disconnectMailbox(
-      {},
-      form([
-        ["organisationId", "org-1"],
-        ["mailboxId", "mailbox-1"],
-      ]),
-    );
-
-    expect(state.success).toMatch(/no longer being chased/i);
+    const message = disconnectMessage(2, 0, "d@example.com");
+    expect(message).not.toContain("0 ");
+    expect(message).not.toContain("hadn't filed");
   });
 
-  it("keeps the plain message when nothing was filed there", async () => {
-    apiFetch.mockResolvedValue(
-      jsonResponse({ clientsMoved: 0, movedToEmailAddress: "default@example.com" }),
-    );
-    const { disconnectMailbox } = await import("../src/app/app/settings/actions");
+  it("stays plain when nothing moved at all", async () => {
+    const { disconnectMessage } = await import("../src/lib/mailbox-messages");
 
-    const state = await disconnectMailbox(
-      {},
-      form([
-        ["organisationId", "org-1"],
-        ["mailboxId", "mailbox-1"],
-      ]),
-    );
+    expect(disconnectMessage(0, 0, "d@example.com")).toBe("Mailbox disconnected.");
+  });
 
-    expect(state.success).toBe("Mailbox disconnected.");
+  /** The last mailbox: there is nowhere to fall back to, and saying "chased
+   *  from …" would name an address that no longer exists. */
+  it("says chasing has STOPPED when that was the last mailbox", async () => {
+    const { disconnectMessage } = await import("../src/lib/mailbox-messages");
+
+    const message = disconnectMessage(2, 5, null);
+    expect(message).toMatch(/no longer being chased/i);
+    expect(message).toContain("7 clients");
+  });
+
+  it("does not claim clients are stranded when there were none", async () => {
+    const { disconnectMessage } = await import("../src/lib/mailbox-messages");
+
+    expect(disconnectMessage(0, 0, null)).toBe("Mailbox disconnected. Nothing is connected now.");
   });
 });

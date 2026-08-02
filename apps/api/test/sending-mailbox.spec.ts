@@ -59,7 +59,14 @@ describe("resolveSendingMailbox (Slice 1.6b)", () => {
 
   async function addMailbox(
     label: string,
-    options: { isPrimary?: boolean; healthStatus?: string; deleted?: boolean } = {},
+    options: {
+      isPrimary?: boolean;
+      healthStatus?: string;
+      deleted?: boolean;
+      /** Set explicitly so a test can make insertion order differ from age —
+       *  which is the only way to prove the resolver actually sorts. */
+      createdAt?: Date;
+    } = {},
   ) {
     return owner.emailAccount.create({
       data: {
@@ -68,6 +75,7 @@ describe("resolveSendingMailbox (Slice 1.6b)", () => {
         emailAddress: `${label}-${randomUUID().slice(0, 8)}@example.com`,
         isPrimary: options.isPrimary ?? false,
         healthStatus: options.healthStatus ?? "active",
+        ...(options.createdAt ? { createdAt: options.createdAt } : {}),
         ...(options.deleted ? { deletedAt: new Date() } : {}),
       },
     });
@@ -95,11 +103,27 @@ describe("resolveSendingMailbox (Slice 1.6b)", () => {
    * itself only ever runs on the RLS-scoped `eva_app` connection, and a test
    * that does otherwise is not testing the thing that ships.
    */
-  function resolve(customer: { emailAccountId: string | null }) {
+  function resolve(customer: { organisationId: string; emailAccountId: string | null }) {
     return withTenant(app.get(PrismaService).db, { organisationId: org.id, userId }, (tx) =>
-      service.resolveSendingMailbox(tx, customer),
+      service.resolveSendingMailbox(tx, org.id, customer),
     );
   }
+
+  /**
+   * The guard that stops 1.7 chasing org A's debtor from org B's address.
+   *
+   * RLS hides the other tenant's mailboxes rather than erroring, so without
+   * this check a mis-scoped customer falls past its own (invisible) allocation,
+   * matches THIS organisation's primary, and comes back as a perfectly ordinary
+   * `substituted` result. Nothing would throw and nobody would find out until a
+   * debtor asked who had emailed them.
+   */
+  it("refuses a customer from another organisation, loudly", async () => {
+    await addMailbox("default", { isPrimary: true });
+    await expect(resolve({ organisationId: randomUUID(), emailAccountId: null })).rejects.toThrow(
+      /different organisation/i,
+    );
+  });
 
   it("uses the client's own mailbox when it is live and healthy", async () => {
     await addMailbox("default", { isPrimary: true });
@@ -170,16 +194,31 @@ describe("resolveSendingMailbox (Slice 1.6b)", () => {
    * on each run — a debtor seeing one conversation scattered across three
    * mailboxes is worse than the dead grant that caused it.
    */
-  it("picks the same stand-in every time when several are healthy", async () => {
+  /**
+   * ⚠️ THE ORDER OF INSERTION IS DELIBERATELY NOT THE ORDER OF `createdAt`.
+   *
+   * Resolving three times in a row — which is what this test did first — proves
+   * nothing at all: with no ORDER BY, Postgres returns a small freshly-inserted
+   * table in heap order, which IS insertion order, so deleting
+   * `orderBy: createdAt asc` from the source left every test green. Disturbing
+   * the heap with an UPDATE does not help either: those are HOT updates, which
+   * keep the row's original line pointer and therefore its scan position.
+   *
+   * So the fixture inserts the OLDEST mailbox LAST. Heap order now disagrees
+   * with `createdAt` order, and only code that actually sorts can pass.
+   */
+  it("picks the oldest healthy mailbox, not whichever the database returns first", async () => {
     await addMailbox("default", { isPrimary: true, healthStatus: "auth_expired" });
-    const oldest = await addMailbox("first");
-    await addMailbox("second");
-    await addMailbox("third");
+    const newest = await addMailbox("newest", { createdAt: new Date("2026-03-01T00:00:00Z") });
+    const middle = await addMailbox("middle", { createdAt: new Date("2026-02-01T00:00:00Z") });
+    const oldest = await addMailbox("oldest", { createdAt: new Date("2026-01-01T00:00:00Z") });
     const customer = await addClient();
 
-    for (let attempt = 0; attempt < 3; attempt += 1) {
-      expect((await resolve(customer))?.account.id).toBe(oldest.id);
-    }
+    expect((await resolve(customer))?.account.id).toBe(oldest.id);
+    // Stable across calls too — a debtor must not see one thread arrive from
+    // three different addresses.
+    expect((await resolve(customer))?.account.id).toBe(oldest.id);
+    expect([middle.id, newest.id]).not.toContain(oldest.id);
   });
 
   /** Null is a real outcome. An organisation whose every mailbox is dead must
@@ -201,7 +240,7 @@ describe("resolveSendingMailbox (Slice 1.6b)", () => {
 
     // Belt and braces: disconnect clears allocations (Task 4), so this state
     // should not arise — but a stale pointer must not resurrect a dead grant.
-    const result = await resolve({ emailAccountId: gone.id });
+    const result = await resolve({ organisationId: org.id, emailAccountId: gone.id });
     expect(result?.account.id).toBe(primary.id);
     expect(result?.source).toBe("substituted");
   });

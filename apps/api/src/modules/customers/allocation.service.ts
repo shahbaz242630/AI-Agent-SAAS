@@ -116,56 +116,69 @@ export class AllocationService {
     input: AllocateClientsRequest,
   ): Promise<AllocateClientsResultDto> {
     const user = await this.usersService.resolveOrProvision(authUser);
-    return withTenant(this.prisma.db, { organisationId, userId: user.id }, async (tx) => {
-      await requirePermission(tx, organisationId, user.id, "customers:write");
-      await requirePermission(tx, organisationId, user.id, "mailbox:read");
+    return withTenant(
+      this.prisma.db,
+      { organisationId, userId: user.id },
+      async (tx) => {
+        await requirePermission(tx, organisationId, user.id, "customers:write");
+        await requirePermission(tx, organisationId, user.id, "mailbox:read");
 
-      const target = await this.resolveTargetMailbox(tx, input.emailAccountId);
-      // Duplicates in the request must not inflate the "moved" count or write
-      // two audit rows for one client.
-      const requestedIds = [...new Set(input.customerIds)];
+        const target = await this.resolveTargetMailbox(tx, input.emailAccountId);
+        // Duplicates in the request must not inflate the "moved" count or write
+        // two audit rows for one client.
+        const requestedIds = [...new Set(input.customerIds)];
 
-      const customers = await tx.customer.findMany({
-        where: { id: { in: requestedIds }, deletedAt: null },
-        select: { id: true, emailAccountId: true },
-      });
+        const customers = await tx.customer.findMany({
+          where: { id: { in: requestedIds }, deletedAt: null },
+          select: { id: true, emailAccountId: true },
+        });
 
+        /**
+         * All or nothing. A partial success would report "42 moved" for a request
+         * naming 43 clients and leave the caller guessing which one did not — and
+         * under RLS a cross-tenant id is simply invisible, so "not found" here is
+         * what the query genuinely returns rather than a euphemism for "forbidden"
+         * (BRD 15).
+         */
+        if (customers.length !== requestedIds.length) {
+          throw new NotFoundException("Customer not found");
+        }
+
+        // Re-filing a client under the mailbox it is already on is not a move.
+        // Counting it would have the UI claim work it did not do, and would write
+        // an audit row saying a client changed address when it did not.
+        const changing = customers.filter((customer) => customer.emailAccountId !== target);
+        if (changing.length === 0) return { moved: 0 };
+
+        await tx.customer.updateMany({
+          where: { id: { in: changing.map((customer) => customer.id) } },
+          data: { emailAccountId: target },
+        });
+
+        await writeAuditLogs(
+          tx,
+          changing.map((customer) => ({
+            organisationId,
+            actorUserId: user.id,
+            action: "customer.reassigned",
+            entityType: "customer",
+            entityId: customer.id,
+            metadata: { from: customer.emailAccountId, to: target },
+          })),
+        );
+
+        return { moved: changing.length };
+      },
       /**
-       * All or nothing. A partial success would report "42 moved" for a request
-       * naming 43 clients and leave the caller guessing which one did not — and
-       * under RLS a cross-tenant id is simply invisible, so "not found" here is
-       * what the query genuinely returns rather than a euphemism for "forbidden"
-       * (BRD 15).
+       * 30s, not Prisma's 5s default — the 1.5 PR #36 lesson, verbatim: staging
+       * 500'd on a transaction at US-West↔London latency with only three
+       * invoices. This one is larger. A full batch holds two permission lookups
+       * (each a nested include plus a count), a findMany, an updateMany, and a
+       * `createMany` of up to 500 audit rows. Timing out would roll back the
+       * whole book and show a generic error, having moved nobody.
        */
-      if (customers.length !== requestedIds.length) {
-        throw new NotFoundException("Customer not found");
-      }
-
-      // Re-filing a client under the mailbox it is already on is not a move.
-      // Counting it would have the UI claim work it did not do, and would write
-      // an audit row saying a client changed address when it did not.
-      const changing = customers.filter((customer) => customer.emailAccountId !== target);
-      if (changing.length === 0) return { moved: 0 };
-
-      await tx.customer.updateMany({
-        where: { id: { in: changing.map((customer) => customer.id) } },
-        data: { emailAccountId: target },
-      });
-
-      await writeAuditLogs(
-        tx,
-        changing.map((customer) => ({
-          organisationId,
-          actorUserId: user.id,
-          action: "customer.reassigned",
-          entityType: "customer",
-          entityId: customer.id,
-          metadata: { from: customer.emailAccountId, to: target },
-        })),
-      );
-
-      return { moved: changing.length };
-    });
+      { timeout: 30_000 },
+    );
   }
 
   /**

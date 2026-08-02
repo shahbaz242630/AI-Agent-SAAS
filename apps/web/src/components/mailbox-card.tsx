@@ -35,11 +35,22 @@ export function MailboxCard({
   /** Slice 1.6b: link through to this mailbox's book. Off in onboarding, where
    *  no clients exist yet and the link would lead somewhere empty. */
   clientsHref,
+  /**
+   * Is there another HEALTHY mailbox that could stand in for this one
+   * (ruling 6)? Decides whether an unhealthy mailbox means "chasing carries on
+   * from elsewhere" or "chasing has stopped" — two completely different things
+   * to tell a customer, and the second is the one that costs them money.
+   *
+   * Defaults false so a caller that has not thought about it gets the cautious
+   * message rather than a reassuring one that might be untrue.
+   */
+  hasHealthyAlternative = false,
   actions,
 }: {
   mailbox: MailboxSummary;
   showPrimary?: boolean;
   clientsHref?: string;
+  hasHealthyAlternative?: boolean;
   actions?: React.ReactNode;
 }) {
   const healthy = mailbox.healthStatus === "active";
@@ -82,11 +93,25 @@ export function MailboxCard({
       */}
       {!healthy && (
         <p className="rounded-[var(--radius-card)] bg-danger/10 px-3 py-2 text-sm text-danger">
-          {mailbox.isPrimary
-            ? "Reconnect this mailbox. Until you do, every client you haven't filed elsewhere is being chased from a different address."
-            : count > 0
-              ? `Reconnect this mailbox. Until you do, its ${count === 1 ? "client is" : `${count} clients are`} being chased from a different address.`
-              : "Reconnect this mailbox. Eva cannot send from it."}
+          {/*
+            ⚠️ The no-alternative branch is the one that matters, and the
+            earlier version of this card got it exactly backwards.
+
+            With a single mailbox — the common case, and the ONLY case during
+            onboarding — `isPrimary` is true, so it announced that clients were
+            "being chased from a different address" when there is no other
+            address and `resolveSendingMailbox` returns null. It reported
+            business as usual at the precise moment all chasing had stopped:
+            the silent revenue stall the scope names as the catastrophic
+            outcome, rendered as reassurance.
+          */}
+          {!hasHealthyAlternative
+            ? "Reconnect this mailbox. Until you do, Eva has nowhere to send from and your clients are NOT being chased."
+            : mailbox.isPrimary
+              ? "Reconnect this mailbox. Until you do, every client you haven't filed elsewhere is being chased from a different address."
+              : count > 0
+                ? `Reconnect this mailbox. Until you do, its ${count === 1 ? "client is" : `${count} clients are`} being chased from a different address.`
+                : "Reconnect this mailbox. Eva cannot send from it."}
         </p>
       )}
 

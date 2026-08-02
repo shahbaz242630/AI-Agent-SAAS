@@ -255,8 +255,28 @@ export class MailboxesService {
    */
   async resolveSendingMailbox(
     tx: TenantTx,
-    customer: { emailAccountId: string | null },
+    organisationId: string,
+    customer: { organisationId: string; emailAccountId: string | null },
   ): Promise<SendingMailboxResolution | null> {
+    /**
+     * ⚠️ The caller must not hand us a customer from a different tenant than
+     * the transaction is scoped to, and this is the ONLY place that can tell.
+     *
+     * RLS hides the other organisation's mailboxes rather than erroring, so
+     * without this guard a mis-scoped customer would silently fall past its own
+     * (invisible) allocation, match THIS organisation's primary, and return it
+     * as a `substituted` mailbox. Org A's debtor would then be chased from org
+     * B's address — the failure migration 0020's own comment calls the worst
+     * this product could have. The composite foreign key cannot catch it: it
+     * constrains what is written, not what a read-only resolver returns.
+     *
+     * Loud, not a null: this can only happen through a caller bug (1.7 batching
+     * per organisation), and a quiet answer would hide it until a customer
+     * noticed. `ensureAccessToken` guards itself the same way.
+     */
+    if (customer.organisationId !== organisationId) {
+      throw new Error("resolveSendingMailbox: customer belongs to a different organisation");
+    }
     /**
      * One query, then decide in memory. An organisation holds at most a handful
      * of mailboxes (it pays per seat), and this runs once per reminder — three
@@ -673,6 +693,26 @@ export class MailboxesService {
                 where: { id: account.id },
                 data: { isPrimary: true },
               });
+              /**
+               * Audited as its own event, not left implicit in `mailbox.replaced`.
+               *
+               * The default is the mailbox that chases every UNFILED client
+               * (ruling 1) — usually most of the book — so this is the change
+               * somebody will later need explained. The two other paths that
+               * move it (`setPrimary`, and disconnect's auto-promotion) both
+               * write this row; a replace that did not would leave the question
+               * "when did our unfiled clients start being chased from here?"
+               * answerable only by someone who already knew to look for
+               * `mailbox.replaced` and to infer it.
+               */
+              await writeAuditLog(tx, {
+                organisationId: claims.organisationId,
+                actorUserId: claims.userId,
+                action: "mailbox.primary_changed",
+                entityType: "email_account",
+                entityId: account.id,
+                metadata: { reason: "mailbox_replaced", previousMailboxId: replacing.id },
+              });
             }
             // Tokens hard-gone, row kept as history — the same contract as a
             // plain disconnect (ruling 8).
@@ -701,6 +741,16 @@ export class MailboxesService {
 
           return { accountId: account.id, isNewConnection: existing === null };
         },
+        /**
+         * 30s, not Prisma's 5s default (the 1.5 PR #36 lesson). A replace grew
+         * this transaction from about five statements to thirteen, one of them
+         * a `createMany` of one audit row per carried client. Timing out here
+         * is worse than anywhere else in the codebase: the Microsoft tokens
+         * have already been exchanged and are discarded on rollback, so the
+         * customer must walk the entire consent journey again — including the
+         * administrator-approval detour if their tenant requires one.
+         */
+        { timeout: 30_000 },
       ));
     } catch (error) {
       /**
@@ -975,7 +1025,22 @@ export class MailboxesService {
           where: { deletedAt: null, isPrimary: true },
           select: { emailAddress: true },
         });
+        /**
+         * The clients nobody ever filed ALSO change address when the mailbox
+         * being disconnected is the default — and by ruling 1 they are usually
+         * the majority, not an afterthought. Counting only the filed ones would
+         * report "0 clients moved" while several hundred quietly started being
+         * chased from somewhere else, which is the precise silence ruling 3
+         * exists to forbid.
+         *
+         * Zero when a non-default mailbox goes: the default those clients fall
+         * back to has not moved, so nothing about them changed.
+         */
+        const unfiledClientsMoved = account.isPrimary
+          ? await tx.customer.count({ where: { deletedAt: null, emailAccountId: null } })
+          : 0;
         return {
+          unfiledClientsMoved,
           clientsMoved: moving.length,
           movedToEmailAddress: fallback?.emailAddress ?? null,
         };

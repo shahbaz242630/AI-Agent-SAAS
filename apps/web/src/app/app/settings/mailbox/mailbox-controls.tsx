@@ -118,8 +118,20 @@ export function MailboxActions({
         <div className="flex flex-col gap-2 rounded-[var(--radius-card)] bg-muted p-3">
           <p className="text-sm">
             Disconnect <span className="font-medium">{mailbox.emailAddress}</span>?
-            {mailbox.isPrimary && " Eva will send from your next oldest mailbox instead."}
+            {/* Gated on there actually BEING another mailbox. `canPromote` was
+                already passed in and ignored here, so a single-mailbox
+                organisation was promised a fallback that does not exist — and
+                the truth is the opposite: everything stops. */}
+            {mailbox.isPrimary &&
+              canPromote &&
+              " Eva will send from your next oldest mailbox instead."}
           </p>
+          {!canPromote && (
+            <p className="text-sm text-danger">
+              This is your only mailbox. Eva will have nowhere to send from and will stop chasing
+              everyone until you connect another.
+            </p>
+          )}
           {/* Say the cost BEFORE the click, not only after it. Someone
               disconnecting to tidy up needs to know a book of clients moves. */}
           {filed > 0 && (

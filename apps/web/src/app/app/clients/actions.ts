@@ -110,6 +110,10 @@ export async function addClient(
   }
 
   revalidatePath(CLIENTS_PATH);
+  // The mailbox settings card shows a client count, and that count is the copy
+  // that states the cost of a Disconnect or a Replace BEFORE the click. Leaving
+  // it stale understates what the user is about to lose.
+  revalidatePath("/app/settings/mailbox");
   return { success: "Client added." };
 }
 

@@ -105,25 +105,45 @@ export default async function ClientsPage({
     clients = (await (
       await apiFetch(`/organisations/${organisation.id}/customers`, accessToken)
     ).json()) as ClientRow[];
-    /**
-     * The mailbox list and the allocation view both sit behind `mailbox:read`,
-     * which belongs to Invoice Chasing — so an organisation that switched the
-     * product off 402s HERE and gets the upgrade prompt (ALLOCATION-SCOPE trap
-     * 4). The client list itself is core and would happily have carried on
-     * working, which is exactly the hole plan decision D1 closed.
-     */
-    const list = (await (
-      await apiFetch(`/organisations/${organisation.id}/mailboxes`, accessToken)
-    ).json()) as MailboxList;
-    mailboxes = list.mailboxes;
-    allocation = (await (
-      await apiFetch(`/organisations/${organisation.id}/customers/allocation`, accessToken)
-    ).json()) as AllocationList;
   } catch (error) {
     if (error instanceof ApiError && error.status === 401) redirect("/sign-in");
     if (error instanceof ApiError && error.status === 403) forbidden = true;
     else if (error instanceof ApiError && error.status === 402) notEntitled = true;
     else throw error;
+  }
+
+  /**
+   * The mailbox half is fetched SEPARATELY, and a refusal here does not take
+   * the page down.
+   *
+   * `customers:read` is a core permission but `mailbox:read` is not: `sales`,
+   * `reception` and `read_only` hold the first and not the second
+   * (`DEFAULT_ROLE_PERMISSIONS`). Fetching both in one try meant a 403 on the
+   * mailbox call replaced the whole screen with "your role doesn't have access
+   * to clients" — false, and it removed the only browser route to the client
+   * book from three of the six roles. Standing rule §0d: when two causes are
+   * distinguishable, do not name the wrong one.
+   *
+   * A 402 DOES still take the page, deliberately: an organisation that has not
+   * got Invoice Chasing should see the upgrade prompt, not a working screen for
+   * a product it does not hold (ALLOCATION-SCOPE trap 4, plan decision D1).
+   */
+  let mailboxAccess = true;
+  if (!forbidden && !notEntitled) {
+    try {
+      const list = (await (
+        await apiFetch(`/organisations/${organisation.id}/mailboxes`, accessToken)
+      ).json()) as MailboxList;
+      mailboxes = list.mailboxes;
+      allocation = (await (
+        await apiFetch(`/organisations/${organisation.id}/customers/allocation`, accessToken)
+      ).json()) as AllocationList;
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 401) redirect("/sign-in");
+      if (error instanceof ApiError && error.status === 402) notEntitled = true;
+      else if (error instanceof ApiError && error.status === 403) mailboxAccess = false;
+      else throw error;
+    }
   }
 
   if (forbidden) {
@@ -188,7 +208,17 @@ export default async function ClientsPage({
         )}
       </section>
 
-      {mailboxes.length === 0 && (
+      {/* A role that can read clients but not mailboxes still gets the book —
+          just without the parts that are about mailboxes. Saying so beats
+          silently omitting a column they can see colleagues using. */}
+      {!mailboxAccess && (
+        <p className="w-full max-w-4xl rounded-[var(--radius-card)] bg-muted px-6 py-3 text-sm text-muted-foreground">
+          Your role can see clients but not mailbox settings, so which mailbox chases whom is
+          hidden. Ask an owner or administrator if you need it.
+        </p>
+      )}
+
+      {mailboxAccess && mailboxes.length === 0 && (
         <section className="flex w-full max-w-4xl flex-col gap-3 rounded-[var(--radius-card)] bg-muted px-6 py-4">
           <p className="text-sm">
             No mailbox is connected yet, so nothing can be chased. You can still add clients now and

@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { existsSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -1142,14 +1142,40 @@ describe("Schema conventions (BRD 10)", () => {
      * Scoped to rows that predate the migration, because specs in this file
      * deliberately file clients under mailboxes.
      */
-    it("backfilled NOTHING — every client that predates the migration is still unallocated", async () => {
-      const stamped = await prisma.$queryRaw<{ id: string }[]>`
-        SELECT id FROM customers
-        WHERE email_account_id IS NOT NULL
-          AND created_at < (
-            SELECT finished_at FROM _prisma_migrations
-            WHERE migration_name = '20260802160000_customer_mailbox_allocation')`;
-      expect(stamped).toEqual([]);
+    it("backfilled NOTHING — the migration never writes to customers", () => {
+      /**
+       * Asserted against the migration TEXT, not against row timestamps.
+       *
+       * The obvious spelling — "no customer created before this migration ran
+       * has an allocation" — CANNOT FAIL. Migration 0020 runs against an empty
+       * `customers` table on every fresh database (CI creates `eva_test` and
+       * migrates before any spec inserts a row), so the predicate matches zero
+       * rows whether or not a backfill exists. Measured on this machine: 314
+       * customers, 0 predating the migration. Appending the exact trap-1
+       * backfill this test forbids left it green.
+       *
+       * Note the same `created_at < finished_at` idiom guards the 0017 and 0019
+       * backfill claims elsewhere in this file and is inert there too.
+       */
+      const migration = readFileSync(
+        path.join(
+          fileURLToPath(new URL("../prisma/migrations", import.meta.url)),
+          "20260802160000_customer_mailbox_allocation",
+          "migration.sql",
+        ),
+        "utf8",
+      );
+      const statements = migration
+        .split("\n")
+        .filter((line) => !line.trimStart().startsWith("--"))
+        .join("\n");
+      // A backfill can only be an UPDATE or an INSERT against customers.
+      expect(statements).not.toMatch(/UPDATE\s+"?customers"?/i);
+      expect(statements).not.toMatch(/INSERT\s+INTO\s+"?customers"?/i);
+      // Positive control: the file really was read and really does touch the
+      // table, so the two assertions above are about content and not about an
+      // empty string.
+      expect(statements).toMatch(/ALTER TABLE "customers"/);
     });
   });
 });

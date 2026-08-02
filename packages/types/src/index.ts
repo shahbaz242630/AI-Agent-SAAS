@@ -569,7 +569,20 @@ export interface MailboxTestEmailResultDto {
  * address they are chased from is the failure this number prevents.
  */
 export interface MailboxDisconnectResultDto {
+  /** Clients that were FILED under the disconnected mailbox and have been
+   *  un-filed back to the default. */
   clientsMoved: number;
+  /**
+   * Clients that were never filed anywhere and have ALSO changed address,
+   * because the mailbox disconnected was the default and another was promoted.
+   *
+   * Counted separately, and it is usually the bigger number: ruling 1 sends
+   * every unallocated client from the default, so disconnecting the default
+   * re-routes everyone who was never filed. Reporting only `clientsMoved`
+   * would say "0 clients moved" while several hundred quietly changed the
+   * address they are chased from — exactly the silence ruling 3 forbids.
+   */
+  unfiledClientsMoved: number;
   /** Where they went — null when the organisation has no mailbox left at all. */
   movedToEmailAddress: string | null;
 }

@@ -171,7 +171,11 @@ export async function disconnectMailbox(
   const mailboxId = String(formData.get("mailboxId") ?? "");
   const accessToken = await getAccessToken();
   if (!accessToken) redirect("/sign-in");
-  let result: { clientsMoved: number; movedToEmailAddress: string | null };
+  let result: {
+    clientsMoved: number;
+    unfiledClientsMoved: number;
+    movedToEmailAddress: string | null;
+  };
   try {
     const response = await apiFetch(
       `/organisations/${organisationId}/mailboxes/${mailboxId}/disconnect`,
@@ -188,16 +192,39 @@ export async function disconnectMailbox(
   revalidatePath(MAILBOX_PATH);
   revalidatePath("/app/clients");
   /**
-   * RULING 3: never silent. Its clients have just changed the address they are
-   * chased from, and finding that out months later — from a confused debtor —
-   * is the failure this sentence exists to prevent.
+   * RULING 3: never silent — and it has to SURVIVE.
+   *
+   * This message used to be returned as action state held by the mailbox card's
+   * own controls. Disconnecting removes that card from the re-rendered list, so
+   * the component holding the sentence unmounted as the sentence arrived: the
+   * one guarantee ruling 3 makes had no surviving place to be read. It now goes
+   * back as a redirect flash, the same mechanism the connect flow already uses,
+   * which outlives the row it describes.
    */
-  if (result.clientsMoved === 0) return { success: "Mailbox disconnected." };
-  const who = result.clientsMoved === 1 ? "1 client is" : `${result.clientsMoved} clients are`;
+  redirect(`${MAILBOX_PATH}?${new URLSearchParams(disconnectFlash(result)).toString()}`);
+}
+
+/**
+ * What a disconnect actually cost, as query parameters the settings page
+ * renders.
+ *
+ * BOTH numbers matter and they are different groups. `clientsMoved` is the
+ * clients filed under the mailbox that just went. `unfiledClientsMoved` is
+ * everyone who was never filed at all — they change address too when the
+ * DEFAULT is disconnected, and by ruling 1 they are usually the majority.
+ * Reporting only the first said "Mailbox disconnected." while several hundred
+ * people quietly started being chased from somewhere else.
+ */
+function disconnectFlash(result: {
+  clientsMoved: number;
+  unfiledClientsMoved: number;
+  movedToEmailAddress: string | null;
+}): Record<string, string> {
   return {
-    success: result.movedToEmailAddress
-      ? `Mailbox disconnected. ${who} now chased from ${result.movedToEmailAddress}.`
-      : `Mailbox disconnected. ${who} no longer being chased — connect a mailbox to resume.`,
+    disconnected: "1",
+    moved: String(result.clientsMoved),
+    unfiled: String(result.unfiledClientsMoved),
+    ...(result.movedToEmailAddress ? { to: result.movedToEmailAddress } : {}),
   };
 }
 
