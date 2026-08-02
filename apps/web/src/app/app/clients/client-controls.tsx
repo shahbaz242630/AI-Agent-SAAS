@@ -205,6 +205,8 @@ export function ClientTable({
   }
 
   const capped = clients.length > MAX_CLIENTS_PER_ALLOCATION;
+  /** How many rows select-all can actually take — the cap, or the whole list. */
+  const selectableCount = Math.min(clients.length, MAX_CLIENTS_PER_ALLOCATION);
 
   // Resolved once, and the source of truth for whether the edit panel renders
   // at all — see the note where it is used.
@@ -274,7 +276,16 @@ export function ClientTable({
                     <input
                       type="checkbox"
                       aria-label="Select all clients"
-                      checked={selected.size > 0}
+                      /**
+                       * Ticked only when EVERY selectable row is selected —
+                       * `selected.size > 0` claimed "all" while three of eight
+                       * were ticked, which is a header lying about the rows
+                       * underneath it. Seen on staging, not in a test.
+                       *
+                       * Compared against the capped count, because select-all
+                       * takes at most MAX_CLIENTS_PER_ALLOCATION.
+                       */
+                      checked={selected.size > 0 && selected.size === selectableCount}
                       onChange={toggleAll}
                     />
                   </th>
