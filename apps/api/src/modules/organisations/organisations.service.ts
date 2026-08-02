@@ -163,7 +163,16 @@ export class OrganisationsService {
     });
   }
 
-  /** Changes a member's role — owner/administrator members only. */
+  /**
+   * Changes a member's role — owner/administrator members only.
+   *
+   * Refuses to remove an organisation's last owner, because that state is
+   * UNRECOVERABLE from inside the product: only owners and administrators may
+   * change roles, and `modules:manage` is owner-only (slice 1.6a). A sole owner
+   * demoting themselves can therefore leave a company unable to promote anyone
+   * back AND unable to turn its own products on — with no route out that does
+   * not involve us editing their database by hand.
+   */
   async changeMemberRole(
     authUser: AuthUser,
     organisationId: string,
@@ -180,12 +189,36 @@ export class OrganisationsService {
       if (!role) throw new BadRequestException(`Unknown role: ${roleKey}`);
       const target = await tx.organisationMembership.findUnique({
         where: { organisationId_userId: { organisationId, userId: targetUserId } },
-        include: { user: true },
+        include: { user: true, role: true },
       });
       if (!target) throw new NotFoundException("Member not found");
+
+      // Counted inside the same transaction as the update, so two owners
+      // demoting each other at once cannot both pass the check and leave zero.
+      if (target.role.key === "owner" && role.key !== "owner") {
+        const owners = await tx.organisationMembership.count({
+          where: { organisationId, role: { key: "owner" } },
+        });
+        if (owners <= 1) {
+          throw new BadRequestException(
+            "This is the organisation's only owner. Make someone else an owner first.",
+          );
+        }
+      }
+
       const updated = await tx.organisationMembership.update({
         where: { id: target.id },
         data: { roleId: role.id },
+      });
+      // A privilege change is exactly the mutation that has to be explainable
+      // afterwards. This was missing entirely until 2026-08-02.
+      await writeAuditLog(tx, {
+        organisationId,
+        actorUserId: user.id,
+        action: "member.role_changed",
+        entityType: "organisation_membership",
+        entityId: target.id,
+        metadata: { targetUserId, fromRoleKey: target.role.key, toRoleKey: role.key },
       });
       return {
         userId: updated.userId,
@@ -237,7 +270,7 @@ export class OrganisationsService {
       const grants = [
         ...new Map(
           input.grants.map((grant) => [
-            `${grant.roleKey} ${grant.permissionKey}`,
+            `${grant.roleKey}\u0000${grant.permissionKey}`,
             { roleKey: grant.roleKey, permissionKey: grant.permissionKey },
           ]),
         ).values(),
