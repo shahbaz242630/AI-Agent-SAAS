@@ -59,6 +59,7 @@ async function resolveConnectTarget(
   accessToken: string,
   emailAddress: string,
   flow: ConnectFlow,
+  replacesMailboxId: string | null = null,
 ): Promise<string> {
   try {
     const response = await apiFetch(
@@ -67,7 +68,11 @@ async function resolveConnectTarget(
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...(emailAddress ? { emailAddress } : {}), flow }),
+        body: JSON.stringify({
+          ...(emailAddress ? { emailAddress } : {}),
+          flow,
+          ...(replacesMailboxId ? { replacesMailboxId } : {}),
+        }),
       },
     );
     const { authorizeUrl } = (await response.json()) as { authorizeUrl: string };
@@ -98,7 +103,15 @@ export async function connectMailbox(formData: FormData): Promise<void> {
   const accessToken = await getAccessToken();
   if (!accessToken) redirect("/sign-in");
   redirect(
-    await resolveConnectTarget(organisationId, accessToken, emailAddress, readFlow(formData)),
+    await resolveConnectTarget(
+      organisationId,
+      accessToken,
+      emailAddress,
+      readFlow(formData),
+      // Present only on the Replace form (slice 1.6b, ruling 3). Empty means an
+      // ordinary connect, which is the overwhelmingly common case.
+      String(formData.get("replacesMailboxId") ?? "").trim() || null,
+    ),
   );
 }
 
@@ -158,12 +171,14 @@ export async function disconnectMailbox(
   const mailboxId = String(formData.get("mailboxId") ?? "");
   const accessToken = await getAccessToken();
   if (!accessToken) redirect("/sign-in");
+  let result: { clientsMoved: number; movedToEmailAddress: string | null };
   try {
-    await apiFetch(
+    const response = await apiFetch(
       `/organisations/${organisationId}/mailboxes/${mailboxId}/disconnect`,
       accessToken,
       { method: "POST" },
     );
+    result = (await response.json()) as typeof result;
   } catch (error) {
     if (error instanceof ApiError && error.status === 401) redirect("/sign-in");
     return {
@@ -171,7 +186,19 @@ export async function disconnectMailbox(
     };
   }
   revalidatePath(MAILBOX_PATH);
-  return { success: "Mailbox disconnected." };
+  revalidatePath("/app/clients");
+  /**
+   * RULING 3: never silent. Its clients have just changed the address they are
+   * chased from, and finding that out months later — from a confused debtor —
+   * is the failure this sentence exists to prevent.
+   */
+  if (result.clientsMoved === 0) return { success: "Mailbox disconnected." };
+  const who = result.clientsMoved === 1 ? "1 client is" : `${result.clientsMoved} clients are`;
+  return {
+    success: result.movedToEmailAddress
+      ? `Mailbox disconnected. ${who} now chased from ${result.movedToEmailAddress}.`
+      : `Mailbox disconnected. ${who} no longer being chased — connect a mailbox to resume.`,
+  };
 }
 
 /** Which mailbox Eva sends reminders from. */

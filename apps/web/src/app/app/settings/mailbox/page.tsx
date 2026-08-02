@@ -194,6 +194,9 @@ export default async function MailboxSettingsPage({
                   key={mailbox.id}
                   mailbox={mailbox}
                   showPrimary={status!.mailboxes.length > 1}
+                  // Through to this mailbox's own book, where adding a client
+                  // files it here automatically (slice 1.6b).
+                  clientsHref={`/app/clients?mailbox=${mailbox.id}`}
                   actions={
                     <MailboxActions
                       organisationId={organisation.id}
@@ -234,9 +237,14 @@ export default async function MailboxSettingsPage({
         </section>
       ) : null}
 
-      <Link href="/app" className="text-sm font-medium text-muted-foreground hover:underline">
-        Back to your organisations
-      </Link>
+      <div className="flex flex-wrap items-center gap-4">
+        <Link href="/app/clients" className="text-sm font-medium text-primary hover:underline">
+          Your clients
+        </Link>
+        <Link href="/app" className="text-sm font-medium text-muted-foreground hover:underline">
+          Back to your organisations
+        </Link>
+      </div>
     </main>
   );
 }

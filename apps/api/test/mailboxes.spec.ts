@@ -614,6 +614,39 @@ describe("Mailboxes (Slice 1.6)", () => {
       expect(response.body.message).toContain("disconnect 1");
     });
 
+    /**
+     * ALLOCATION-SCOPE trap 6 (slice 1.6b). Mailboxes are not the whole cost of
+     * lowering a seat count: disconnecting one moves every client filed under
+     * it back to the default. Somebody trimming seats to save money deserves to
+     * know that BEFORE they start.
+     */
+    it("names the clients at risk, not just the mailboxes, when refusing a seat cut", async () => {
+      await clearMailboxes();
+      await addMailbox("one@seats.example", true);
+      const second = await addMailbox("two@seats.example");
+      await owner.customer.create({
+        data: {
+          id: randomUUID(),
+          organisationId: seatOrg.id,
+          name: `Seat Trap ${randomUUID().slice(0, 8)}`,
+          emailAccountId: second.id,
+        },
+      });
+
+      const response = await request(app.getHttpServer())
+        .put(`/organisations/${seatOrg.id}/modules/email_credit_controller`)
+        .set("Authorization", `Bearer ${seatToken}`)
+        .send({ enabled: true, seats: 1 })
+        .expect(400);
+
+      expect(response.body.message).toContain("disconnect 1");
+      expect(response.body.message).toContain("client");
+      expect(response.body.message).toContain("default mailbox");
+      // Spelled out, never "1 clients" — this is read at the moment someone is
+      // told no, and the slice before this one shipped "lowering to 1 seats".
+      expect(response.body.message).not.toMatch(/\b1 clients\b/);
+    });
+
     it("disconnecting the primary promotes the oldest remaining, and audits it", async () => {
       await clearMailboxes();
       const primary = await addMailbox("one@seats.example", true);
