@@ -9,6 +9,18 @@ import {
   type ClientActionState,
 } from "./actions";
 
+/**
+ * Must match `MAX_CLIENTS_PER_ALLOCATION` in `@eva/types`, which the API
+ * enforces. Duplicated rather than imported because `apps/web` deliberately
+ * does not depend on the shared packages — it redeclares every contract shape
+ * it uses (slice 1.6 ruling 1, thin UI).
+ *
+ * Drift is mild and self-announcing: if the API bound dropped below this, a
+ * select-all would surface the validation pipe's raw message again, which is
+ * the defect this constant exists to prevent.
+ */
+const MAX_CLIENTS_PER_ALLOCATION = 500;
+
 const INITIAL_STATE: ClientActionState = {};
 
 const BUTTON_CLASS =
@@ -174,11 +186,25 @@ export function ClientTable({
     });
   }
 
+  /**
+   * Select-all is CAPPED at what one request can carry.
+   *
+   * The API bounds a batch at 500 so a single request cannot open an unbounded
+   * transaction. Without a matching cap here, an organisation with 2,000
+   * clients could tick every row, see a button reading "File 2000 clients", and
+   * get back the validation pipe's raw text — `customerIds: Too big: expected
+   * array to have <=500 items` — which is not a sentence anybody should be
+   * shown. Selecting the first 500 and saying so is the honest version.
+   */
   function toggleAll() {
     setSelected((current) =>
-      current.size === clients.length ? new Set() : new Set(clients.map((row) => row.id)),
+      current.size > 0
+        ? new Set()
+        : new Set(clients.slice(0, MAX_CLIENTS_PER_ALLOCATION).map((row) => row.id)),
     );
   }
+
+  const capped = clients.length > MAX_CLIENTS_PER_ALLOCATION;
 
   // Resolved once, and the source of truth for whether the edit panel renders
   // at all — see the note where it is used.
@@ -229,6 +255,11 @@ export function ClientTable({
                 ? "Filing…"
                 : `File ${selected.size === 1 ? "1 client" : `${selected.size} clients`}`}
             </button>
+            {capped && (
+              <p className="w-full text-xs text-muted-foreground">
+                {`You can file up to ${MAX_CLIENTS_PER_ALLOCATION} clients at a time, so Select all takes the first ${MAX_CLIENTS_PER_ALLOCATION}. Repeat to do the rest.`}
+              </p>
+            )}
           </div>
         )}
 
@@ -243,7 +274,7 @@ export function ClientTable({
                     <input
                       type="checkbox"
                       aria-label="Select all clients"
-                      checked={clients.length > 0 && selected.size === clients.length}
+                      checked={selected.size > 0}
                       onChange={toggleAll}
                     />
                   </th>

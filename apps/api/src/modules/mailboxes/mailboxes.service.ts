@@ -30,7 +30,7 @@ import { PrismaService } from "../../common/database/prisma.service.js";
 import { UsersService } from "../users/users.service.js";
 import { requirePermission, type TenantTx } from "../../common/permissions/permissions.js";
 import { ModuleNotEntitledException } from "../../common/permissions/module-not-entitled.exception.js";
-import { writeAuditLog, writeAuditLogs } from "../../common/audit/audit-log.js";
+import { auditReassignedByMailbox, writeAuditLog } from "../../common/audit/audit-log.js";
 import {
   decryptToken,
   encryptToken,
@@ -571,8 +571,9 @@ export class MailboxesService {
     };
     let accountId: string;
     let isNewConnection: boolean;
+    let replaceDegraded: boolean;
     try {
-      ({ accountId, isNewConnection } = await withTenant(
+      ({ accountId, isNewConnection, replaceDegraded } = await withTenant(
         this.prisma.db,
         { organisationId: claims.organisationId, userId: claims.userId },
         async (tx) => {
@@ -660,25 +661,20 @@ export class MailboxesService {
            * replace; that is a reconnect and needs none of this.
            */
           if (replacing && replacing.id !== account.id) {
-            const moving = await tx.customer.findMany({
-              where: { emailAccountId: replacing.id, deletedAt: null },
-              select: { id: true },
+            // Audit first, then move — same reason as disconnect: the
+            // insert-select reads clients by their CURRENT allocation, and it
+            // streams rather than loading an unbounded book into memory.
+            const carried = await auditReassignedByMailbox(tx, {
+              organisationId: claims.organisationId,
+              actorUserId: claims.userId,
+              fromEmailAccountId: replacing.id,
+              toEmailAccountId: account.id,
+              reason: "mailbox_replaced",
             });
             await tx.customer.updateMany({
               where: { emailAccountId: replacing.id },
               data: { emailAccountId: account.id },
             });
-            await writeAuditLogs(
-              tx,
-              moving.map((customer) => ({
-                organisationId: claims.organisationId,
-                actorUserId: claims.userId,
-                action: "customer.reassigned",
-                entityType: "customer",
-                entityId: customer.id,
-                metadata: { from: replacing.id, to: account.id, reason: "mailbox_replaced" },
-              })),
-            );
             /**
              * The default status follows too. Demote first: a partial unique
              * index allows only one primary per organisation, so promoting
@@ -734,12 +730,38 @@ export class MailboxesService {
               metadata: {
                 replacedMailboxId: replacing.id,
                 replacedEmailAddress: replacing.emailAddress,
-                clientsCarried: moving.length,
+                clientsCarried: carried,
               },
             });
           }
 
-          return { accountId: account.id, isNewConnection: existing === null };
+          /**
+           * A replace was ASKED FOR and could not be performed — the mailbox it
+           * named was disconnected during the Microsoft round trip (by a
+           * colleague, a second tab, or a duplicate click).
+           *
+           * Degrading to a plain connect is the right behaviour; doing it
+           * SILENTLY was not. The outcome is exactly what ruling 3 forbids: the
+           * old mailbox is gone, its clients fell back to the default, and the
+           * user believes their book followed the new address. Worse, the audit
+           * trail showed a single ordinary `mailbox.connected` row — nothing
+           * anywhere recorded that a replace had been requested and skipped.
+           */
+          const replaceDegraded = claims.replacesMailboxId !== undefined && replacing === null;
+          if (replaceDegraded) {
+            await writeAuditLog(tx, {
+              organisationId: claims.organisationId,
+              actorUserId: claims.userId,
+              action: "mailbox.replace_skipped",
+              entityType: "email_account",
+              entityId: account.id,
+              metadata: {
+                requestedReplacementOf: claims.replacesMailboxId,
+                reason: "target_already_disconnected",
+              },
+            });
+          }
+          return { accountId: account.id, isNewConnection: existing === null, replaceDegraded };
         },
         /**
          * 30s, not Prisma's 5s default (the 1.5 PR #36 lesson). A replace grew
@@ -772,17 +794,21 @@ export class MailboxesService {
       this.logger.error({ err: error }, "mailbox connection could not be persisted");
       return `${base}?error=connect_failed`;
     }
-    this.logger.info({ emailAccountId: accountId }, "mailbox connected");
+    this.logger.info({ emailAccountId: accountId, replaceDegraded }, "mailbox connected");
+    // Carried on every return below: the customer asked to swap an address and
+    // did not get a swap, and finding that out from a confused debtor months
+    // later is the failure ruling 3 exists to prevent.
+    const degraded = replaceDegraded ? "&replace=degraded" : "";
     // A reconnect is someone repairing a broken grant on the settings page, not
     // someone signing up â€” posting them an email they did not ask for is noise.
-    if (!isNewConnection) return `${base}?connected=1`;
+    if (!isNewConnection) return `${base}?connected=1${degraded}`;
     const sent = await this.trySendWelcomeTestEmail(
       claims,
       accountId,
       profile.emailAddress,
       tokens.accessToken,
     );
-    return `${base}?connected=1&test_email=${sent ? "sent" : "failed"}`;
+    return `${base}?connected=1&test_email=${sent ? "sent" : "failed"}${degraded}`;
   }
 
   /**
@@ -946,25 +972,28 @@ export class MailboxesService {
          * 1 together: NULL resolves at send time, an id freezes today's default
          * into history.
          */
-        const moving = await tx.customer.findMany({
-          where: { emailAccountId: account.id, deletedAt: null },
-          select: { id: true },
+        /**
+         * Audit FIRST, then clear — the insert-select reads the clients by
+         * their current allocation, and after the update there is nothing left
+         * to select. Its affected-row count IS the number of live clients that
+         * moved, so no separate COUNT is needed.
+         *
+         * Streamed rather than loaded: a customer with 10,000 filed clients
+         * would otherwise pull 10,000 ids across the wire and push 10,000 rows
+         * back inside an open transaction (unbounded, unlike allocation which
+         * the request schema caps at 500).
+         */
+        const movedCount = await auditReassignedByMailbox(tx, {
+          organisationId,
+          actorUserId: user.id,
+          fromEmailAccountId: account.id,
+          toEmailAccountId: null,
+          reason: "mailbox_disconnected",
         });
         await tx.customer.updateMany({
           where: { emailAccountId: account.id },
           data: { emailAccountId: null },
         });
-        await writeAuditLogs(
-          tx,
-          moving.map((customer) => ({
-            organisationId,
-            actorUserId: user.id,
-            action: "customer.reassigned",
-            entityType: "customer",
-            entityId: customer.id,
-            metadata: { from: account.id, to: null, reason: "mailbox_disconnected" },
-          })),
-        );
 
         await tx.emailAccount.update({
           where: { id: account.id },
@@ -1041,7 +1070,7 @@ export class MailboxesService {
           : 0;
         return {
           unfiledClientsMoved,
-          clientsMoved: moving.length,
+          clientsMoved: movedCount,
           movedToEmailAddress: fallback?.emailAddress ?? null,
         };
       },

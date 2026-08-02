@@ -682,9 +682,46 @@ describe("Mailboxes (Slice 1.6)", () => {
           .expect(302);
 
         expect(response.headers.location).toContain("connected=1");
-        await owner.emailAccount.findFirstOrThrow({
+        const created = await owner.emailAccount.findFirstOrThrow({
           where: { organisationId: seatOrg.id, emailAddress: "fresh2@seats.example" },
         });
+        /**
+         * ⚠️ It degrades, but it must NOT degrade SILENTLY.
+         *
+         * The outcome is exactly what ruling 3 forbids: the old address is gone,
+         * its clients fell back to the default, and the customer believes their
+         * book followed the new one. Before this, the audit trail showed a
+         * single ordinary `mailbox.connected` row — indistinguishable from a
+         * normal connect — so nothing anywhere recorded that a replace had been
+         * asked for and skipped.
+         */
+        expect(response.headers.location).toContain("replace=degraded");
+        await owner.auditLog.findFirstOrThrow({
+          where: { action: "mailbox.replace_skipped", entityId: created.id },
+        });
+      });
+
+      /** The ordinary path must NOT carry the warning — a flag that is always
+       *  on tells the customer nothing. */
+      it("does not cry degraded on a replace that actually worked", async () => {
+        await clearMailboxes();
+        const old = await addMailbox("old@seats.example", true);
+        graphStub.getProfile.mockResolvedValueOnce({
+          emailAddress: "clean@seats.example",
+          displayName: "Clean",
+        });
+        const state = await signOAuthState(TEST_OAUTH_STATE_SECRET, {
+          organisationId: seatOrg.id,
+          userId: seatOrg.members[0]!.id,
+          nonce: randomUUID(),
+          replacesMailboxId: old.id,
+        });
+
+        const response = await request(app.getHttpServer())
+          .get(`/integrations/microsoft/callback?code=fake&state=${state}`)
+          .expect(302);
+
+        expect(response.headers.location).not.toContain("replace=degraded");
       });
 
       it("refuses to start a replace of a mailbox belonging to another organisation", async () => {
