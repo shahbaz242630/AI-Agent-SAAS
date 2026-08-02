@@ -13,9 +13,15 @@ const SECONDARY =
 /**
  * Turning one product on or off, and setting its seats.
  *
- * One form, two submit buttons carrying their own `enabled` value — so
- * changing seats does not require switching the product off and on again,
- * which an earlier draft of this component accidentally demanded.
+ * One form, two submit buttons carrying their own `intent` — so changing seats
+ * does not require switching the product off and on again, which an earlier
+ * draft of this component accidentally demanded.
+ *
+ * The buttons submit an INTENT rather than the raw `enabled` value they used
+ * to, because the two are not the same question. The seats input lives in this
+ * same form, so every submit carries a seat count; without an intent the
+ * action cannot tell "buy a seat" from "turn the product on" and reports both
+ * as an enable. Found on staging, 2026-08-02.
  *
  * Errors render verbatim from the API rather than being replaced with our own
  * wording: it is the only side that knows which prerequisite is missing or how
@@ -69,15 +75,15 @@ export function ModuleControls({
         )}
 
         {showSeats && (
-          <button type="submit" name="enabled" value="true" disabled={pending} className={PRIMARY}>
+          <button type="submit" name="intent" value="seats" disabled={pending} className={PRIMARY}>
             {pending ? "Saving…" : "Save seats"}
           </button>
         )}
 
         <button
           type="submit"
-          name="enabled"
-          value={enabled ? "false" : "true"}
+          name="intent"
+          value={enabled ? "disable" : "enable"}
           disabled={pending || blocked}
           className={enabled ? SECONDARY : PRIMARY}
         >

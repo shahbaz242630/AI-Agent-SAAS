@@ -85,13 +85,25 @@ export class EntitlementsService {
             },
           });
 
+      // Enabling and resizing share this endpoint, so the verb has to be
+      // derived rather than read off `input.enabled` — otherwise buying a seat
+      // on an already-on product audits as `module.enabled`, and seats are
+      // money. `previousSeats` is recorded for the same reason: a billing
+      // dispute needs to see the change, not just the result.
+      const enabledChanged = !existing || existing.enabled !== input.enabled;
+      const action = enabledChanged
+        ? input.enabled
+          ? "module.enabled"
+          : "module.disabled"
+        : "module.seats_changed";
+
       await writeAuditLog(tx, {
         organisationId,
         actorUserId: user.id,
-        action: input.enabled ? "module.enabled" : "module.disabled",
+        action,
         entityType: "organisation_module",
         entityId: account.id,
-        metadata: { moduleKey, seats },
+        metadata: { moduleKey, seats, previousSeats: existing?.seats ?? null },
       });
       this.logger.info({ moduleKey, enabled: input.enabled, seats }, "organisation module updated");
       return this.describeAll(tx);
@@ -141,8 +153,12 @@ export class EntitlementsService {
     if (input.seats === undefined) return current;
     const used = await this.countSeatsUsed(tx, moduleKey);
     if (used !== null && input.seats < used) {
+      // Spelled out rather than "1 seats" / "1 mailboxes are": this string is
+      // read by a customer at the moment they are being told no.
+      const connected = used === 1 ? "1 mailbox is" : `${used} mailboxes are`;
+      const seatWord = input.seats === 1 ? "seat" : "seats";
       throw new BadRequestException(
-        `${used} mailboxes are connected; disconnect ${used - input.seats} before lowering to ${input.seats} seats`,
+        `${connected} connected; disconnect ${used - input.seats} before lowering to ${input.seats} ${seatWord}`,
       );
     }
     return input.seats;

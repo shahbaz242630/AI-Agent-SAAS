@@ -110,6 +110,11 @@ const MODULES_PATH = "/app/settings/modules";
  * `seats` is only sent when the form actually carries it, because omitting it
  * means "leave it alone" on the API side — an enable must never silently reset
  * a seat count somebody paid for.
+ *
+ * The form submits an `intent`, not a raw `enabled` flag. Both buttons live in
+ * one form alongside the seats input, so "buy a seat" and "turn it on" arrive
+ * looking identical; the intent is what separates them, and it decides both
+ * the message shown here and the verb audited by the API.
  */
 export async function setModule(
   _prevState: MailboxActionState,
@@ -117,7 +122,11 @@ export async function setModule(
 ): Promise<MailboxActionState> {
   const organisationId = String(formData.get("organisationId") ?? "");
   const moduleKey = String(formData.get("moduleKey") ?? "");
-  const enabled = String(formData.get("enabled") ?? "") === "true";
+  const intent = String(formData.get("intent") ?? "");
+  if (intent !== "enable" && intent !== "disable" && intent !== "seats") {
+    return { error: "Something went wrong. Please try again." };
+  }
+  const enabled = intent !== "disable";
   const rawSeats = String(formData.get("seats") ?? "").trim();
   const accessToken = await getAccessToken();
   if (!accessToken) redirect("/sign-in");
@@ -137,6 +146,7 @@ export async function setModule(
     };
   }
   revalidatePath(MODULES_PATH);
+  if (intent === "seats") return { success: "Mailbox seats saved." };
   return { success: enabled ? "Product turned on." : "Product turned off." };
 }
 

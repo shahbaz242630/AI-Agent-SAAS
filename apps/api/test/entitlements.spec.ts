@@ -289,6 +289,27 @@ describe("Module entitlements (Slice 1.6a)", () => {
       expect(actions.map((row) => row.action)).toContain("module.disabled");
     });
 
+    /**
+     * A seat is money, so the audit trail has to say which thing happened.
+     * Buying a seat on an already-on product used to record `module.enabled`,
+     * which reads as "they turned it on" — found by using the product on
+     * staging, 2026-08-02, with the whole gate green.
+     */
+    it("audits a seats-only change as a seats change, not as an enable", async () => {
+      await put(entitled, "email_credit_controller").send({ enabled: true, seats: 2 }).expect(200);
+      await put(entitled, "email_credit_controller").send({ enabled: true, seats: 3 }).expect(200);
+
+      const row = await owner.auditLog.findFirst({
+        where: { organisationId: entitled.id, entityType: "organisation_module" },
+        orderBy: { createdAt: "desc" },
+      });
+      expect(row?.action).toBe("module.seats_changed");
+      expect(row?.metadata).toMatchObject({ seats: 3, previousSeats: 2 });
+
+      // Restore the baseline the later specs in this file expect.
+      await put(entitled, "email_credit_controller").send({ enabled: true, seats: 1 }).expect(200);
+    });
+
     /** Dependencies are validated on the WRITE. A stored invalid combination
      *  would otherwise have to be re-derived on every permission check. */
     it("refuses a product whose prerequisite is missing, and NAMES it", async () => {
