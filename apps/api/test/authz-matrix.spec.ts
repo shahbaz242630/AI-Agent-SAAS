@@ -93,3 +93,84 @@ describe("Authorisation matrix: role × endpoint", () => {
       .expect(400);
   });
 });
+
+/**
+ * The last owner may not be demoted (2026-08-02).
+ *
+ * An organisation with zero owners is UNRECOVERABLE from inside the product:
+ * only owners and administrators may change roles, and `modules:manage` is
+ * owner-only (slice 1.6a), so it can neither promote anyone back nor turn its
+ * own products on again.
+ *
+ * Its own organisation, deliberately — these specs change who owns what, and
+ * the matrix fixture above would be left in a shape its own specs do not expect.
+ */
+describe("the last owner cannot be demoted", () => {
+  let app: INestApplication;
+  let owner: EvaPrismaClient;
+  let org: FixtureOrg;
+  let ownerToken: string;
+  let ownerUserId: string;
+  let adminUserId: string;
+
+  beforeAll(async () => {
+    owner = createOwnerClient();
+    await seedTestDatabase(owner);
+    org = await createOrgWithMembers(owner, "lastowner", ["owner", "administrator"]);
+    const ownerMember = org.members.find((member) => member.roleKey === "owner")!;
+    ownerUserId = ownerMember.id;
+    adminUserId = org.members.find((member) => member.roleKey === "administrator")!.id;
+    app = await createTestApp();
+    ownerToken = await signToken({ sub: ownerMember.authUserId, email: ownerMember.email });
+  });
+
+  afterAll(async () => {
+    await app.close();
+    await owner.$disconnect();
+  });
+
+  const patch = (userId: string, roleKey: string) =>
+    request(app.getHttpServer())
+      .patch(`/organisations/${org.id}/members/${userId}`)
+      .set("Authorization", `Bearer ${ownerToken}`)
+      .send({ roleKey });
+
+  it("refuses, and the message says what to do instead", async () => {
+    const response = await patch(ownerUserId, "sales").expect(400);
+    // Naming the way out matters: "forbidden" would leave them stuck.
+    expect(response.body.message).toMatch(/only owner/i);
+    expect(response.body.message).toMatch(/someone else an owner/i);
+  });
+
+  it("leaves the role untouched when it refuses", async () => {
+    const membership = await owner.organisationMembership.findFirst({
+      where: { organisationId: org.id, userId: ownerUserId },
+      include: { role: true },
+    });
+    expect(membership?.role.key).toBe("owner");
+  });
+
+  it("audits a role change with both the old and the new role", async () => {
+    await patch(adminUserId, "sales").expect(200);
+    const row = await owner.auditLog.findFirst({
+      where: { organisationId: org.id, action: "member.role_changed" },
+      orderBy: { createdAt: "desc" },
+    });
+    expect(row).not.toBeNull();
+    expect(row?.metadata).toMatchObject({
+      targetUserId: adminUserId,
+      fromRoleKey: "administrator",
+      toRoleKey: "sales",
+    });
+  });
+
+  it("allows the owner to step down once a second owner exists", async () => {
+    await patch(adminUserId, "owner").expect(200);
+    await patch(ownerUserId, "sales").expect(200);
+
+    const owners = await owner.organisationMembership.count({
+      where: { organisationId: org.id, role: { key: "owner" } },
+    });
+    expect(owners).toBe(1);
+  });
+});
