@@ -1,5 +1,6 @@
 import { z } from "zod";
 import {
+  MAX_CLIENTS_PER_ALLOCATION,
   MODULE_KEYS,
   ORGANISATION_ROLES,
   PERMISSION_KEYS,
@@ -65,6 +66,22 @@ export type CreateCustomerRequest = z.infer<typeof createCustomerRequestSchema>;
 export const updateCustomerRequestSchema = createCustomerRequestSchema.partial();
 
 export type UpdateCustomerRequest = z.infer<typeof updateCustomerRequestSchema>;
+
+/**
+ * PUT /organisations/:id/customers/allocation payload (Slice 1.6b).
+ *
+ * `emailAccountId: null` is a LEGAL, deliberate value meaning "back to the
+ * default mailbox" — the explicit un-file action (ruling 1). It is `nullable`
+ * rather than `optional` on purpose: omitting the key entirely would be
+ * ambiguous between "un-file these" and "I forgot to say", and this endpoint
+ * moves other people's customer relationships around.
+ */
+export const allocateClientsRequestSchema = z.object({
+  customerIds: z.array(z.uuid()).min(1).max(MAX_CLIENTS_PER_ALLOCATION),
+  emailAccountId: z.uuid().nullable(),
+});
+
+export type AllocateClientsRequest = z.infer<typeof allocateClientsRequestSchema>;
 
 /** POST /organisations/:id/customers/:customerId/contacts payload (Slice 1.1). */
 export const createContactRequestSchema = z.object({

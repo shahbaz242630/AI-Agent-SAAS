@@ -130,7 +130,7 @@ class SeatLimitReachedError extends Error {
  *  backfill so it can never look like a downgrade. */
 const DEFAULT_SEATS = 1;
 
-function toMailboxDto(account: ConnectedAccount): MailboxDto {
+function toMailboxDto(account: ConnectedAccount, allocatedClientCount = 0): MailboxDto {
   return {
     id: account.id,
     provider: "microsoft",
@@ -138,6 +138,7 @@ function toMailboxDto(account: ConnectedAccount): MailboxDto {
     displayName: account.displayName,
     healthStatus: account.healthStatus as EmailAccountHealthStatus,
     isPrimary: account.isPrimary,
+    allocatedClientCount,
     lastHealthCheckAt: account.lastHealthCheckAt?.toISOString() ?? null,
     lastError: account.lastError,
     connectedBy: account.connectedBy,
@@ -171,8 +172,28 @@ export class MailboxesService {
         orderBy: [{ isPrimary: "desc" }, { createdAt: "asc" }],
       });
       const seats = await this.seatsFor(tx);
+      /**
+       * How many clients each mailbox actually chases (slice 1.6b). ONE grouped
+       * query rather than one per mailbox — this runs on every settings render,
+       * and the 1.5 PR #36 lesson is that round trips are what hurt at
+       * US↔London latency.
+       *
+       * Unallocated clients are deliberately absent: they fall back to the
+       * default at SEND time (ruling 1) and counting them here would freeze
+       * today's default into a number the customer reads as a filing.
+       */
+      const counts = await tx.customer.groupBy({
+        by: ["emailAccountId"],
+        where: { deletedAt: null, emailAccountId: { not: null } },
+        _count: { _all: true },
+      });
+      const countByMailbox = new Map(
+        counts.map((row) => [row.emailAccountId, row._count._all] as const),
+      );
       return {
-        mailboxes: accounts.map(toMailboxDto),
+        mailboxes: accounts.map((account) =>
+          toMailboxDto(account, countByMailbox.get(account.id) ?? 0),
+        ),
         seats,
         seatLimitReached: accounts.length >= seats,
       };
