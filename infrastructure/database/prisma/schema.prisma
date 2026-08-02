@@ -58,6 +58,11 @@ model OrganisationSettings {
   /// US follow (18.7.1). Phase 2 must read these, never hardcode a country.
   businessHours  Json?        @map("business_hours")
   callingHours   Json?        @map("calling_hours")
+  /// How the debtor actually pays — bank details, or whatever the customer
+  /// wants quoted in a chaser. A chasing email that does not answer "how do I
+  /// pay you?" is half a product. NEVER a credential and never card details:
+  /// Eva does not touch the customer's money.
+  paymentInstructions String? @map("payment_instructions")
   createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt      DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
   createdBy      String?      @map("created_by") @db.Uuid
@@ -142,6 +147,14 @@ model Customer {
   phone          String?
   /// The organisation's own account reference for this customer.
   reference      String?
+  /// This customer's default terms; the invoice carries what was agreed.
+  paymentTerms   String?      @map("payment_terms")
+  /// Provenance + remote identity (migration 0019), so a re-sync updates rather
+  /// than duplicates. The partial unique index on
+  /// (organisation_id, source, external_id) WHERE external_id IS NOT NULL lives
+  /// in the migration: partial indexes are not representable here.
+  source         String       @default("manual")
+  externalId     String?      @map("external_id")
   createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt      DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
   createdBy      String?      @map("created_by") @db.Uuid
@@ -201,9 +214,34 @@ model Invoice {
   invoiceNumber    String       @map("invoice_number")
   /// Integer minor units (pence) — money is never float (BRD 10).
   amountMinorUnits Int          @map("amount_minor_units")
+  /// Paid so far (migration 0019). BALANCE IS DERIVED — `amount - paid` — and
+  /// is never stored: a third number can disagree with the other two. Eva
+  /// chases the balance, never the total; status `partially_paid` has existed
+  /// since 0006 with no number to go with it until now.
+  /// Overpayment is ALLOWED (founder ruling): the CHECK is `>= 0` only, the
+  /// balance clamps at zero, and Eva stops chasing. We are not accountants.
+  amountPaidMinorUnits Int      @default(0) @map("amount_paid_minor_units")
   currency         String       @default("GBP") @db.Char(3)
   issueDate        DateTime     @map("issue_date") @db.Date
   dueDate          DateTime     @map("due_date") @db.Date
+  /// Someone who part-paid three days ago must not get the same message as
+  /// someone who has paid nothing in ninety days.
+  lastPaymentAt    DateTime?    @map("last_payment_at") @db.Timestamptz(6)
+  /// The DEBTOR's own reference (Zoho calls it Order Number). Quoting it back
+  /// cuts "which invoice is this?" replies. Distinct from `customers.reference`,
+  /// which is our customer's own account ref for that debtor.
+  customerReference String?     @map("customer_reference")
+  /// What was actually agreed ("Net 30"). Free text, not an enum — every
+  /// accounting package words these differently and we import theirs.
+  paymentTerms     String?      @map("payment_terms")
+  /// ONE line of context ("Bathroom renovation, final"), from the first line
+  /// item on import. NOT line items — a bare amount makes a weak chaser.
+  description      String?
+  /// Which system this row came from; half of the identity that lets a re-sync
+  /// update rather than duplicate. NOT the same idea as
+  /// `organisation_modules.source`, which records how a product was paid for.
+  source           String       @default("manual")
+  externalId       String?      @map("external_id")
   status           String       @default("draft")
   createdAt        DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt        DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
