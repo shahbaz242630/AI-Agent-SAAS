@@ -257,10 +257,19 @@ function InvoiceTable({ invoices }: { invoices: InvoiceRow[] }) {
   );
 }
 
+/**
+ * ⚠️ ONLY TOKENS THAT EXIST IN `packages/design-system/tokens.css`.
+ *
+ * The first version used `bg-destructive/10 text-destructive`. There is no
+ * `destructive` token — the palette calls it `danger` — so Tailwind emitted
+ * nothing at all and OVERDUE, the one status that should shout, rendered as
+ * plain unstyled text while "Paid" carried a badge. It typechecked, it passed
+ * the gate, and it was only visible by looking at the screen.
+ */
 const TONE_CLASSES: Record<InvoiceStatusTone, string> = {
-  urgent: "bg-destructive/10 text-destructive",
-  attention: "bg-primary/10 text-primary",
-  positive: "bg-muted text-foreground",
+  urgent: "bg-danger/10 text-danger",
+  attention: "bg-warning/10 text-warning",
+  positive: "bg-success/10 text-success",
   neutral: "bg-muted text-foreground",
   muted: "bg-muted text-muted-foreground",
 };
