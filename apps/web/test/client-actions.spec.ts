@@ -332,3 +332,59 @@ describe("disconnectMessage", () => {
     expect(disconnectMessage(0, 0, null)).toBe("Mailbox disconnected. Nothing is connected now.");
   });
 });
+
+/**
+ * The sentence shown BEFORE a replace is committed.
+ *
+ * The defect these pin: the default-status clause hung off "does it have
+ * clients", not "is it the default", so replacing a non-default mailbox that
+ * held clients announced that its default status moved too. Staging,
+ * 2026-08-03 — a true sentence with a false implication, which is exactly the
+ * shape of copy defect this slice already had to fix once.
+ */
+describe("replaceMessage", () => {
+  it("does NOT mention default status for a mailbox that is not the default", async () => {
+    const { replaceMessage } = await import("../src/lib/mailbox-messages");
+
+    const message = replaceMessage("second@example.com", 2, false);
+
+    expect(message).toContain("Its 2 clients move across.");
+    expect(message).not.toMatch(/default/i);
+  });
+
+  it("mentions default status only when the mailbox actually holds it", async () => {
+    const { replaceMessage } = await import("../src/lib/mailbox-messages");
+
+    const message = replaceMessage("primary@example.com", 2, true);
+
+    expect(message).toContain("Its 2 clients move across.");
+    expect(message).toMatch(/default for unfiled clients/i);
+  });
+
+  /** The two facts are independent: being the default says nothing about
+   *  whether anything is filed under it, and vice versa. */
+  it("states default status even when nothing is filed under it", async () => {
+    const { replaceMessage } = await import("../src/lib/mailbox-messages");
+
+    const message = replaceMessage("primary@example.com", 0, true);
+
+    expect(message).toContain("Anything filed under it moves across.");
+    expect(message).toMatch(/default for unfiled clients/i);
+  });
+
+  it("says client moves for exactly one and clients move for more", async () => {
+    const { replaceMessage } = await import("../src/lib/mailbox-messages");
+
+    expect(replaceMessage("a@example.com", 1, false)).toContain("Its client moves across.");
+    expect(replaceMessage("a@example.com", 3, false)).toContain("Its 3 clients move across.");
+    expect(replaceMessage("a@example.com", 1, false)).not.toContain("clients move");
+  });
+
+  it("keeps its spaces — the sentence is built, not assembled from JSX", async () => {
+    const { replaceMessage } = await import("../src/lib/mailbox-messages");
+
+    expect(replaceMessage("a@example.com", 2, true)).toBe(
+      "Swap a@example.com for a different address. Its 2 clients move across. It is the default for unfiled clients, and that moves across too.",
+    );
+  });
+});

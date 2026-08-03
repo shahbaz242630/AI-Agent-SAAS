@@ -42,3 +42,31 @@ export function disconnectMessage(moved: number, unfiled: number, to: string | n
     moved + unfiled === 1 ? "is" : "are"
   } now chased from ${to}.`;
 }
+
+/**
+ * What a replace will cost, stated BEFORE the customer commits to it — the
+ * other half of ruling 3, and the reason "disconnect then reconnect" is not an
+ * acceptable substitute.
+ *
+ * TWO INDEPENDENT FACTS, and they were conflated. The default-status clause
+ * used to hang off `filed > 0`, so any mailbox with clients filed under it
+ * announced that its default status moved across — whether or not it had ever
+ * been the default. Seen on staging 2026-08-03 replacing a non-default mailbox
+ * holding two clients: true sentence, false implication.
+ *
+ * Here for the same reason as `disconnectMessage`: it is testable without
+ * rendering a page, and copy is what this project keeps shipping broken through
+ * a green gate.
+ */
+export function replaceMessage(emailAddress: string, filed: number, isDefault: boolean): string {
+  const clients =
+    filed > 0
+      ? `Its ${filed === 1 ? "client moves" : `${filed} clients move`} across.`
+      : "Anything filed under it moves across.";
+  // Only mentioned when it is TRUE. A mailbox that is not the default has no
+  // default status to carry, and saying so implies it does.
+  const fallback = isDefault
+    ? " It is the default for unfiled clients, and that moves across too."
+    : "";
+  return `Swap ${emailAddress} for a different address. ${clients}${fallback}`;
+}
