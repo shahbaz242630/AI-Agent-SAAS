@@ -81,6 +81,19 @@ function scale(currency: string): bigint {
 const WHITESPACE = /[\s\u00A0]/g;
 
 /**
+ * The longest string that could plausibly be an amount. Untrusted input is
+ * refused past this before any pattern matching happens \u2014 see the note in
+ * `parseAmountToMinorUnits`. \u20AB999,999,999,999.99 with a symbol and grouping is
+ * under 25 characters, so this is generous rather than tight.
+ */
+const MAX_AMOUNT_INPUT_LENGTH = 64;
+
+/** Digits and the two separators \u2014 everything else is packaging to be trimmed. */
+function isAmountChar(character: string): boolean {
+  return (character >= "0" && character <= "9") || character === "." || character === ",";
+}
+
+/**
  * What a human typed → integer minor units. Returns null when the input is not
  * a valid amount FOR THIS CURRENCY.
  *
@@ -106,14 +119,36 @@ export function parseAmountToMinorUnits(raw: string, currency: string): bigint |
    * there is no legitimate negative to preserve; the only question was whether
    * we say no or silently change the sign.
    */
+  /**
+   * \u26a0\ufe0f LENGTH GUARD FIRST \u2014 this input is UNTRUSTED.
+   *
+   * It arrives from an amount field a customer types, or a cell in a CSV
+   * somebody uploaded. The longest amount anyone can legitimately write is
+   * short: even \u20ab999,999,999,999.99 with symbol and grouping is under 25
+   * characters. Anything past this is not an amount, so refusing it costs
+   * nothing and removes a whole class of problem before any pattern runs.
+   *
+   * Found by CodeQL on this very function (js/polynomial-redos, high): the
+   * trailing strip below was `/[^\d.,]+$/`, whose `+$` can begin matching at
+   * every position in a run of junk, making a string of 100,000 `+` characters
+   * quadratic to reject. That regex is gone \u2014 the trimming is now a linear scan
+   * \u2014 and this guard means nothing large reaches a regex at all.
+   */
+  if (raw.length > MAX_AMOUNT_INPUT_LENGTH) return null;
   if (/[-\u2212()]/.test(raw)) return null;
   // Spaces (including NBSP) are never a decimal separator, so they go
-  // unconditionally, along with any symbol or code on either side — "£1,234.56",
-  // "1 234 567", "1234.56 AED" and "¥1000" all reach one place.
-  const stripped = raw
-    .replace(WHITESPACE, "")
-    .replace(/^[^\d.,]+/, "")
-    .replace(/[^\d.,]+$/, "");
+  // unconditionally. Whatever symbol or code sits on either side then goes too,
+  // so "£1,234.56", "1 234 567", "1234.56 AED" and "¥1000" all reach one place.
+  //
+  // Trimmed by INDEX, not by regex. `/[^\d.,]+$/` is the polynomial-backtracking
+  // shape CodeQL flagged; a scan from each end is linear and says exactly what
+  // it does.
+  const squeezed = raw.replace(WHITESPACE, "");
+  let start = 0;
+  let end = squeezed.length;
+  while (start < end && !isAmountChar(squeezed[start]!)) start += 1;
+  while (end > start && !isAmountChar(squeezed[end - 1]!)) end -= 1;
+  const stripped = squeezed.slice(start, end);
 
   /**
    * ⚠️ A COMMA IS NOT ALWAYS A THOUSANDS SEPARATOR, and guessing costs 10x.
