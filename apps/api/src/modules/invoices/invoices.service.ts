@@ -47,6 +47,16 @@ export interface InvoiceSummary {
   currency: string;
   issueDate: Date;
   dueDate: Date;
+  /**
+   * One line of context ("Bathroom renovation, final"), added by migration 0019
+   * and published here for slice 1.6c's invoice list.
+   *
+   * A list of bare numbers makes the reader open every row to find the one they
+   * mean, and a chaser built from an amount alone is weak — "your invoice for
+   * 4,000" invites "which one?". Deliberately NOT line items: those are
+   * permanently out of scope (DATA-MODEL-REVIEW §5).
+   */
+  description: string | null;
   /** The stored status (one of the nine — plan §7.1). */
   status: string;
   /** Stored status, or due_soon/due_today/overdue derived for Active rows. */
@@ -66,6 +76,7 @@ type InvoiceRow = {
   currency: string;
   issueDate: Date;
   dueDate: Date;
+  description: string | null;
   status: string;
   createdAt: Date;
   updatedAt: Date;
@@ -449,6 +460,7 @@ export class InvoicesService {
       currency: invoice.currency,
       issueDate: invoice.issueDate,
       dueDate: invoice.dueDate,
+      description: invoice.description,
       status: invoice.status,
       displayStatus: deriveDisplayStatus(invoice, timezone),
       createdAt: invoice.createdAt,

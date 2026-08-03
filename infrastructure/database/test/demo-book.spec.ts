@@ -185,13 +185,15 @@ describe("demo book — coverage that stops the screens being developed against 
     expect(new Set(numbers).size).toBe(numbers.length);
   });
 
-  it("gives every row a unique id", () => {
-    const ids = [
-      ...DEMO_CUSTOMERS.map((c) => c.id),
-      ...DEMO_CUSTOMERS.map((c) => c.contact.id),
-      ...ALL_INVOICES.map((row) => row.id),
-    ];
-    expect(new Set(ids).size).toBe(ids.length);
+  it("gives every row a unique business key, because that is what identifies it", () => {
+    // Rows are keyed on (organisation, reference) and (organisation,
+    // invoiceNumber) rather than on fixed UUIDs — see the note on
+    // `seedDemoBook`. A duplicate key would silently make one row overwrite
+    // another on re-seed, so uniqueness here is load-bearing, not cosmetic.
+    const references = DEMO_CUSTOMERS.map((c) => c.reference);
+    expect(new Set(references).size).toBe(references.length);
+    const contactEmails = DEMO_CUSTOMERS.map((c) => c.contact.email);
+    expect(new Set(contactEmails).size).toBe(contactEmails.length);
   });
 });
 
@@ -258,18 +260,18 @@ describe("demo book — against a real database", () => {
    * This is the same trap slice 1.6b recorded: eight resolver tests silently
    * resolved against other spec files' organisations.
    */
-  const BOOK_CUSTOMER_IDS = DEMO_CUSTOMERS.map((customer) => customer.id);
-  const BOOK_CONTACT_IDS = DEMO_CUSTOMERS.map((customer) => customer.contact.id);
+  const BOOK_REFERENCES = DEMO_CUSTOMERS.map((customer) => customer.reference);
+  const BOOK_CONTACT_EMAILS = DEMO_CUSTOMERS.map((customer) => customer.contact.email);
   const BOOK_INVOICE_NUMBERS = ALL_INVOICES.map((row) => row.invoiceNumber);
 
   async function demoCounts(): Promise<Record<string, number>> {
     const organisationId = DEMO_ORGANISATION_ID;
     return {
       customers: await prisma.customer.count({
-        where: { organisationId, id: { in: BOOK_CUSTOMER_IDS } },
+        where: { organisationId, reference: { in: BOOK_REFERENCES } },
       }),
       contacts: await prisma.contact.count({
-        where: { organisationId, id: { in: BOOK_CONTACT_IDS } },
+        where: { organisationId, email: { in: BOOK_CONTACT_EMAILS } },
       }),
       // By invoice NUMBER rather than by id, so a second seed that created
       // rows instead of upserting them would show up as a higher count rather
@@ -356,11 +358,71 @@ describe("demo book — against a real database", () => {
     const filed = await prisma.customer.count({
       where: {
         organisationId: DEMO_ORGANISATION_ID,
-        id: { in: BOOK_CUSTOMER_IDS },
+        reference: { in: BOOK_REFERENCES },
         emailAccountId: { not: null },
       },
     });
     expect(filed).toBe(0);
+  });
+
+  it("seeds a SECOND organisation without touching the first", async () => {
+    /**
+     * ⚠️ THE BUG THIS TEST EXISTS FOR, found by asking where the book was
+     * actually visible from.
+     *
+     * The first draft keyed every row on a hard-coded UUID. `upsert({ where:
+     * { id } })` finds a row wherever it lives, and `update` did not set
+     * `organisationId` — so seeding into a second organisation would have
+     * quietly UPDATED the first organisation's invoices, left the second
+     * empty, and printed "seeded" either way.
+     *
+     * Keyed on (organisation, business key) the two books are independent.
+     */
+    const otherOrgId = "00000000-0000-4000-8000-0000000000bb";
+    await prisma.organisation.upsert({
+      where: { id: otherOrgId },
+      update: {},
+      create: { id: otherOrgId, name: "Second Org Ltd", isDemo: true },
+    });
+
+    await seedDemoBook(prisma, { organisationId: DEMO_ORGANISATION_ID });
+    const firstBefore = await prisma.invoice.findFirstOrThrow({
+      where: { organisationId: DEMO_ORGANISATION_ID, invoiceNumber: "INV-3001" },
+    });
+
+    await seedDemoBook(prisma, { organisationId: otherOrgId });
+
+    // The second organisation got its own copy...
+    const second = await prisma.invoice.count({
+      where: { organisationId: otherOrgId, invoiceNumber: { in: BOOK_INVOICE_NUMBERS } },
+    });
+    expect(second).toBe(DEMO_BOOK_SIZE.invoices);
+
+    // ...and the first organisation still has its own, unmoved.
+    const firstAfter = await prisma.invoice.findFirstOrThrow({
+      where: { organisationId: DEMO_ORGANISATION_ID, invoiceNumber: "INV-3001" },
+    });
+    expect(firstAfter.id).toBe(firstBefore.id);
+    expect(
+      await prisma.invoice.count({
+        where: {
+          organisationId: DEMO_ORGANISATION_ID,
+          invoiceNumber: { in: BOOK_INVOICE_NUMBERS },
+        },
+      }),
+    ).toBe(DEMO_BOOK_SIZE.invoices);
+
+    // Clients too — a customer must not have been dragged across tenants.
+    expect(
+      await prisma.customer.count({
+        where: { organisationId: otherOrgId, reference: { in: BOOK_REFERENCES } },
+      }),
+    ).toBe(DEMO_BOOK_SIZE.customers);
+    expect(
+      await prisma.customer.count({
+        where: { organisationId: DEMO_ORGANISATION_ID, reference: { in: BOOK_REFERENCES } },
+      }),
+    ).toBe(DEMO_BOOK_SIZE.customers);
   });
 
   it("satisfies the database's own money and status constraints", async () => {

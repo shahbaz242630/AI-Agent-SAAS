@@ -61,19 +61,19 @@ function daysFromToday(days: number, now: Date = new Date()): Date {
 }
 
 interface DemoCustomer {
-  id: string;
   name: string;
   email: string;
+  /** Stable business key — how a re-seed finds this row in a given org. */
   reference: string;
   paymentTerms: string;
-  contact: { id: string; name: string; email: string; jobTitle: string };
+  contact: { name: string; email: string; jobTitle: string };
   /** What this debtor is like to deal with — the reason they are in the book. */
   behaviour: string;
   invoices: DemoInvoice[];
 }
 
 interface DemoInvoice {
-  id: string;
+  /** Stable business key — unique per organisation among live rows. */
   invoiceNumber: string;
   currency: string;
   /** Integer minor units for THIS currency. See the literal-amounts note above. */
@@ -92,14 +92,12 @@ interface DemoInvoice {
 
 const DEMO_CUSTOMERS: readonly DemoCustomer[] = [
   {
-    id: "00000000-0000-4000-8000-00000000c001",
     name: "Northwind Trading Ltd",
     email: "accounts@northwind-trading.example",
     reference: "NWT-001",
     paymentTerms: "Net 30",
     behaviour: "Pays on time. The control: Eva must never chase this customer.",
     contact: {
-      id: "00000000-0000-4000-8000-00000000a001",
       name: "Helen Marsh",
       email: "helen.marsh@northwind-trading.example",
       jobTitle: "Accounts Payable",
@@ -107,7 +105,6 @@ const DEMO_CUSTOMERS: readonly DemoCustomer[] = [
     invoices: [
       {
         // £2,450.00 — not yet due. Bucket: Current. Display: active.
-        id: "00000000-0000-4000-8000-00000000e001",
         invoiceNumber: "INV-1001",
         currency: "GBP",
         amountMinorUnits: 245_000n,
@@ -119,7 +116,6 @@ const DEMO_CUSTOMERS: readonly DemoCustomer[] = [
       },
       {
         // £1,800.00 — paid in full, two days BEFORE it fell due.
-        id: "00000000-0000-4000-8000-00000000e002",
         invoiceNumber: "INV-1002",
         currency: "GBP",
         amountMinorUnits: 180_000n,
@@ -133,7 +129,6 @@ const DEMO_CUSTOMERS: readonly DemoCustomer[] = [
       },
       {
         // £320.00 — cancelled, NOT paid. Trap 7: no label may imply otherwise.
-        id: "00000000-0000-4000-8000-00000000e003",
         invoiceNumber: "INV-1003",
         currency: "GBP",
         amountMinorUnits: 32_000n,
@@ -145,14 +140,12 @@ const DEMO_CUSTOMERS: readonly DemoCustomer[] = [
     ],
   },
   {
-    id: "00000000-0000-4000-8000-00000000c002",
     name: "Perrin Construction Ltd",
     email: "finance@perrin-construction.example",
     reference: "PCL-014",
     paymentTerms: "Net 30",
     behaviour: "Reliably about two weeks late. The bread-and-butter debtor.",
     contact: {
-      id: "00000000-0000-4000-8000-00000000a002",
       name: "Dan Okafor",
       email: "dan.okafor@perrin-construction.example",
       jobTitle: "Finance Manager",
@@ -160,7 +153,6 @@ const DEMO_CUSTOMERS: readonly DemoCustomer[] = [
     invoices: [
       {
         // £5,600.00 — due in 2 days. Display: DUE_SOON (the <= 3 day window).
-        id: "00000000-0000-4000-8000-00000000e004",
         invoiceNumber: "INV-2001",
         currency: "GBP",
         amountMinorUnits: 560_000n,
@@ -174,7 +166,6 @@ const DEMO_CUSTOMERS: readonly DemoCustomer[] = [
         // £3,250.00 — due TODAY. Display: DUE_TODAY. The one row whose status
         // changes if anybody derives it from the browser's clock instead of the
         // organisation timezone (trap 1).
-        id: "00000000-0000-4000-8000-00000000e005",
         invoiceNumber: "INV-2002",
         currency: "GBP",
         amountMinorUnits: 325_000n,
@@ -186,7 +177,6 @@ const DEMO_CUSTOMERS: readonly DemoCustomer[] = [
       },
       {
         // £7,800.00 — 9 days overdue. Bucket: 1-15.
-        id: "00000000-0000-4000-8000-00000000e006",
         invoiceNumber: "INV-2003",
         currency: "GBP",
         amountMinorUnits: 780_000n,
@@ -198,7 +188,6 @@ const DEMO_CUSTOMERS: readonly DemoCustomer[] = [
       },
       {
         // £1,150.00 — 22 days overdue. Bucket: 16-30.
-        id: "00000000-0000-4000-8000-00000000e007",
         invoiceNumber: "INV-2004",
         currency: "GBP",
         amountMinorUnits: 115_000n,
@@ -211,7 +200,6 @@ const DEMO_CUSTOMERS: readonly DemoCustomer[] = [
       {
         // £990.00 — chase suspended by hand while a query is resolved. Paused
         // is NOT overdue: derivation only ever applies to Active invoices.
-        id: "00000000-0000-4000-8000-00000000e008",
         invoiceNumber: "INV-2005",
         currency: "GBP",
         amountMinorUnits: 99_000n,
@@ -224,14 +212,12 @@ const DEMO_CUSTOMERS: readonly DemoCustomer[] = [
     ],
   },
   {
-    id: "00000000-0000-4000-8000-00000000c003",
     name: "Gulf Interiors LLC",
     email: "ap@gulf-interiors.example",
     reference: "GIL-207",
     paymentTerms: "Net 60",
     behaviour: "Pays in instalments. The reason the payments half of 1.6c exists.",
     contact: {
-      id: "00000000-0000-4000-8000-00000000a003",
       name: "Noura Al Hashimi",
       email: "noura.alhashimi@gulf-interiors.example",
       jobTitle: "Accounts Payable Lead",
@@ -244,7 +230,6 @@ const DEMO_CUSTOMERS: readonly DemoCustomer[] = [
         // this invoice has no correct state: leave it active and Eva chases the
         // full 10,000, or cancel it and Eva abandons the 4,000 still owed.
         // Eva must chase the BALANCE, never the total.
-        id: "00000000-0000-4000-8000-00000000e009",
         invoiceNumber: "INV-3001",
         currency: "AED",
         amountMinorUnits: 1_000_000n,
@@ -258,7 +243,6 @@ const DEMO_CUSTOMERS: readonly DemoCustomer[] = [
       },
       {
         // 24,500.00 AED — 38 days overdue. Bucket: 31-45.
-        id: "00000000-0000-4000-8000-00000000e00a",
         invoiceNumber: "INV-3002",
         currency: "AED",
         amountMinorUnits: 2_450_000n,
@@ -273,7 +257,6 @@ const DEMO_CUSTOMERS: readonly DemoCustomer[] = [
         // Founder ruling: overpayment is allowed and the balance clamps at
         // zero. It must never render as -25.00, which reads as a debt owed the
         // other way (trap 6).
-        id: "00000000-0000-4000-8000-00000000e00b",
         invoiceNumber: "INV-3003",
         currency: "AED",
         amountMinorUnits: 50_000n,
@@ -288,14 +271,12 @@ const DEMO_CUSTOMERS: readonly DemoCustomer[] = [
     ],
   },
   {
-    id: "00000000-0000-4000-8000-00000000c004",
     name: "Al Mutawa Contracting WLL",
     email: "accounts@almutawa-contracting.example",
     reference: "AMC-032",
     paymentTerms: "Net 45",
     behaviour: "Gone quiet. Nothing paid, nothing said — the escalation case.",
     contact: {
-      id: "00000000-0000-4000-8000-00000000a004",
       name: "Yousef Al Mutawa",
       email: "yousef@almutawa-contracting.example",
       jobTitle: "Director",
@@ -310,7 +291,6 @@ const DEMO_CUSTOMERS: readonly DemoCustomer[] = [
         // this as 12.35, or 1234.5, or refuses it, the ×100 assumption has come
         // back. Kuwait, Bahrain and Oman are three of the six GCC states, and
         // GCC is the stated next market.
-        id: "00000000-0000-4000-8000-00000000e00c",
         invoiceNumber: "INV-4001",
         currency: "KWD",
         amountMinorUnits: 12_345n,
@@ -322,7 +302,6 @@ const DEMO_CUSTOMERS: readonly DemoCustomer[] = [
       },
       {
         // 3,750.500 KWD — 47 days overdue. Bucket: >45.
-        id: "00000000-0000-4000-8000-00000000e00d",
         invoiceNumber: "INV-4002",
         currency: "KWD",
         amountMinorUnits: 3_750_500n,
@@ -335,14 +314,12 @@ const DEMO_CUSTOMERS: readonly DemoCustomer[] = [
     ],
   },
   {
-    id: "00000000-0000-4000-8000-00000000c005",
     name: "Sakura Kikai KK",
     email: "keiri@sakura-kikai.example",
     reference: "SKK-118",
     paymentTerms: "Net 30",
     behaviour: "Zero-decimal currency. Proves nothing divides by 100 on the way out.",
     contact: {
-      id: "00000000-0000-4000-8000-00000000a005",
       name: "Aiko Tanaka",
       email: "aiko.tanaka@sakura-kikai.example",
       jobTitle: "Accounting Section",
@@ -352,7 +329,6 @@ const DEMO_CUSTOMERS: readonly DemoCustomer[] = [
         // ¥450,000 — the minor unit IS the yen. NOT 450000 sen, and not
         // ¥4,500.00. A list that formats every currency to two decimals shows
         // this as ¥4,500.00 and is wrong by a factor of a hundred.
-        id: "00000000-0000-4000-8000-00000000e00e",
         invoiceNumber: "INV-5001",
         currency: "JPY",
         amountMinorUnits: 450_000n,
@@ -365,7 +341,6 @@ const DEMO_CUSTOMERS: readonly DemoCustomer[] = [
       {
         // ¥1,280,000 — still a DRAFT, so it is editable and is never chased.
         // The only row in the book that PATCH may touch (trap 4).
-        id: "00000000-0000-4000-8000-00000000e00f",
         invoiceNumber: "INV-5002",
         currency: "JPY",
         amountMinorUnits: 1_280_000n,
@@ -378,21 +353,54 @@ const DEMO_CUSTOMERS: readonly DemoCustomer[] = [
   },
 ];
 
+export interface SeedDemoBookOptions {
+  /**
+   * Where to put the book. Defaults to the demo organisation.
+   *
+   * WHY THIS IS A KNOB. The book is only useful if you can SEE it, and
+   * `GET /organisations` returns the organisations the signed-in user belongs
+   * to. The demo organisation's only members are the two demo users, so signing
+   * in locally as yourself shows your OWN organisation with an empty client
+   * list, and the book stays invisible. Pointing it at your own organisation is
+   * what makes the screens developable against realistic data.
+   */
+  organisationId?: string;
+  /** Who the rows are attributed to. Defaults to the demo owner. */
+  createdBy?: string;
+  now?: Date;
+}
+
 /**
- * Fill the demo organisation with a realistic book of B2B debtors.
+ * Fill an organisation with a realistic book of B2B debtors.
  *
- * Idempotent, like `seed()` — every row is an upsert on a deterministic id.
- * Unlike `seed()`, the update branch REWRITES the dates: re-running is how you
- * re-base a book that has aged out from under you, so `update: {}` would defeat
- * the point.
+ * Idempotent. Unlike `seed()`, the update branch REWRITES the dates: re-running
+ * is how you re-base a book that has aged out from under you, so `update: {}`
+ * would defeat the point.
+ *
+ * ⚠️ ROWS ARE KEYED ON (ORGANISATION, BUSINESS KEY) — a customer's `reference`
+ * and an invoice's `invoiceNumber` — NOT on fixed UUIDs. An earlier draft used
+ * hard-coded ids, which is fine for one organisation and silently wrong for
+ * two: `upsert({ where: { id } })` finds a row wherever it lives, so seeding
+ * into a SECOND organisation would have updated the FIRST one's invoices and
+ * reported success. The business keys are already unique per organisation
+ * (`invoices_organisation_id_invoice_number_key`), so they are the honest key.
  */
-export async function seedDemoBook(prisma: EvaPrismaClient, now: Date = new Date()): Promise<void> {
+export async function seedDemoBook(
+  prisma: EvaPrismaClient,
+  options: SeedDemoBookOptions | Date = {},
+): Promise<void> {
+  // A bare Date stays accepted so a caller with only a clock needs no ceremony.
+  const opts: SeedDemoBookOptions = options instanceof Date ? { now: options } : options;
+  const organisationId = opts.organisationId ?? DEMO_ORGANISATION_ID;
+  const createdBy = opts.createdBy ?? DEMO_OWNER_ID;
+  const now = opts.now ?? new Date();
+
   await prisma.$transaction(async (tx) => {
     // FORCE RLS binds the owner role too, so the seed declares its tenant and
     // user context exactly as the application does (BRD 15) — and it means
     // these rows are written through the same policy that guards production.
-    await tx.$executeRaw`SELECT set_config('app.current_org', ${DEMO_ORGANISATION_ID}, true)`;
-    await tx.$executeRaw`SELECT set_config('app.current_user', ${DEMO_OWNER_ID}, true)`;
+    await tx.$executeRaw`SELECT set_config('app.current_org', ${organisationId}, true)`;
+    await tx.$executeRaw`SELECT set_config('app.current_user', ${createdBy}, true)`;
 
     // Without the module the invoice screens correctly 402 and there is
     // nothing to look at. Entitlement fails CLOSED, so this has to be explicit.
@@ -413,13 +421,13 @@ export async function seedDemoBook(prisma: EvaPrismaClient, now: Date = new Date
     } else {
       await tx.organisationModule.create({
         data: {
-          organisationId: DEMO_ORGANISATION_ID,
+          organisationId,
           moduleKey: "email_credit_controller",
           enabled: true,
           source: "manual",
           seats: 1,
           enabledAt: now,
-          createdBy: DEMO_OWNER_ID,
+          createdBy,
         },
       });
     }
@@ -428,48 +436,53 @@ export async function seedDemoBook(prisma: EvaPrismaClient, now: Date = new Date
       const customerFields = {
         name: customer.name,
         email: customer.email,
-        reference: customer.reference,
         paymentTerms: customer.paymentTerms,
         // NULL means "chase from the organisation's DEFAULT mailbox" and is the
         // normal state for most of a book (ALLOCATION-SCOPE ruling 1). Nothing
         // stamps a mailbox id onto a client — resolution happens at SEND time,
-        // every time (trap 1). The demo organisation has no mailbox connected
-        // and inventing one would mean inventing tokens.
+        // every time (trap 1). Inventing a mailbox here would mean inventing
+        // the tokens to go with it.
         emailAccountId: null,
       };
 
-      await tx.customer.upsert({
-        where: { id: customer.id },
-        update: customerFields,
-        create: {
-          id: customer.id,
-          organisationId: DEMO_ORGANISATION_ID,
-          createdBy: DEMO_OWNER_ID,
-          ...customerFields,
-        },
+      // `reference` is this customer's stable business key, and keying on it
+      // rather than on a fixed id is what makes the write org-scoped.
+      const existingCustomer = await tx.customer.findFirst({
+        where: { organisationId, reference: customer.reference, deletedAt: null },
       });
+      const customerRow = existingCustomer
+        ? await tx.customer.update({ where: { id: existingCustomer.id }, data: customerFields })
+        : await tx.customer.create({
+            data: { organisationId, reference: customer.reference, createdBy, ...customerFields },
+          });
 
       const contactFields = {
         name: customer.contact.name,
-        email: customer.contact.email,
         jobTitle: customer.contact.jobTitle,
       };
 
-      await tx.contact.upsert({
-        where: { id: customer.contact.id },
-        update: contactFields,
-        create: {
-          id: customer.contact.id,
-          organisationId: DEMO_ORGANISATION_ID,
-          customerId: customer.id,
-          createdBy: DEMO_OWNER_ID,
-          ...contactFields,
+      const existingContact = await tx.contact.findFirst({
+        where: {
+          organisationId,
+          customerId: customerRow.id,
+          email: customer.contact.email,
+          deletedAt: null,
         },
       });
+      const contactRow = existingContact
+        ? await tx.contact.update({ where: { id: existingContact.id }, data: contactFields })
+        : await tx.contact.create({
+            data: {
+              organisationId,
+              customerId: customerRow.id,
+              email: customer.contact.email,
+              createdBy,
+              ...contactFields,
+            },
+          });
 
       for (const invoice of customer.invoices) {
         const invoiceFields = {
-          invoiceNumber: invoice.invoiceNumber,
           currency: invoice.currency,
           amountMinorUnits: invoice.amountMinorUnits,
           amountPaidMinorUnits: invoice.amountPaidMinorUnits ?? 0n,
@@ -483,18 +496,25 @@ export async function seedDemoBook(prisma: EvaPrismaClient, now: Date = new Date
           paymentTerms: customer.paymentTerms,
         };
 
-        await tx.invoice.upsert({
-          where: { id: invoice.id },
-          update: invoiceFields,
-          create: {
-            id: invoice.id,
-            organisationId: DEMO_ORGANISATION_ID,
-            customerId: customer.id,
-            contactId: customer.contact.id,
-            createdBy: DEMO_OWNER_ID,
-            ...invoiceFields,
-          },
+        // `invoice_number` is unique per organisation among live rows
+        // (`invoices_organisation_id_invoice_number_key`), so it is the key.
+        const existingInvoice = await tx.invoice.findFirst({
+          where: { organisationId, invoiceNumber: invoice.invoiceNumber, deletedAt: null },
         });
+        if (existingInvoice) {
+          await tx.invoice.update({ where: { id: existingInvoice.id }, data: invoiceFields });
+        } else {
+          await tx.invoice.create({
+            data: {
+              organisationId,
+              customerId: customerRow.id,
+              contactId: contactRow.id,
+              invoiceNumber: invoice.invoiceNumber,
+              createdBy,
+              ...invoiceFields,
+            },
+          });
+        }
       }
     }
   });

@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useActionState, useState } from "react";
 import {
   addClient,
@@ -345,13 +346,25 @@ export function ClientTable({
                       )}
                     </td>
                     <td className="px-4 py-3">
-                      <button
-                        type="button"
-                        onClick={() => setEditing(editing === client.id ? null : client.id)}
-                        className={SMALL_BUTTON_CLASS}
-                      >
-                        {editing === client.id ? "Close" : "Edit"}
-                      </button>
+                      <div className="flex items-center gap-3">
+                        {/* The only route to a client's invoices (slice 1.6c).
+                            A plain link, not a button: it navigates, and it
+                            must keep working inside this form without
+                            submitting it. */}
+                        <Link
+                          href={`/app/clients/${client.id}/invoices`}
+                          className="text-sm font-medium text-primary hover:underline"
+                        >
+                          Invoices
+                        </Link>
+                        <button
+                          type="button"
+                          onClick={() => setEditing(editing === client.id ? null : client.id)}
+                          className={SMALL_BUTTON_CLASS}
+                        >
+                          {editing === client.id ? "Close" : "Edit"}
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 );
