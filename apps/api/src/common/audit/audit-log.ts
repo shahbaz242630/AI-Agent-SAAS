@@ -60,6 +60,24 @@ export async function writeAuditLog(
  *
  * `id` is supplied explicitly: audit_logs.id is NOT NULL with no database
  * default (Prisma generates it client-side), so raw SQL must produce one.
+ *
+ * ⚠️ `created_at` is supplied for the SAME reason, and it is not cosmetic.
+ *
+ * The column is `DEFAULT CURRENT_TIMESTAMP`, and in Postgres that is
+ * TRANSACTION START — identical for every statement in the transaction, however
+ * long it runs. Prisma stamps its own inserts from the API's clock at the moment
+ * of each call. So the two writers in this file disagreed, and a single replace
+ * wrote an audit trail describing something that cannot happen: on staging
+ * 2026-08-03 the `customer.reassigned` rows carried 11:13:44.912 (transaction
+ * start) while the mailbox those clients moved TO was created at 11:13:45.954 —
+ * a book filed under an address a second before that address existed. The same
+ * gap is visible on the disconnect path on 2026-08-02.
+ *
+ * Nothing was ever mis-filed; the damage was to the one question an audit trail
+ * exists to answer. Note the two clocks are on DIFFERENT MACHINES in production
+ * (API on Railway, database on Supabase), so they can also skew apart
+ * independently. One clock — the app's, which every other audit row already
+ * uses — for every row in this table.
  */
 export async function auditReassignedByMailbox(
   tx: TenantTx,
@@ -72,8 +90,11 @@ export async function auditReassignedByMailbox(
     reason: string;
   },
 ): Promise<number> {
+  // One timestamp for the whole batch: these rows are one action, and ordering
+  // WITHIN it is meaningless — `entity_id` is what distinguishes them.
+  const createdAt = new Date();
   return tx.$executeRaw`
-    INSERT INTO audit_logs (id, organisation_id, actor_user_id, action, entity_type, entity_id, metadata)
+    INSERT INTO audit_logs (id, organisation_id, actor_user_id, action, entity_type, entity_id, metadata, created_at)
     SELECT gen_random_uuid(),
            ${entry.organisationId}::uuid,
            ${entry.actorUserId}::uuid,
@@ -84,7 +105,8 @@ export async function auditReassignedByMailbox(
              'from', ${entry.fromEmailAccountId}::text,
              'to', ${entry.toEmailAccountId}::text,
              'reason', ${entry.reason}::text
-           )
+           ),
+           ${createdAt}::timestamptz
     FROM customers c
     WHERE c.email_account_id = ${entry.fromEmailAccountId}::uuid
       AND c.deleted_at IS NULL`;

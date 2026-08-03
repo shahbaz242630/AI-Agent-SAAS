@@ -2,6 +2,7 @@
 
 import { useActionState, useState } from "react";
 import type { MailboxSummary } from "@/components/mailbox-card";
+import { replaceMessage } from "@/lib/mailbox-messages";
 import {
   connectMailbox,
   disconnectMailbox,
@@ -92,10 +93,10 @@ export function MailboxActions({
 
       {replacing && (
         <div className="flex flex-col gap-2 rounded-[var(--radius-card)] bg-muted p-3">
+          {/* One interpolated value, no JSX text node — Next drops the space
+              between `{expression}` and wrapped JSX text (toolchain note). */}
           <p className="text-sm">
-            {filed > 0
-              ? `Swap ${mailbox.emailAddress} for a different address. Its ${filed === 1 ? "client moves" : `${filed} clients move`} across, and so does its default status.`
-              : `Swap ${mailbox.emailAddress} for a different address. Anything filed under it moves across.`}
+            {replaceMessage(mailbox.emailAddress, filed, mailbox.isPrimary)}
           </p>
           <ConnectMailboxForm
             organisationId={organisationId}
