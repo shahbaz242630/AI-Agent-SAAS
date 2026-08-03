@@ -9,6 +9,7 @@ import {
 } from "@/lib/invoice-status";
 import { formatDueDate, formatMoney } from "@/lib/money";
 import { createClient } from "@/lib/supabase/server";
+import { AddInvoiceForm } from "./invoice-controls";
 
 /**
  * One client's invoices (slice 1.6c, task 1).
@@ -179,6 +180,43 @@ export default async function CustomerInvoicesPage({
     );
   }
 
+  /**
+   * Contacts are fetched SEPARATELY and a refusal here is swallowed.
+   *
+   * The 1.6b lesson: fetching two things in one `try` means a 403 on the second
+   * replaces the whole screen with a message about the first, and that message
+   * is then wrong. A reminder recipient is optional on the API, so if this list
+   * cannot be read the form simply does not offer the field — which is a
+   * smaller loss than not being able to raise an invoice at all.
+   */
+  let contacts: { id: string; name: string }[] = [];
+  try {
+    contacts = (await (
+      await apiFetch(
+        `/organisations/${organisation.id}/customers/${customerId}/contacts`,
+        accessToken,
+      )
+    ).json()) as { id: string; name: string }[];
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 401) redirect("/sign-in");
+    // 403 and 402 both just mean "no recipient picker". Anything else is a
+    // genuine fault and should not be hidden.
+    else if (!(error instanceof ApiError) || (error.status !== 403 && error.status !== 402)) {
+      throw error;
+    }
+  }
+
+  /**
+   * Default the currency to what this client is already invoiced in.
+   *
+   * Only when every existing invoice agrees — a client holding both AED and GBP
+   * has no obvious default, and guessing one would be how the wrong currency
+   * gets onto an invoice. Falls back to GBP, which task 13 replaces with the
+   * organisation's own setting so a UAE business stops typing AED every time.
+   */
+  const currencies = new Set(invoices.map((invoice) => invoice.currency));
+  const defaultCurrency = currencies.size === 1 ? [...currencies][0]! : "GBP";
+
   return (
     <Shell customerId={customerId}>
       <section className="flex w-full max-w-4xl flex-col gap-2">
@@ -187,6 +225,14 @@ export default async function CustomerInvoicesPage({
           {invoiceCountLine(invoices.length, client.name)}
         </p>
       </section>
+
+      <AddInvoiceForm
+        organisationId={organisation.id}
+        customerId={customerId}
+        clientName={client.name}
+        contacts={contacts}
+        defaultCurrency={defaultCurrency}
+      />
 
       {invoices.length === 0 ? (
         <p className="w-full max-w-4xl rounded-[var(--radius-card)] bg-muted px-6 py-4 text-sm">

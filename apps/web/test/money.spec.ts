@@ -1,5 +1,107 @@
 import { describe, expect, it } from "vitest";
-import { formatDueDate, formatMoney } from "../src/lib/money";
+import { formatDueDate, formatMoney, parseAmountInput } from "../src/lib/money";
+
+/** The value, when it parsed; throws the message otherwise so a broken case
+ *  fails loudly instead of comparing against undefined. */
+function minorUnits(raw: string, currency: string): number {
+  const result = parseAmountInput(raw, currency);
+  if (!result.ok) throw new Error(`Expected ${raw} (${currency}) to parse: ${result.message}`);
+  return result.minorUnits;
+}
+
+function refusal(raw: string, currency: string): string {
+  const result = parseAmountInput(raw, currency);
+  if (result.ok)
+    throw new Error(
+      `Expected ${raw} (${currency}) to be refused, got ${String(result.minorUnits)}`,
+    );
+  return result.message;
+}
+
+describe("parseAmountInput — what a human types becomes minor units", () => {
+  it("converts one case per exponent group, which is the point of the whole slice", () => {
+    // Plan §6: "A test that only uses GBP cannot fail on the bug this slice
+    // exists to prevent."
+    expect(minorUnits("12.345", "KWD")).toBe(12_345);
+    expect(minorUnits("1000", "JPY")).toBe(1000);
+    expect(minorUnits("12.30", "AED")).toBe(1230);
+  });
+
+  it("survives the classic floating-point offenders", () => {
+    // `Math.round(1.005 * 100)` is 100, not 101 — floats cannot represent
+    // 1.005. There is no float anywhere in the parsing path.
+    expect(minorUnits("1.005", "KWD")).toBe(1005);
+    expect(minorUnits("0.1", "GBP")).toBe(10);
+    expect(minorUnits("0.2", "GBP")).toBe(20);
+    expect(minorUnits("0.07", "GBP")).toBe(7);
+    expect(minorUnits("8.20", "GBP")).toBe(820);
+  });
+
+  it("accepts thousands separators and a currency symbol", () => {
+    expect(minorUnits("1,234.56", "GBP")).toBe(123_456);
+    expect(minorUnits("£1,234.56", "GBP")).toBe(123_456);
+    expect(minorUnits("1234.56 AED", "AED")).toBe(123_456);
+  });
+
+  it("REFUSES zero, which parses perfectly and is still not an invoice", () => {
+    // The trap: `0` is a valid parse, so without an explicit check it sails
+    // through to a raw 400 from a field that looked accepted.
+    expect(refusal("0", "GBP")).toMatch(/more than zero/i);
+    expect(refusal("0.00", "GBP")).toMatch(/more than zero/i);
+    expect(refusal("0", "JPY")).toMatch(/more than zero/i);
+  });
+
+  it("says WHICH currency's decimals were wrong, rather than 'invalid'", () => {
+    // `12.345` is a valid Kuwaiti amount and an invalid British one. Telling a
+    // customer their perfectly-formed amount is "invalid" explains nothing.
+    expect(refusal("12.345", "GBP")).toMatch(/GBP/);
+    expect(refusal("12.345", "GBP")).toMatch(/2 decimal places/);
+    expect(refusal("12.3456", "KWD")).toMatch(/KWD.*3 decimal places/);
+  });
+
+  it("tells a zero-decimal currency it takes whole numbers, not '0 decimal places'", () => {
+    const message = refusal("1000.50", "JPY");
+    expect(message).toMatch(/JPY/);
+    expect(message).toMatch(/whole number/i);
+    expect(message).not.toMatch(/0 decimal places/);
+  });
+
+  it("refuses a negative rather than silently flipping its sign", () => {
+    // An earlier draft of the shared parser turned `-5.00` into `500n` — a
+    // credit becoming a debt Eva would then chase.
+    expect(refusal("-5.00", "GBP")).toMatch(/positive/i);
+    expect(refusal("(1,234.56)", "GBP")).toMatch(/positive/i);
+    expect(refusal("−5.00", "GBP")).toMatch(/positive/i); // U+2212
+  });
+
+  it("refuses an ambiguous comma and explains the convention", () => {
+    // "1,5" means one and a half to half the world. Guessing wrong overstates
+    // the debt tenfold, silently.
+    const message = refusal("1,5", "GBP");
+    expect(message).toMatch(/full stop|1,234\.56/);
+    expect(refusal("1.234,56", "GBP")).toBeTruthy();
+  });
+
+  it("asks for an amount when the box is empty", () => {
+    expect(refusal("", "GBP")).toMatch(/enter an amount/i);
+    expect(refusal("   ", "GBP")).toMatch(/enter an amount/i);
+  });
+
+  it("refuses junk without pretending to understand it", () => {
+    expect(refusal("abc", "GBP")).toBeTruthy();
+    expect(refusal("12.34.56", "GBP")).toBeTruthy();
+    // Long untrusted input is refused before any pattern runs (the ReDoS guard).
+    expect(refusal("9".repeat(200), "GBP")).toBeTruthy();
+  });
+
+  it("never returns a message that is empty or ends mid-sentence", () => {
+    for (const bad of ["", "abc", "-1", "0", "12.345", "1,5"]) {
+      const message = refusal(bad, "GBP");
+      expect(message.length, bad).toBeGreaterThan(10);
+      expect(message.trim().endsWith("."), bad).toBe(true);
+    }
+  });
+});
 
 /**
  * Slice 1.6c plan §6: "one case per exponent group: 12.345 KWD → 12345,
