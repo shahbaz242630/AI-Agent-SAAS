@@ -230,15 +230,19 @@ model Invoice {
   contactId        String?      @map("contact_id") @db.Uuid
   /// The organisation's own invoice number (unique per org among live rows).
   invoiceNumber    String       @map("invoice_number")
-  /// Integer minor units (pence) — money is never float (BRD 10).
-  amountMinorUnits Int          @map("amount_minor_units")
+  /// Integer minor units — money is never float (BRD 10). How many digits a
+  /// "minor unit" has depends on the CURRENCY, not on a constant 100: 0 for
+  /// JPY/VND, 2 for GBP/AED/USD, 3 for KWD/BHD/OMR. See packages/types money.ts.
+  /// BIGINT since migration 0021 — INTEGER capped a Vietnamese invoice at
+  /// roughly $86k, and at ~$860 under the pre-1.6c x100 code.
+  amountMinorUnits BigInt       @map("amount_minor_units")
   /// Paid so far (migration 0019). BALANCE IS DERIVED — `amount - paid` — and
   /// is never stored: a third number can disagree with the other two. Eva
   /// chases the balance, never the total; status `partially_paid` has existed
   /// since 0006 with no number to go with it until now.
   /// Overpayment is ALLOWED (founder ruling): the CHECK is `>= 0` only, the
   /// balance clamps at zero, and Eva stops chasing. We are not accountants.
-  amountPaidMinorUnits Int      @default(0) @map("amount_paid_minor_units")
+  amountPaidMinorUnits BigInt   @default(0) @map("amount_paid_minor_units")
   currency         String       @default("GBP") @db.Char(3)
   issueDate        DateTime     @map("issue_date") @db.Date
   dueDate          DateTime     @map("due_date") @db.Date

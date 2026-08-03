@@ -8,6 +8,8 @@ import { Prisma, withTenant } from "@eva/database";
 import {
   INVOICE_COMPUTED_STATUSES,
   INVOICE_STORED_STATUSES,
+  minorUnitsToNumber,
+  outstandingBalance,
   type InvoiceDisplayStatus,
 } from "@eva/types";
 import type { CreateInvoiceRequest, UpdateInvoiceRequest } from "@eva/validation";
@@ -32,6 +34,16 @@ export interface InvoiceSummary {
   contactId: string | null;
   invoiceNumber: string;
   amountMinorUnits: number;
+  /** Paid so far (migration 0019). 0 until a payment is recorded. */
+  amountPaidMinorUnits: number;
+  /**
+   * What Eva actually chases — `amount - paid`, clamped at zero.
+   *
+   * DERIVED on every read, never stored: a third number can disagree with the
+   * other two. Sent because every caller needs it and none of them should be
+   * doing money arithmetic of their own.
+   */
+  outstandingMinorUnits: number;
   currency: string;
   issueDate: Date;
   dueDate: Date;
@@ -43,7 +55,21 @@ export interface InvoiceSummary {
   updatedAt: Date;
 }
 
-type InvoiceRow = Omit<InvoiceSummary, "displayStatus">;
+/** The database row, which carries more than the response does. */
+type InvoiceRow = {
+  id: string;
+  customerId: string;
+  contactId: string | null;
+  invoiceNumber: string;
+  amountMinorUnits: bigint;
+  amountPaidMinorUnits: bigint;
+  currency: string;
+  issueDate: Date;
+  dueDate: Date;
+  status: string;
+  createdAt: Date;
+  updatedAt: Date;
+};
 
 const DEFAULT_TIMEZONE = "Europe/London";
 
@@ -397,7 +423,36 @@ export class InvoicesService {
     return invoice;
   }
 
+  /**
+   * Row → response, field by field. Deliberately NOT a spread.
+   *
+   * Two reasons, and the first is a bug waiting to happen. Money is `bigint`
+   * since migration 0021 and `JSON.stringify` throws on a bigint, so a spread
+   * would put one straight into a response; `minorUnitsToNumber` converts it and
+   * throws rather than silently losing precision. Second, `findFirst` selects
+   * every scalar, so the old spread was shipping `organisationId`, `createdBy`,
+   * `deletedAt` and every migration-0019 column to the browser purely because
+   * they existed. An explicit list means adding a column to the schema is no
+   * longer the same act as publishing it.
+   */
   private toSummary(invoice: InvoiceRow, timezone: string): InvoiceSummary {
-    return { ...invoice, displayStatus: deriveDisplayStatus(invoice, timezone) };
+    return {
+      id: invoice.id,
+      customerId: invoice.customerId,
+      contactId: invoice.contactId,
+      invoiceNumber: invoice.invoiceNumber,
+      amountMinorUnits: minorUnitsToNumber(invoice.amountMinorUnits),
+      amountPaidMinorUnits: minorUnitsToNumber(invoice.amountPaidMinorUnits),
+      outstandingMinorUnits: minorUnitsToNumber(
+        outstandingBalance(invoice.amountMinorUnits, invoice.amountPaidMinorUnits),
+      ),
+      currency: invoice.currency,
+      issueDate: invoice.issueDate,
+      dueDate: invoice.dueDate,
+      status: invoice.status,
+      displayStatus: deriveDisplayStatus(invoice, timezone),
+      createdAt: invoice.createdAt,
+      updatedAt: invoice.updatedAt,
+    };
   }
 }

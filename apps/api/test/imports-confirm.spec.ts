@@ -124,7 +124,9 @@ describe("Imports: confirm and cancel", () => {
     expect(invoices).toHaveLength(2);
     expect(invoices.every((invoice) => invoice.status === "draft")).toBe(true);
     const cf1 = invoices.find((invoice) => invoice.invoiceNumber === "CF-1")!;
-    expect(cf1.amountMinorUnits).toBe(12345);
+    // bigint, not number: the column is BIGINT since migration 0021. Read
+    // straight from Prisma here rather than through the API, which converts.
+    expect(cf1.amountMinorUnits).toBe(12345n);
     expect(cf1.currency).toBe("GBP");
     expect(cf1.dueDate.toISOString().slice(0, 10)).toBe("2026-09-01");
     // No issue date in the file → creation day in the org timezone (BRD 18.1).
@@ -250,12 +252,12 @@ describe("Imports: confirm and cancel", () => {
     const existing = await owner.invoice.findFirstOrThrow({
       where: { organisationId: org.id, invoiceNumber: "SKIP-1" },
     });
-    expect(existing.amountMinorUnits).toBe(111);
+    expect(existing.amountMinorUnits).toBe(111n);
     const skip2s = await owner.invoice.findMany({
       where: { organisationId: org.id, invoiceNumber: "SKIP-2" },
     });
     expect(skip2s).toHaveLength(1);
-    expect(skip2s[0]!.amountMinorUnits).toBe(100);
+    expect(skip2s[0]!.amountMinorUnits).toBe(100n);
   });
 
   it("flags a number that becomes live between staging and confirm as duplicate", async () => {

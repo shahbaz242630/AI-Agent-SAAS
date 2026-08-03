@@ -10,7 +10,12 @@ import {
 } from "@nestjs/common";
 import { withTenant } from "@eva/database";
 import type { Prisma } from "@eva/database";
-import type { ImportDetail, ImportRowView, ImportSummary } from "@eva/types";
+import {
+  minorUnitDigits,
+  type ImportDetail,
+  type ImportRowView,
+  type ImportSummary,
+} from "@eva/types";
 import {
   importMappingSchema,
   importRowSchema,
@@ -600,13 +605,24 @@ function analyseRow(canonical: CanonicalRow): { errors: string[]; values?: Parse
   if (!shape.success) return { errors };
 
   const row = shape.data;
-  const amountMinorUnits = parseImportAmount(row.amount);
-  if (amountMinorUnits === null) {
-    errors.push(`amount '${row.amount}' is not a valid positive amount`);
-  }
+  /**
+   * CURRENCY FIRST — the order matters (slice 1.6c).
+   *
+   * How many decimal places an amount may carry is a property of its currency:
+   * 3 for KWD/BHD/OMR, 2 for GBP/AED/USD, 0 for JPY/VND. Parsing the amount
+   * before reading the currency is how "12.345" came to be rejected as invalid
+   * on a Kuwaiti invoice.
+   */
   const currency = normaliseImportCurrency(row.currency);
   if (currency === null) {
     errors.push(`currency '${row.currency}' must be a 3-letter ISO 4217 code`);
+  }
+  const amountMinorUnits = currency === null ? null : parseImportAmount(row.amount, currency);
+  if (amountMinorUnits === null && currency !== null) {
+    errors.push(
+      `amount '${row.amount}' is not a valid positive ${currency} amount` +
+        ` (${currency} takes ${minorUnitDigits(currency)} decimal places)`,
+    );
   }
   const dueDate = parseImportDate(row.dueDate);
   if (!dueDate) {
