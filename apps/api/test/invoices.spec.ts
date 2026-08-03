@@ -612,9 +612,23 @@ describe("Invoices: state machine (BRD 4.1 — the only status code path)", () =
     for (const file of readdirSync(moduleDir)) {
       if (!file.endsWith(".ts") || file === "invoice-state-machine.ts") continue;
       const source = readFileSync(path.join(moduleDir, file), "utf8");
-      // The state machine is the ONLY code path allowed to write `status`.
+      /**
+       * The state machine is the ONLY code path allowed to write `status`.
+       *
+       * ⚠️ The scan must stay INSIDE one `invoice.update(...)` call. It used to
+       * be `/invoice\.update\([\s\S]*?status\s*:/`, which crosses statement
+       * boundaries: any `status:` ANYWHERE later in the file matched, however
+       * unrelated. Adding an explicit `status: invoice.status` to the response
+       * mapper — a read, not a write — was enough to fail it, and the obvious
+       * way to "fix" that is to contort the product code to please the regex.
+       *
+       * `(?:(?!\}\))[\s\S])*?` stops at the first `})`, so the match cannot
+       * escape the call it started in. Verified by mutation: adding
+       * `data: { status: "paid" }` to an update in invoices.service.ts fails
+       * this test, and removing it passes.
+       */
       expect(source, `${file} must not write invoice.status`).not.toMatch(
-        /invoice\.update\([\s\S]*?status\s*:/,
+        /invoice\.update\((?:(?!\}\))[\s\S])*?status\s*:/,
       );
     }
     // And the update request schema has no status key at all.

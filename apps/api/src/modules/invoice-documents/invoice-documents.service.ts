@@ -8,11 +8,12 @@ import {
   UnprocessableEntityException,
 } from "@nestjs/common";
 import { Prisma, withTenant } from "@eva/database";
-import type {
-  ExtractableField,
-  ExtractedFieldValue,
-  InvoiceDocumentDetail,
-  InvoiceDocumentSummary,
+import {
+  minorUnitsToNumber,
+  type ExtractableField,
+  type ExtractedFieldValue,
+  type InvoiceDocumentDetail,
+  type InvoiceDocumentSummary,
 } from "@eva/types";
 import type { ConfirmInvoiceDocumentRequest } from "@eva/validation";
 // eslint-disable-next-line @typescript-eslint/consistent-type-imports
@@ -282,7 +283,9 @@ export class InvoiceDocumentsService {
           customerId: invoice.customerId,
           contactId: invoice.contactId,
           invoiceNumber: invoice.invoiceNumber,
-          amountMinorUnits: invoice.amountMinorUnits,
+          // bigint since migration 0021; JSON has no bigint, and this converts
+          // with an explicit range check rather than losing precision quietly.
+          amountMinorUnits: minorUnitsToNumber(invoice.amountMinorUnits),
           currency: invoice.currency,
           issueDate: invoice.issueDate,
           dueDate: invoice.dueDate,

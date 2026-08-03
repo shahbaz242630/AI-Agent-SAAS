@@ -3,6 +3,13 @@
  * Only types that genuinely cross module/app boundaries belong here.
  */
 
+/**
+ * Money arithmetic is shared because it MUST NOT be duplicated: the api parses
+ * what a human typed and the web app formats what came back, and two copies of
+ * a minor-unit table drift into two different answers for the same invoice.
+ */
+export * from "./money.js";
+
 /** Liveness payload returned by every service's GET /health endpoint. */
 export interface HealthResponse {
   status: "ok";

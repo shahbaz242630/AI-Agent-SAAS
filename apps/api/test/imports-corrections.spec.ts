@@ -83,7 +83,8 @@ describe("Imports: confirm corrections (Slice 1.4 plan §7.9)", () => {
     const invoice = await owner.invoice.findFirstOrThrow({
       where: { organisationId: org.id, invoiceNumber: "FIX-1" },
     });
-    expect(invoice.amountMinorUnits).toBe(12345);
+    // bigint since migration 0021 — this reads Prisma directly, not the API.
+    expect(invoice.amountMinorUnits).toBe(12345n);
     expect(invoice.status).toBe("draft");
 
     const audit = await owner.auditLog.findFirst({
@@ -125,7 +126,7 @@ describe("Imports: confirm corrections (Slice 1.4 plan §7.9)", () => {
     const existing = await owner.invoice.findFirstOrThrow({
       where: { organisationId: org.id, invoiceNumber: "LIVE-99" },
     });
-    expect(existing.amountMinorUnits).toBe(100);
+    expect(existing.amountMinorUnits).toBe(100n);
   });
 
   it("a still-invalid corrected row stays invalid with the NEW errors", async () => {

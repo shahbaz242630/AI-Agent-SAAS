@@ -99,19 +99,35 @@ describe("Imports: parser adapter units (plan §6)", () => {
   });
 
   it("parses amounts to integer minor units: £1,234.56 → 123456", () => {
-    expect(parseImportAmount("£1,234.56")).toBe(123456);
-    expect(parseImportAmount("1234.56")).toBe(123456);
-    expect(parseImportAmount("100")).toBe(10000);
-    expect(parseImportAmount("0.01")).toBe(1);
+    expect(parseImportAmount("£1,234.56", "GBP")).toBe(123456);
+    expect(parseImportAmount("1234.56", "GBP")).toBe(123456);
+    expect(parseImportAmount("100", "GBP")).toBe(10000);
+    expect(parseImportAmount("0.01", "GBP")).toBe(1);
   });
 
   it("rejects zero, negative, garbage and over-precise amounts", () => {
-    expect(parseImportAmount("0")).toBeNull();
-    expect(parseImportAmount("0.00")).toBeNull();
-    expect(parseImportAmount("-5")).toBeNull();
-    expect(parseImportAmount("abc")).toBeNull();
-    expect(parseImportAmount("12.345")).toBeNull();
-    expect(parseImportAmount("1,23.4")).toBeNull();
+    expect(parseImportAmount("0", "GBP")).toBeNull();
+    expect(parseImportAmount("0.00", "GBP")).toBeNull();
+    expect(parseImportAmount("-5", "GBP")).toBeNull();
+    expect(parseImportAmount("abc", "GBP")).toBeNull();
+    expect(parseImportAmount("12.345", "GBP")).toBeNull();
+    expect(parseImportAmount("1,23.4", "GBP")).toBeNull();
+  });
+
+  /**
+   * The precision an amount may carry belongs to its CURRENCY (slice 1.6c).
+   * Before that, this parser capped decimals at two and multiplied by 100 — so
+   * a Kuwaiti invoice was rejected as invalid and a Japanese one was inflated
+   * a hundredfold. Both are in the founder's stated launch markets.
+   */
+  it("scales by the currency's own exponent, not a constant 100", () => {
+    // 3 decimals — GCC. Invalid as GBP, valid as KWD.
+    expect(parseImportAmount("12.345", "KWD")).toBe(12345);
+    // 0 decimals — Asia. ¥1000 is 1000 minor units, not 100000.
+    expect(parseImportAmount("1000", "JPY")).toBe(1000);
+    expect(parseImportAmount("1000.5", "JPY")).toBeNull();
+    // 2 decimals — unchanged.
+    expect(parseImportAmount("12.34", "AED")).toBe(1234);
   });
 
   it("parses ISO and UK DD/MM/YYYY dates to UTC midnight", () => {

@@ -1,3 +1,5 @@
+import { minorUnitsToNumber, parseAmountToMinorUnits } from "@eva/types";
+
 /**
  * Semantic value parsing (1.3 plan §3): raw strings (staged from a file, or
  * extracted from a PDF — Slice 1.4, promoted here from the imports module)
@@ -9,19 +11,36 @@
  */
 
 /**
- * Decimal major units as written in a file ("1234.56", "£1,234.56") →
- * integer minor units (123456). Returns null when the value is not a
- * positive amount with at most two decimal places.
+ * Decimal major units as written in a file ("1234.56", "£1,234.56") → integer
+ * minor units, FOR THIS CURRENCY. Null when it is not a positive amount.
+ *
+ * ⚠️ `currency` is required, and that is the whole point (slice 1.6c). This
+ * function used to cap decimals at two and multiply by 100, which is right for
+ * GBP/AED/USD and wrong for both other ISO 4217 groups: a Kuwaiti invoice for
+ * 12.345 KWD was rejected outright, and a Japanese ¥1000 became 100000. GCC is
+ * the next market and three of its six currencies carry three decimals.
+ *
+ * The arithmetic lives in `@eva/types` because the web app has to agree with
+ * this exactly — two copies of a minor-unit table become two different answers
+ * for the same invoice.
  */
-export function parseImportAmount(raw: string): number | null {
-  const cleaned = raw.replace(/[£$\s]/g, "");
-  // Plain digits, or digits with correctly-placed thousand separators.
-  if (!/^\d+(\.\d{1,2})?$/.test(cleaned) && !/^\d{1,3}(,\d{3})+(\.\d{1,2})?$/.test(cleaned)) {
-    return null;
-  }
-  const minorUnits = Math.round(Number(cleaned.replace(/,/g, "")) * 100);
-  return minorUnits > 0 ? minorUnits : null;
+export function parseImportAmount(raw: string, currency: string): number | null {
+  const minorUnits = parseAmountToMinorUnits(raw, currency);
+  if (minorUnits === null || minorUnits <= 0n) return null;
+  return minorUnitsToNumber(minorUnits);
 }
+
+/**
+ * The widest precision ISO 4217 defines, used ONLY to rank candidate amounts
+ * scraped from a PDF before the currency is known.
+ *
+ * Ranking needs every candidate to survive parsing and to be scaled the same
+ * way — it compares them and returns the winning RAW STRING, so the scale
+ * itself never leaves this step. Parsing candidates at two decimals instead
+ * would silently drop every three-decimal amount from consideration, which is
+ * the same GCC bug one layer further out.
+ */
+export const RANKING_PRECISION_CURRENCY = "BHD";
 
 /** ISO (YYYY-MM-DD) or UK (DD/MM/YYYY) → a UTC-midnight Date; null if invalid. */
 export function parseImportDate(raw: string): Date | null {

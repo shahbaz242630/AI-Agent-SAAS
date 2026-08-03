@@ -1,7 +1,11 @@
 import { Injectable } from "@nestjs/common";
 import { getDocument, VerbosityLevel } from "pdfjs-dist/legacy/build/pdf.mjs";
 import type { ExtractableField, ExtractedFieldValue } from "@eva/types";
-import { parseImportAmount, normaliseImportCurrency } from "../../../common/ledger/values.js";
+import {
+  parseImportAmount,
+  normaliseImportCurrency,
+  RANKING_PRECISION_CURRENCY,
+} from "../../../common/ledger/values.js";
 import {
   ExtractionFailedError,
   NoTextLayerError,
@@ -293,10 +297,17 @@ function cleanPartyValue(raw: string | undefined): string | undefined {
   return value;
 }
 
-/** Parse a candidate amount string (symbols beyond £/$ stripped first — the
- *  shared parser mirrors the 1.3 file semantics, which only ever see £/$). */
+/**
+ * Parse a candidate amount for RANKING only — see `RANKING_PRECISION_CURRENCY`.
+ *
+ * The currency of the document is extracted separately and may not be known
+ * yet, so candidates are parsed at the widest precision ISO 4217 defines.
+ * Parsing them at two decimals would drop every three-decimal amount out of
+ * contention before the currency was even read, which is how a Kuwaiti invoice
+ * would end up proposing the wrong number.
+ */
 function parseAmount(raw: string): number | null {
-  return parseImportAmount(raw.replace(/[€¥₹₩]/g, ""));
+  return parseImportAmount(raw, RANKING_PRECISION_CURRENCY);
 }
 
 /** The candidate with the largest parsed minor units (plan §3 tiebreak). */
