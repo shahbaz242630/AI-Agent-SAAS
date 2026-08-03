@@ -63,10 +63,30 @@ export function ModuleControls({
               id={`${moduleKey}-seats`}
               name="seats"
               type="number"
-              // Cannot go below what is already connected — the API refuses it
-              // anyway and names the number, but there is no reason to let
-              // someone type it first.
-              min={Math.max(seatsUsed, 1)}
+              /**
+               * ⚠️ `min` is 1 — the DATABASE's rule (CHECK seats >= 1) — and
+               * deliberately NOT `seatsUsed`.
+               *
+               * It used to be `Math.max(seatsUsed, 1)`, and the comment said the
+               * API refuses a lower number anyway "so there is no reason to let
+               * someone type it first". That reasoning had it backwards: the
+               * browser refused FIRST, so the request never reached the API and
+               * the customer got a bare native tooltip — "Value must be greater
+               * than or equal to 2" — instead of the server's message, which
+               * names how many mailboxes to disconnect AND how many clients
+               * would be re-routed if they did.
+               *
+               * This is the same defect slice 1.6a recorded in §0e, where it was
+               * written down as a lesson about TESTING (the server guard could
+               * not be reached) rather than fixed as a defect the customer
+               * meets. Seen again on staging 2026-08-02, now with a Task 7
+               * message behind it that nobody could ever have read.
+               *
+               * The rule "you cannot have fewer seats than mailboxes" belongs to
+               * the server, which owns the count and can explain the cost. The
+               * browser should only enforce what is true regardless of state.
+               */
+              min={1}
               max={1000}
               defaultValue={seats}
               className="w-24 rounded-[var(--radius-card)] border border-muted-foreground/30 bg-background px-3 py-2 text-sm outline-none focus:border-primary"
