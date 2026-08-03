@@ -259,6 +259,9 @@ importers:
       '@eva/testing':
         specifier: workspace:*
         version: link:../../packages/testing
+      '@eva/types':
+        specifier: workspace:*
+        version: link:../../packages/types
       '@types/node':
         specifier: ^22.15.0
         version: 22.20.1
