@@ -8,6 +8,7 @@ import {
   importRowStatusLabel,
   isImportableRowStatus,
 } from "@/lib/import-messages";
+import { can, readOnlyImportsLine } from "@/lib/permissions";
 import { createClient } from "@/lib/supabase/server";
 import { ConfirmImportControls } from "../import-controls";
 
@@ -23,6 +24,8 @@ import { ConfirmImportControls } from "../import-controls";
 interface OrganisationSummary {
   id: string;
   name: string;
+  /** What this person may do here — resolved by the API, never by us. */
+  permissions: string[];
 }
 
 interface ImportRow {
@@ -68,8 +71,18 @@ export default async function ImportPreviewPage({
   const organisation = organisations[0];
   if (!organisation) redirect("/app");
 
+  /**
+   * ⚠️ 403 AND 402 WERE UNCAUGHT UNTIL TASK 8, and both are reachable: this
+   * page's only read is module-owned, so an organisation without Invoice
+   * Chasing hit the `else throw` and got a crash instead of an upgrade prompt.
+   * The gate order is preserved — 404 before either, so an upload id that does
+   * not exist never becomes a way to ask what a stranger's organisation has
+   * bought (standing rule §0d).
+   */
   let detail: ImportDetail | null = null;
   let missing = false;
+  let forbidden = false;
+  let notEntitled = false;
   try {
     detail = (await (
       await apiFetch(`/organisations/${organisation.id}/imports/${importId}`, accessToken)
@@ -77,10 +90,12 @@ export default async function ImportPreviewPage({
   } catch (error) {
     if (error instanceof ApiError && error.status === 401) redirect("/sign-in");
     else if (error instanceof ApiError && error.status === 404) missing = true;
+    else if (error instanceof ApiError && error.status === 403) forbidden = true;
+    else if (error instanceof ApiError && error.status === 402) notEntitled = true;
     else throw error;
   }
 
-  if (missing || !detail) {
+  if (missing) {
     return (
       <Shell>
         <p className="w-full max-w-5xl text-sm text-muted-foreground">
@@ -89,6 +104,45 @@ export default async function ImportPreviewPage({
       </Shell>
     );
   }
+
+  if (notEntitled) {
+    return (
+      <Shell>
+        <section className="flex w-full max-w-5xl flex-col gap-3 rounded-[var(--radius-card)] bg-muted px-6 py-4">
+          <p className="text-sm">
+            {`${organisation.name} doesn't have Invoice Chasing, so there's nowhere for these invoices to go yet.`}
+          </p>
+          <div>
+            <Link
+              href="/app/settings/modules"
+              className="rounded-[var(--radius-card)] bg-primary px-4 py-2 text-sm font-medium text-primary-foreground"
+            >
+              See your products
+            </Link>
+          </div>
+        </section>
+      </Shell>
+    );
+  }
+
+  if (forbidden || !detail) {
+    return (
+      <Shell>
+        <p className="w-full max-w-5xl text-sm text-muted-foreground">
+          {`Your role doesn't have access to ${organisation.name}'s uploads. Ask an owner or administrator.`}
+        </p>
+      </Shell>
+    );
+  }
+
+  /**
+   * ⚠️ SEEING THE PREVIEW AND COMMITTING IT ARE DIFFERENT PERMISSIONS.
+   * `imports:read` shows the staged rows; `imports:write` turns them into
+   * invoices or throws them away. A role holding only the first belongs on this
+   * page — checking somebody else's upload before it lands is exactly what it
+   * is for — and must not be offered either button.
+   */
+  const canImport = can(organisation, "imports:write");
 
   const done = detail.status === "completed";
   const skipped = detail.totalRows - detail.createdRows;
@@ -143,11 +197,20 @@ export default async function ImportPreviewPage({
 
       {!done && (
         <section className="w-full max-w-5xl">
-          <ConfirmImportControls
-            organisationId={organisation.id}
-            importId={detail.id}
-            validRows={detail.validRows}
-          />
+          {canImport ? (
+            <ConfirmImportControls
+              organisationId={organisation.id}
+              importId={detail.id}
+              validRows={detail.validRows}
+            />
+          ) : (
+            /* The rows below are still worth reading — this says why nothing
+               can be done about them here, rather than leaving a preview that
+               appears to have lost its buttons. */
+            <p className="rounded-[var(--radius-card)] bg-muted px-6 py-3 text-sm text-muted-foreground">
+              {readOnlyImportsLine(organisation.name)}
+            </p>
+          )}
         </section>
       )}
 

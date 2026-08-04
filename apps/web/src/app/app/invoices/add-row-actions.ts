@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { ApiError, apiFetch } from "@/lib/api";
 import { normalisePhoneInput, parseAmountInput } from "@/lib/money";
+import { humanRefusal } from "@/lib/permissions";
 import { createClient } from "@/lib/supabase/server";
 
 /**
@@ -116,7 +117,13 @@ export async function addBookRow(
   } catch (error) {
     if (error instanceof ApiError && error.status === 401) redirect("/sign-in");
     return {
-      error: error instanceof ApiError ? error.message : "Something went wrong. Please try again.",
+      // A 403 becomes a sentence; everything else keeps the API's own wording,
+      // which is where "amount 'x' is not a valid positive GBP amount" and the
+      // duplicate-number refusal live. See `lib/permissions.ts`.
+      error:
+        error instanceof ApiError
+          ? (humanRefusal(error.status, "add-row") ?? error.message)
+          : "Something went wrong. Please try again.",
       values,
     };
   }

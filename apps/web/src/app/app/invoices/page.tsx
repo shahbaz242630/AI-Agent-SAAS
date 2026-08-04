@@ -8,6 +8,7 @@ import {
   otherCurrenciesLine,
 } from "@/lib/invoice-book";
 import { formatMoney } from "@/lib/money";
+import { can, readOnlyInvoicesLine } from "@/lib/permissions";
 import { createClient } from "@/lib/supabase/server";
 import { AddRowForm } from "./add-row-form";
 import { BookRows, type BookRow } from "./book-rows";
@@ -33,6 +34,8 @@ const PAGE_SIZE = 50;
 interface OrganisationSummary {
   id: string;
   name: string;
+  /** What this person may do here — resolved by the API, never by us. */
+  permissions: string[];
 }
 
 interface Book {
@@ -163,6 +166,18 @@ export default async function InvoiceBookPage({
     return qs ? `/app/invoices?${qs}` : "/app/invoices";
   };
 
+  /**
+   * Task 8. Three of the six roles can read this book and change nothing in it.
+   *
+   * ⚠️ TWO SEPARATE PERMISSIONS, and they are not the same question. Uploading
+   * a spreadsheet is `imports:write` and typing a row in is `invoices:write` —
+   * they happen to move together in the BRD default matrix, and an organisation
+   * with a custom mapping can hold one without the other. Asking once and using
+   * the answer twice would be a guess that is right by coincidence today.
+   */
+  const canWrite = can(organisation, "invoices:write");
+  const canImport = can(organisation, "imports:write");
+
   return (
     <Shell>
       <section className="flex w-full max-w-6xl flex-col gap-2">
@@ -173,16 +188,24 @@ export default async function InvoiceBookPage({
               {`Everything ${organisation.name} is owed, oldest first. Eva chases what is left, never the total.`}
             </p>
           </div>
-          <Link
-            href="/app/invoices/import"
-            className="rounded-[var(--radius-card)] bg-primary px-4 py-2 text-sm font-medium text-primary-foreground"
-          >
-            Upload a spreadsheet
-          </Link>
+          {canImport && (
+            <Link
+              href="/app/invoices/import"
+              className="rounded-[var(--radius-card)] bg-primary px-4 py-2 text-sm font-medium text-primary-foreground"
+            >
+              Upload a spreadsheet
+            </Link>
+          )}
         </div>
       </section>
 
-      <AddRowForm organisationId={organisation.id} />
+      {canWrite ? (
+        <AddRowForm organisationId={organisation.id} />
+      ) : (
+        <p className="w-full max-w-6xl rounded-[var(--radius-card)] bg-muted px-6 py-3 text-sm text-muted-foreground">
+          {readOnlyInvoicesLine(organisation.name)}
+        </p>
+      )}
 
       {/* The money, one currency at a time — with the others named beside it so
           choosing GBP cannot hide the AED (founder's ruling 2026-08-04). */}
@@ -290,7 +313,7 @@ export default async function InvoiceBookPage({
                   pausing it, cancelling it — opens a panel underneath, and the
                   rules and words for all of that come from
                   `lib/invoice-lifecycle.ts` rather than being restated here. */}
-              <BookRows organisationId={organisation.id} rows={book.rows} />
+              <BookRows organisationId={organisation.id} rows={book.rows} canWrite={canWrite} />
             </tbody>
           </table>
         </section>

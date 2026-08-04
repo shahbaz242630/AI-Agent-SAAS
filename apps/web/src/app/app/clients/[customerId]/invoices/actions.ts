@@ -9,6 +9,7 @@ import {
   paymentRecordedLine,
 } from "@/lib/invoice-lifecycle";
 import { formatMoney, parseAmountInput } from "@/lib/money";
+import { humanRefusal, type WriteAction } from "@/lib/permissions";
 import { createClient } from "@/lib/supabase/server";
 
 /**
@@ -61,13 +62,36 @@ function optional(formData: FormData, key: string): string | undefined {
   return value.length > 0 ? value : undefined;
 }
 
-function failed(error: unknown, values: SubmittedInvoice): InvoiceActionState {
+function failed(error: unknown, values: SubmittedInvoice, action: WriteAction): InvoiceActionState {
   return {
-    error: error instanceof ApiError ? error.message : "Something went wrong. Please try again.",
+    error: refusalMessage(error, action),
     // An API refusal — a duplicate invoice number, say — is the case where
     // keeping the typing matters most: everything else on the form was fine.
     values,
   };
+}
+
+/**
+ * The API's message, unless it is a 403 (slice 1.6c, task 8).
+ *
+ * ⚠️ ONLY 403 IS REWRITTEN, and that boundary is the whole design. The API's
+ * other 4xx messages are written for people and carry detail this layer does
+ * not have — "INV-3001 has already changed since this page was loaded",
+ * "KWD amounts have at most 3 decimal places", "Microsoft authorisation
+ * expired". Replacing those wholesale is defect F4, where a real instruction
+ * became "unexpected error (400). Please try again." A 403 is the one case
+ * where the API's string is deliberately for a log —
+ * `Role 'sales' lacks permission 'invoices:write' in this organisation` — and
+ * asking a credit controller to parse a permission key to learn that they
+ * should ask their manager is not an answer.
+ *
+ * This should now be rare: the controls are hidden from roles that cannot use
+ * them. It stays because a server action is reachable by direct POST, and
+ * because a role can be changed in another tab while a page sits open.
+ */
+function refusalMessage(error: unknown, action: WriteAction): string {
+  if (!(error instanceof ApiError)) return "Something went wrong. Please try again.";
+  return humanRefusal(error.status, action) ?? error.message;
 }
 
 /** Everything both invoice forms collect, read once so a refusal can echo it. */
@@ -167,7 +191,7 @@ export async function createInvoice(
     );
   } catch (error) {
     if (error instanceof ApiError && error.status === 401) redirect("/sign-in");
-    return failed(error, values);
+    return failed(error, values, "create-invoice");
   }
 
   // BOTH screens, because both can start this: the client's own page and the
@@ -256,7 +280,7 @@ export async function updateInvoice(
     );
   } catch (error) {
     if (error instanceof ApiError && error.status === 401) redirect("/sign-in");
-    return failed(error, values);
+    return failed(error, values, "edit-invoice");
   }
 
   // BOTH screens, because both can start this: the client's own page and the
@@ -331,10 +355,7 @@ export async function recordPayment(
     invoice = (await response.json()) as typeof invoice;
   } catch (error) {
     if (error instanceof ApiError && error.status === 401) redirect("/sign-in");
-    return {
-      error: error instanceof ApiError ? error.message : "Something went wrong. Please try again.",
-      amount,
-    };
+    return { error: refusalMessage(error, "record-payment"), amount };
   }
 
   // BOTH screens, because both can start this: the client's own page and the
@@ -430,9 +451,7 @@ export async function runInvoiceAction(
         error: `${invoiceNumber || "That invoice"} has already changed since this page was loaded. Refresh to see where it is now.`,
       };
     }
-    return {
-      error: error instanceof ApiError ? error.message : "Something went wrong. Please try again.",
-    };
+    return { error: refusalMessage(error, "change-invoice") };
   }
 
   // BOTH screens, because both can start this: the client's own page and the

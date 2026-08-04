@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { ApiError, apiFetch } from "@/lib/api";
+import { humanRefusal } from "@/lib/permissions";
 import { MAX_UPLOAD_BYTES } from "@/lib/import-messages";
 import { createClient } from "@/lib/supabase/server";
 
@@ -81,8 +82,12 @@ export async function uploadImport(
   } catch (error) {
     if (error instanceof ApiError && error.status === 401) redirect("/sign-in");
     return {
+      // A 403 becomes a sentence; a 400 keeps the API's, which names the column
+      // or the row that could not be read. See `lib/permissions.ts`.
       error:
-        error instanceof ApiError ? error.message : "We couldn't read that file. Please try again.",
+        error instanceof ApiError
+          ? (humanRefusal(error.status, "upload-import") ?? error.message)
+          : "We couldn't read that file. Please try again.",
     };
   }
 
@@ -109,7 +114,10 @@ export async function confirmImport(
   } catch (error) {
     if (error instanceof ApiError && error.status === 401) redirect("/sign-in");
     return {
-      error: error instanceof ApiError ? error.message : "Something went wrong. Please try again.",
+      error:
+        error instanceof ApiError
+          ? (humanRefusal(error.status, "confirm-import") ?? error.message)
+          : "Something went wrong. Please try again.",
     };
   }
 
@@ -143,7 +151,10 @@ export async function cancelImport(
   } catch (error) {
     if (error instanceof ApiError && error.status === 401) redirect("/sign-in");
     return {
-      error: error instanceof ApiError ? error.message : "Something went wrong. Please try again.",
+      error:
+        error instanceof ApiError
+          ? (humanRefusal(error.status, "cancel-import") ?? error.message)
+          : "Something went wrong. Please try again.",
     };
   }
 

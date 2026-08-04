@@ -1,7 +1,8 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { apiFetch } from "@/lib/api";
+import { ApiError, apiFetch } from "@/lib/api";
 import { importFieldLabel } from "@/lib/import-messages";
+import { can, readOnlyImportsLine } from "@/lib/permissions";
 import { createClient } from "@/lib/supabase/server";
 import { UploadForm } from "./import-controls";
 
@@ -31,6 +32,8 @@ const UNDERSTOOD_FIELDS = [
 interface OrganisationSummary {
   id: string;
   name: string;
+  /** What this person may do here — resolved by the API, never by us. */
+  permissions: string[];
 }
 
 export default async function ImportInvoicesPage() {
@@ -56,6 +59,64 @@ export default async function ImportInvoicesPage() {
     );
   }
 
+  /**
+   * ⚠️ THIS PAGE HAD NO PERMISSION CHECK OF ANY KIND UNTIL TASK 8. It rendered
+   * a working-looking upload form for every role and every organisation, and
+   * the first thing a read-only user learnt was a raw
+   * `Role 'read_only' lacks permission 'imports:write'` after choosing a file
+   * — and an organisation without Invoice Chasing got a 402 in the same place.
+   *
+   * ⚠️ ENTITLEMENT IS ASKED OF THE API, NOT INFERRED. There is no other read on
+   * this page, so the list of past imports is fetched purely to put the real
+   * gate in front of the form: `imports:read` is module-owned, so a 402 here is
+   * the same 402 the upload would have hit. Working it out from the role would
+   * answer a different question, and `modules:read` — the obvious way to check
+   * — is a permission the three read-only roles do not hold, so it would 403
+   * for exactly the people this is protecting.
+   */
+  let forbidden = false;
+  let notEntitled = false;
+  try {
+    await apiFetch(`/organisations/${organisation.id}/imports`, accessToken);
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 401) redirect("/sign-in");
+    else if (error instanceof ApiError && error.status === 403) forbidden = true;
+    else if (error instanceof ApiError && error.status === 402) notEntitled = true;
+    else throw error;
+  }
+
+  if (notEntitled) {
+    return (
+      <Shell>
+        <section className="flex w-full max-w-3xl flex-col gap-3 rounded-[var(--radius-card)] bg-muted px-6 py-4">
+          <p className="text-sm">
+            {`${organisation.name} doesn't have Invoice Chasing, so there's nowhere for these invoices to go yet.`}
+          </p>
+          <div>
+            <Link
+              href="/app/settings/modules"
+              className="rounded-[var(--radius-card)] bg-primary px-4 py-2 text-sm font-medium text-primary-foreground"
+            >
+              See your products
+            </Link>
+          </div>
+        </section>
+      </Shell>
+    );
+  }
+
+  if (forbidden) {
+    return (
+      <Shell>
+        <p className="w-full max-w-3xl text-sm text-muted-foreground">
+          {`Your role doesn't have access to ${organisation.name}'s uploads. Ask an owner or administrator.`}
+        </p>
+      </Shell>
+    );
+  }
+
+  const canImport = can(organisation, "imports:write");
+
   return (
     <Shell>
       <section className="flex w-full max-w-3xl flex-col gap-2">
@@ -67,7 +128,11 @@ export default async function ImportInvoicesPage() {
       </section>
 
       <section className="flex w-full max-w-3xl flex-col gap-4 rounded-[var(--radius-card)] bg-muted px-6 py-5">
-        <UploadForm organisationId={organisation.id} />
+        {canImport ? (
+          <UploadForm organisationId={organisation.id} />
+        ) : (
+          <p className="text-sm text-muted-foreground">{readOnlyImportsLine(organisation.name)}</p>
+        )}
       </section>
 
       <section className="flex w-full max-w-3xl flex-col gap-2">

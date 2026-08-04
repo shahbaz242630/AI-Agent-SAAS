@@ -2,6 +2,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { ApiError, apiFetch } from "@/lib/api";
 import { invoiceCountLine, noInvoicesLine } from "@/lib/invoice-messages";
+import { can, readOnlyInvoicesLine } from "@/lib/permissions";
 import { createClient } from "@/lib/supabase/server";
 import { AddInvoiceForm, InvoiceTable, type InvoiceRow } from "./invoice-controls";
 
@@ -24,6 +25,8 @@ interface OrganisationSummary {
   id: string;
   name: string;
   roleKey: string;
+  /** What this person may do here — resolved by the API, never by us. */
+  permissions: string[];
 }
 
 interface ClientRow {
@@ -196,6 +199,15 @@ export default async function CustomerInvoicesPage({
   const currencies = new Set(invoices.map((invoice) => invoice.currency));
   const defaultCurrency = currencies.size === 1 ? [...currencies][0]! : "GBP";
 
+  /**
+   * Task 8. `sales`, `reception` and `read_only` hold `invoices:read` and not
+   * `invoices:write`, so they belong on this screen and belong nowhere near its
+   * buttons. Read from the API's own answer rather than from `roleKey`, because
+   * an organisation may have granted the write to a role the BRD matrix does
+   * not — see `lib/permissions.ts`.
+   */
+  const canWrite = can(organisation, "invoices:write");
+
   return (
     <Shell customerId={customerId}>
       <section className="flex w-full max-w-4xl flex-col gap-2">
@@ -205,13 +217,22 @@ export default async function CustomerInvoicesPage({
         </p>
       </section>
 
-      <AddInvoiceForm
-        organisationId={organisation.id}
-        customerId={customerId}
-        clientName={client.name}
-        contacts={contacts}
-        defaultCurrency={defaultCurrency}
-      />
+      {canWrite ? (
+        <AddInvoiceForm
+          organisationId={organisation.id}
+          customerId={customerId}
+          clientName={client.name}
+          contacts={contacts}
+          defaultCurrency={defaultCurrency}
+        />
+      ) : (
+        /* Said rather than silently omitted: somebody who cannot find "Add an
+           invoice" concludes the product is broken, and looks for the fault in
+           the wrong place. */
+        <p className="w-full max-w-4xl rounded-[var(--radius-card)] bg-muted px-6 py-3 text-sm text-muted-foreground">
+          {readOnlyInvoicesLine(organisation.name)}
+        </p>
+      )}
 
       {invoices.length === 0 ? (
         <p className="w-full max-w-4xl rounded-[var(--radius-card)] bg-muted px-6 py-4 text-sm">
@@ -223,6 +244,7 @@ export default async function CustomerInvoicesPage({
           customerId={customerId}
           invoices={invoices}
           contacts={contacts}
+          canWrite={canWrite}
         />
       )}
     </Shell>

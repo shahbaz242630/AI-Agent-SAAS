@@ -6,13 +6,18 @@ import {
   NotFoundException,
 } from "@nestjs/common";
 import { withTenant, withUser } from "@eva/database";
-import { DEFAULT_ROLE_PERMISSIONS, ORGANISATION_ROLES, type OrganisationRole } from "@eva/types";
+import {
+  DEFAULT_ROLE_PERMISSIONS,
+  ORGANISATION_ROLES,
+  type OrganisationRole,
+  type PermissionKey,
+} from "@eva/types";
 import type { PutRolePermissionsRequest } from "@eva/validation";
 // eslint-disable-next-line @typescript-eslint/consistent-type-imports
 import { PrismaService } from "../../common/database/prisma.service.js";
 // eslint-disable-next-line @typescript-eslint/consistent-type-imports
 import { UsersService } from "../users/users.service.js";
-import { requirePermission } from "../../common/permissions/permissions.js";
+import { effectivePermissions, requirePermission } from "../../common/permissions/permissions.js";
 import { writeAuditLog } from "../../common/audit/audit-log.js";
 import type { AuthUser } from "../authentication/current-auth-user.decorator.js";
 
@@ -20,6 +25,27 @@ export interface OrganisationSummary {
   id: string;
   name: string;
   roleKey: string;
+  /**
+   * What the CALLER may do here (slice 1.6c, task 8) — resolved by the same
+   * function the guards use, so a screen cannot hold a second opinion about
+   * authorisation.
+   *
+   * ⚠️ WHY THIS IS PUBLISHED RATHER THAN WORKED OUT IN THE BROWSER. The web app
+   * could read `roleKey` and consult the BRD default matrix itself, and that is
+   * wrong for every organisation with a custom mapping — the matrix is only the
+   * FALLBACK, `organisation_role_permissions` overrides it, and an org that has
+   * granted `sales` the right to raise invoices would still have the button
+   * hidden from them. Tested: `invoices.spec.ts` "org permission override grants
+   * sales invoices:write and revokes finance".
+   *
+   * ⚠️ THE ROLE HALF ONLY — it does not mean the organisation holds the product.
+   * A screen learns that from its own 402, and must keep the two apart.
+   *
+   * It is the caller's own list, so it discloses nothing: it answers "what may
+   * I do", never "what may somebody else do". The org-wide mapping stays behind
+   * `permissions:read`.
+   */
+  permissions: PermissionKey[];
 }
 
 export interface MemberSummary {
@@ -86,6 +112,11 @@ export class OrganisationsService {
               id: organisation.id,
               name: organisation.name,
               roleKey: membership.role.key,
+              permissions: await effectivePermissions(
+                tx,
+                membership.organisationId,
+                membership.role.key,
+              ),
             };
           },
         ),
@@ -141,7 +172,15 @@ export class OrganisationsService {
           createdBy: user.id,
         },
       });
-      return { id: organisation.id, name: organisation.name, roleKey: ownerRole.key };
+      return {
+        id: organisation.id,
+        name: organisation.name,
+        roleKey: ownerRole.key,
+        // Resolved rather than assumed to be the whole matrix: this reads the
+        // rows just written, so a future change to what a new owner gets cannot
+        // leave this response describing the old rule.
+        permissions: await effectivePermissions(tx, organisationId, ownerRole.key),
+      };
     });
   }
 

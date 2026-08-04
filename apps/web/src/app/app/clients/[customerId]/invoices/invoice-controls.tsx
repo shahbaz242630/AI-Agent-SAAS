@@ -367,11 +367,21 @@ export function InvoiceTable({
   customerId,
   invoices,
   contacts,
+  canWrite,
 }: {
   organisationId: string;
   customerId: string;
   invoices: InvoiceRow[];
   contacts: ContactOption[];
+  /**
+   * Whether this person holds `invoices:write` here (slice 1.6c, task 8).
+   *
+   * ⚠️ REQUIRED, NOT OPTIONAL WITH A `true` DEFAULT. A defaulted-open flag is
+   * how a new caller silently ships the write controls to a read-only role —
+   * the failure mode would be invisible until somebody clicked. Making it
+   * required means a screen that forgets it does not compile.
+   */
+  canWrite: boolean;
 }) {
   const [asked, setAsked] = useState<{
     invoiceId: string;
@@ -406,22 +416,31 @@ export function InvoiceTable({
    * another tab, and the 1.6b crash where an id outlived the row it named.
    */
   let openPanel: { invoice: InvoiceRow; action: InvoiceLifecycleAction } | null = null;
-  if (asked) {
+  if (asked && canWrite) {
     const invoice = invoices.find((row) => row.id === asked.invoiceId);
     if (invoice && availableInvoiceActions(invoice.status).includes(asked.action)) {
       openPanel = { invoice, action: asked.action };
     }
   }
 
-  const editingInvoice = editing
-    ? (invoices.find((row) => row.id === editing && isInvoiceEditable(row.status)) ?? null)
-    : null;
+  /**
+   * ⚠️ `canWrite` IS CHECKED ON THE PANELS TOO, not only on the buttons that
+   * open them. Hiding a button leaves whatever opened it still reachable — a
+   * stale `useState` across a re-render, or a role changed in another tab —
+   * and a form that appears for someone who cannot submit it is a click that
+   * can only fail. The API refuses it either way; this stops us offering it.
+   */
+  const editingInvoice =
+    editing && canWrite
+      ? (invoices.find((row) => row.id === editing && isInvoiceEditable(row.status)) ?? null)
+      : null;
 
   // Closes itself the same way: once an invoice is settled it can take no more
   // payments, so the panel stops being valid and disappears.
-  const payingInvoice = paying
-    ? (invoices.find((row) => row.id === paying && canRecordPayment(row.status)) ?? null)
-    : null;
+  const payingInvoice =
+    paying && canWrite
+      ? (invoices.find((row) => row.id === paying && canRecordPayment(row.status)) ?? null)
+      : null;
 
   return (
     <section className="flex w-full max-w-4xl flex-col gap-3">
@@ -505,8 +524,10 @@ export function InvoiceTable({
                   )}
                 </td>
                 <td className="px-3 py-3">
+                  {/* Nothing at all for a read-only role — the reason is said
+                      once above the table rather than repeated on every row. */}
                   <div className="flex flex-wrap gap-2">
-                    {isInvoiceEditable(invoice.status) && (
+                    {canWrite && isInvoiceEditable(invoice.status) && (
                       <button
                         type="button"
                         onClick={() => setEditing(editing === invoice.id ? null : invoice.id)}
@@ -517,7 +538,7 @@ export function InvoiceTable({
                     )}
                     {/* First, because it is the commonest thing that happens to
                         an invoice: somebody pays it. */}
-                    {canRecordPayment(invoice.status) && (
+                    {canWrite && canRecordPayment(invoice.status) && (
                       <button
                         type="button"
                         onClick={() => setPaying(paying === invoice.id ? null : invoice.id)}
@@ -534,16 +555,17 @@ export function InvoiceTable({
                       anyway, so this cannot go wrong quietly; it is written the
                       right way round so nobody has to rely on that.)
                     */}
-                    {availableInvoiceActions(invoice.status).map((action) => (
-                      <button
-                        key={action}
-                        type="button"
-                        onClick={() => setAsked({ invoiceId: invoice.id, action })}
-                        className={SMALL_BUTTON_CLASS}
-                      >
-                        {invoiceActionLabel(action)}
-                      </button>
-                    ))}
+                    {canWrite &&
+                      availableInvoiceActions(invoice.status).map((action) => (
+                        <button
+                          key={action}
+                          type="button"
+                          onClick={() => setAsked({ invoiceId: invoice.id, action })}
+                          className={SMALL_BUTTON_CLASS}
+                        >
+                          {invoiceActionLabel(action)}
+                        </button>
+                      ))}
                   </div>
                 </td>
               </tr>

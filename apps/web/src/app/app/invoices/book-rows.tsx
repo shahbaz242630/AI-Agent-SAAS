@@ -72,7 +72,22 @@ type OpenPanel =
   | { kind: "payment"; invoiceId: string }
   | null;
 
-export function BookRows({ organisationId, rows }: { organisationId: string; rows: BookRow[] }) {
+export function BookRows({
+  organisationId,
+  rows,
+  canWrite,
+}: {
+  organisationId: string;
+  rows: BookRow[];
+  /**
+   * Whether this person holds `invoices:write` here (slice 1.6c, task 8).
+   *
+   * ⚠️ REQUIRED, NOT DEFAULTED TO `true`. A flag that defaults open is how a
+   * new caller ships the write controls to a read-only role without noticing;
+   * required means forgetting it does not compile.
+   */
+  canWrite: boolean;
+}) {
   const [panel, setPanel] = useState<OpenPanel>(null);
   /**
    * ONE action state for every lifecycle button in the table, held here so the
@@ -94,7 +109,11 @@ export function BookRows({ organisationId, rows }: { organisationId: string; row
    * told it to. It also handles the invoice changing in another tab.
    */
   let open: { row: BookRow; panel: NonNullable<OpenPanel> } | null = null;
-  if (panel) {
+  /* ⚠️ `canWrite` GATES THE PANEL, not just the buttons that open it. Hiding a
+     button leaves whatever opened it reachable — stale state across a
+     re-render, or a role changed in another tab — and a form somebody cannot
+     submit is a click that can only fail. */
+  if (panel && canWrite) {
     const row = rows.find((candidate) => candidate.id === panel.invoiceId);
     if (row) {
       const stillValid =
@@ -197,10 +216,12 @@ export function BookRows({ organisationId, rows }: { organisationId: string; row
                 })}
               </td>
               <td className="px-3 py-3">
+                {/* Empty for a read-only role — the reason is said once above
+                    the table rather than repeated on every row of the book. */}
                 <div className="flex flex-wrap gap-1">
                   {/* First, because it is the commonest thing that happens to an
                       invoice: somebody pays it. */}
-                  {canRecordPayment(row.status) && (
+                  {canWrite && canRecordPayment(row.status) && (
                     <button
                       type="button"
                       onClick={() =>
@@ -219,16 +240,17 @@ export function BookRows({ organisationId, rows }: { organisationId: string; row
                       is STORED as active. `availableInvoiceActions` normalises
                       the derived statuses anyway, so this cannot go wrong
                       quietly; it is written the right way round regardless. */}
-                  {availableInvoiceActions(row.status).map((action) => (
-                    <button
-                      key={action}
-                      type="button"
-                      onClick={() => setPanel({ kind: "lifecycle", invoiceId: row.id, action })}
-                      className={SMALL_BUTTON}
-                    >
-                      {invoiceActionLabel(action)}
-                    </button>
-                  ))}
+                  {canWrite &&
+                    availableInvoiceActions(row.status).map((action) => (
+                      <button
+                        key={action}
+                        type="button"
+                        onClick={() => setPanel({ kind: "lifecycle", invoiceId: row.id, action })}
+                        className={SMALL_BUTTON}
+                      >
+                        {invoiceActionLabel(action)}
+                      </button>
+                    ))}
                 </div>
               </td>
             </tr>
