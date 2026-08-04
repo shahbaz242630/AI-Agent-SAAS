@@ -36,9 +36,20 @@ const LIFECYCLE_ACTIONS: readonly InvoiceLifecycleAction[] = [
  */
 const LEGAL_FROM: Readonly<Record<InvoiceLifecycleAction, readonly string[]>> = {
   activate: ["draft"],
-  pause: ["active"],
+  /**
+   * ⚠️ `partially_paid` IS HERE BECAUSE IT IS A CHASED STATUS. Recording a part
+   * payment moves an invoice there and Eva keeps chasing the balance — so it
+   * must be stoppable like any other invoice being chased.
+   *
+   * This mirror went stale the moment the API's own table changed, and the
+   * screen showed it: a part-paid, forty-days-overdue invoice offered "Record a
+   * payment" and nothing else, so there was no way to stop chasing it at all.
+   * Caught by looking, not by a test. If this table is edited, edit
+   * `invoice-state-machine.ts` in the api in the same breath.
+   */
+  pause: ["active", "partially_paid"],
   resume: ["paused"],
-  cancel: ["draft", "active", "paused"],
+  cancel: ["draft", "active", "paused", "partially_paid"],
 };
 
 /**
@@ -163,7 +174,10 @@ function blockedPhrase(reason: string | null): string | null {
  * file claimed the behaviour it did not implement.
  */
 export function chaseBlockedLine(status: string, reason: string | null): string | null {
-  if (storedStatusOf(status) !== "active") return null;
+  // Every CHASED status, so a part-paid invoice says why its balance is not
+  // being chased. It read `!== "active"` and stayed silent on exactly the rows
+  // where money is still owed and going uncollected.
+  if (!isChasedStatus(status)) return null;
   const phrase = blockedPhrase(reason);
   return phrase === null ? null : `Eva can't chase this — ${phrase}.`;
 }
@@ -179,8 +193,42 @@ export function chaseBlockedLine(status: string, reason: string | null): string 
  * Used to decide whether an outstanding balance is money Eva is working on —
  * which is why a CANCELLED invoice must not show its balance as though it were.
  */
+/**
+ * The stored statuses in which Eva is chasing — `active` and, since payments
+ * landed, `partially_paid`.
+ *
+ * ⚠️ MIRRORS `CHASED_INVOICE_STATUSES` IN `@eva/types`, which the API uses for
+ * the scheduler gate, both reconcile queries and the display derivation.
+ * Redeclared rather than imported because `apps/web` deliberately restates the
+ * contract shapes it uses (slice 1.6 ruling 1, thin UI) — and drift here is
+ * mild and visible: a part-paid invoice would look unchased on a screen while
+ * the server kept chasing it, which is a wrong label rather than a wrong send.
+ */
+const CHASED_STATUSES = new Set(["active", "partially_paid"]);
+
+function isChasedStatus(status: string): boolean {
+  return CHASED_STATUSES.has(storedStatusOf(status));
+}
+
 export function isBeingChased(status: string, chaseBlockedReason: string | null): boolean {
-  return storedStatusOf(status) === "active" && chaseBlockedReason === null;
+  return isChasedStatus(status) && chaseBlockedReason === null;
+}
+
+/**
+ * Can money be recorded against this invoice?
+ *
+ * Mirrors what the API allows: an ISSUED invoice that has not already been
+ * settled or abandoned. A draft was never sent, so there is nothing to have
+ * been paid; a cancelled one cannot be revived by a payment (the state machine
+ * has no way out of cancelled, and every screen promises that).
+ *
+ * `paused` is included on purpose — money arrives while a chase is on hold all
+ * the time, and refusing to record it would push people back to the two bad
+ * choices this feature exists to remove.
+ */
+export function canRecordPayment(status: string): boolean {
+  const stored = storedStatusOf(status);
+  return stored === "active" || stored === "paused" || stored === "partially_paid";
 }
 
 /**
@@ -226,6 +274,45 @@ export function invoiceActionConsequence(
       // is the reason the label is not "Close" (trap 7).
       return `Eva stops chasing ${number} for good and cancels every reminder queued for it. This cannot be undone — a cancelled invoice cannot be started again. Cancelled is not the same as paid, so do not use it to record that this one was settled.`;
   }
+}
+
+/**
+ * What to say once a payment has been recorded (slice 1.6c, task 6).
+ *
+ * ⚠️ IT MUST SAY WHAT HAPPENS TO THE REST, because that is the entire point of
+ * being able to record a part payment. Before this, a debtor who owed 10,000
+ * and paid 6,000 left two bad choices — leave it Active and Eva chases the full
+ * 10,000, or cancel it and Eva stops chasing the 4,000 still owed. "Payment
+ * recorded" on its own would leave a customer guessing which of those they had
+ * just done.
+ *
+ * Takes the invoice as the API returned it AFTER the payment, so the sentence
+ * describes what actually happened rather than what was expected to.
+ */
+export function paymentRecordedLine(invoice: {
+  invoiceNumber: string;
+  status: string;
+  outstandingMinorUnits: number;
+  formattedOutstanding: string;
+  chaseBlockedReason: string | null;
+}): string {
+  const number = invoice.invoiceNumber;
+  if (invoice.outstandingMinorUnits <= 0) {
+    return `${number} is settled in full. Eva has stopped chasing it.`;
+  }
+  const left = `${invoice.formattedOutstanding} is still owed on ${number}`;
+  // Paused deliberately STAYS paused when a part payment arrives — somebody
+  // stopped that chase on purpose, and banking some money is not them asking
+  // for it to start again. Saying so is the difference between a quiet surprise
+  // and a decision.
+  if (storedStatusOf(invoice.status) === "paused") {
+    return `Payment recorded. ${left}, and it is still paused — Eva is not chasing it.`;
+  }
+  const phrase = blockedPhrase(invoice.chaseBlockedReason);
+  if (phrase !== null) {
+    return `Payment recorded. ${left}, but nothing will be sent — ${phrase}.`;
+  }
+  return `Payment recorded. ${left}, and Eva keeps chasing that balance.`;
 }
 
 /**

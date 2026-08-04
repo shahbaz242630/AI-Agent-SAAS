@@ -12,7 +12,11 @@ import {
   outstandingBalance,
   type InvoiceDisplayStatus,
 } from "@eva/types";
-import type { CreateInvoiceRequest, UpdateInvoiceRequest } from "@eva/validation";
+import type {
+  CreateInvoiceRequest,
+  RecordPaymentRequest,
+  UpdateInvoiceRequest,
+} from "@eva/validation";
 // eslint-disable-next-line @typescript-eslint/consistent-type-imports
 import { PrismaService } from "../../common/database/prisma.service.js";
 // eslint-disable-next-line @typescript-eslint/consistent-type-imports
@@ -21,7 +25,11 @@ import { requirePermission, type TenantTx } from "../../common/permissions/permi
 import { writeAuditLog } from "../../common/audit/audit-log.js";
 import type { AuthUser } from "../authentication/current-auth-user.decorator.js";
 import { deriveDisplayStatus, todayInTimezone } from "./invoice-status.js";
-import { transitionInvoiceStatus, type InvoiceAction } from "./invoice-state-machine.js";
+import {
+  transitionInvoiceStatus,
+  type InvoiceAction,
+  type InvoiceLifecycleAction,
+} from "./invoice-state-machine.js";
 import { resolveChaseBlockedReason, type ChaseBlockedReason } from "./chase-blockers.js";
 import { normaliseSuppressionValue } from "../../common/suppression/suppression.js";
 import {
@@ -76,6 +84,13 @@ export interface InvoiceSummary {
    * ask what would happen AFTER the status changes.
    */
   chaseBlockedReason: ChaseBlockedReason | null;
+  /**
+   * When money was last received against this invoice (migration 0019), or null
+   * if none has been. Written for the first time by slice 1.6c's payments
+   * endpoint — the column existed with no writer, which is why `DATA-MODEL-
+   * REVIEW.md` §4's "average days to get paid" could not be computed at all.
+   */
+  lastPaymentAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -93,6 +108,7 @@ type InvoiceRow = {
   dueDate: Date;
   description: string | null;
   status: string;
+  lastPaymentAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
   /** Loaded with the invoice so the chase blockers cost no extra round trip. */
@@ -326,7 +342,9 @@ export class InvoicesService {
     organisationId: string,
     customerId: string,
     invoiceId: string,
-    action: InvoiceAction,
+    /* The FOUR only. The payment transitions are not reachable here by design —
+       they require money, and that is `recordPayment`'s job. */
+    action: InvoiceLifecycleAction,
   ): Promise<InvoiceSummary> {
     const user = await this.usersService.resolveOrProvision(authUser);
     return withTenant(this.prisma.db, { organisationId, userId: user.id }, async (tx) => {
@@ -356,6 +374,122 @@ export class InvoicesService {
   }
 
   /**
+   * Record a payment against an invoice (slice 1.6c, task 5) — invoices:write.
+   *
+   * ⚠️ THE DEFECT THIS EXISTS TO FIX. Until now a debtor who owed 10,000 and
+   * paid 6,000 left two bad choices: leave the invoice Active and Eva chases
+   * the FULL 10,000, or cancel it and Eva stops chasing the 4,000 still owed.
+   * Migration 0019 added `amount_paid_minor_units` for exactly this and nothing
+   * ever wrote to it.
+   *
+   * ⚠️ THE STATUS IS DECIDED BY THE BALANCE, NOT BY THE CALLER, and it still
+   * moves through the state machine (BRD 4.1 hard rule). There is no "mark as
+   * paid" anywhere in this API: the only way to reach `paid` is to record money
+   * that clears the balance, in the same transaction that writes it.
+   */
+  async recordPayment(
+    authUser: AuthUser,
+    organisationId: string,
+    customerId: string,
+    invoiceId: string,
+    input: RecordPaymentRequest,
+  ): Promise<InvoiceSummary> {
+    const user = await this.usersService.resolveOrProvision(authUser);
+    return withTenant(this.prisma.db, { organisationId, userId: user.id }, async (tx) => {
+      await requirePermission(tx, organisationId, user.id, "invoices:write");
+      const existing = await this.findOrThrow(tx, customerId, invoiceId);
+
+      /**
+       * A draft has not been issued, so there is nothing to have been paid.
+       * Refused here rather than by the state machine because the state machine
+       * would answer "cannot pay_in_part from status 'draft'", and the useful
+       * thing to say is that the invoice was never sent.
+       */
+      if (existing.status === "draft") {
+        throw new ConflictException(
+          "This invoice is still a draft, so there is nothing to pay yet. Start chasing it first.",
+        );
+      }
+
+      const paid = existing.amountPaidMinorUnits + BigInt(input.amountMinorUnits);
+      const settled = paid >= existing.amountMinorUnits;
+
+      /**
+       * ⚠️ THE MONEY AND THE STATUS MOVE IN ONE TRANSACTION. Written first so
+       * that an illegal transition — a payment against a cancelled invoice, say
+       * — takes the money write down with it. A recorded payment on an invoice
+       * whose status did not follow is the two-numbers-disagree failure this
+       * whole slice is about.
+       */
+      await tx.invoice.update({
+        where: { id: invoiceId },
+        data: {
+          amountPaidMinorUnits: paid,
+          lastPaymentAt: input.paidAt !== undefined ? new Date(input.paidAt) : new Date(),
+        },
+      });
+
+      /**
+       * A part payment against a PAUSED invoice changes no status at all.
+       *
+       * Somebody paused that chase deliberately — a query, a dispute — and them
+       * banking a part payment is not them asking for it to start again. Moving
+       * it to `partially_paid` would silently resume chasing, because
+       * `partially_paid` is a chased status. Settling it in full is different:
+       * "they have paid" is true whatever the chase was doing.
+       */
+      const action: InvoiceAction | null = settled
+        ? "pay_in_full"
+        : existing.status === "paused"
+          ? null
+          : "pay_in_part";
+
+      let to = existing.status;
+      if (action !== null) {
+        to = await transitionInvoiceStatus(tx, invoiceId, existing.status, action);
+      }
+
+      await writeAuditLog(tx, {
+        organisationId,
+        actorUserId: user.id,
+        action: "invoice.payment_recorded",
+        entityType: "invoice",
+        entityId: invoiceId,
+        // No amount: audit metadata carries counts, ids and outcomes, never
+        // money or personal data (BRD 14). What was paid lives on the invoice.
+        metadata: { from: existing.status, to, settled },
+      });
+
+      const timezone = await this.orgTimezone(tx, organisationId);
+      /**
+       * A settled invoice stops being chased, so its queued reminders are
+       * cancelled — in the same transaction, like every other lifecycle hook.
+       * A PART payment cancels nothing: the schedule was built from the due
+       * date and the remaining balance is owed on exactly those dates. That is
+       * the whole point of being able to record one.
+       */
+      if (settled) {
+        await cancelInvoiceReminders(tx, {
+          organisationId,
+          invoiceId,
+          reason: "invoice_paid",
+          actorUserId: user.id,
+        });
+      }
+
+      const invoice = await tx.invoice.findUniqueOrThrow({
+        where: { id: invoiceId },
+        include: WITH_CONTACT,
+      });
+      return this.toSummary(
+        invoice,
+        timezone,
+        await this.chaseBlockerFor(tx, organisationId, invoice),
+      );
+    });
+  }
+
+  /**
    * Slice 1.5 (plan §3): the reminder-schedule side effect of each legal
    * transition. activate schedules; pause/cancel cancel every live row;
    * resume recomputes from today (cancel + fresh rows — migration 0011 keeps
@@ -367,7 +501,7 @@ export class InvoicesService {
     tx: TenantTx,
     organisationId: string,
     invoiceId: string,
-    action: InvoiceAction,
+    action: InvoiceLifecycleAction,
     timezone: string,
     actorUserId: string,
   ): Promise<void> {
@@ -600,6 +734,7 @@ export class InvoicesService {
       dueDate: invoice.dueDate,
       description: invoice.description,
       status: invoice.status,
+      lastPaymentAt: invoice.lastPaymentAt,
       displayStatus: deriveDisplayStatus(invoice, timezone),
       createdAt: invoice.createdAt,
       updatedAt: invoice.updatedAt,

@@ -3,6 +3,7 @@
 import { useActionState, useState } from "react";
 import {
   availableInvoiceActions,
+  canRecordPayment,
   chaseBlockedLine,
   invoiceActionConfirmLabel,
   invoiceActionConsequence,
@@ -21,9 +22,11 @@ import {
 import { amountInputValue, dateInputValue, formatDueDate, formatMoney } from "@/lib/money";
 import {
   createInvoice,
+  recordPayment,
   runInvoiceAction,
   updateInvoice,
   type InvoiceActionState,
+  type PaymentActionState,
   type SubmittedInvoice,
 } from "./actions";
 
@@ -371,6 +374,7 @@ export function InvoiceTable({
     action: InvoiceLifecycleAction;
   } | null>(null);
   const [editing, setEditing] = useState<string | null>(null);
+  const [paying, setPaying] = useState<string | null>(null);
   /**
    * ONE action state for every lifecycle button, held here rather than inside
    * the confirm panel — the panel closes itself the moment the action succeeds
@@ -407,6 +411,12 @@ export function InvoiceTable({
 
   const editingInvoice = editing
     ? (invoices.find((row) => row.id === editing && isInvoiceEditable(row.status)) ?? null)
+    : null;
+
+  // Closes itself the same way: once an invoice is settled it can take no more
+  // payments, so the panel stops being valid and disappears.
+  const payingInvoice = paying
+    ? (invoices.find((row) => row.id === paying && canRecordPayment(row.status)) ?? null)
     : null;
 
   return (
@@ -501,6 +511,17 @@ export function InvoiceTable({
                         {editing === invoice.id ? "Close" : "Edit"}
                       </button>
                     )}
+                    {/* First, because it is the commonest thing that happens to
+                        an invoice: somebody pays it. */}
+                    {canRecordPayment(invoice.status) && (
+                      <button
+                        type="button"
+                        onClick={() => setPaying(paying === invoice.id ? null : invoice.id)}
+                        className={SMALL_BUTTON_CLASS}
+                      >
+                        {paying === invoice.id ? "Close" : "Record a payment"}
+                      </button>
+                    )}
                     {/*
                       ⚠️ FROM `status`, NOT `displayStatus`. An overdue invoice
                       is STORED as active — `overdue` is derived for the badge —
@@ -545,6 +566,16 @@ export function InvoiceTable({
           formAction={lifecycleAction}
           pending={lifecyclePending}
           onDismiss={() => setAsked(null)}
+        />
+      )}
+
+      {payingInvoice && (
+        <RecordPaymentForm
+          key={payingInvoice.id}
+          organisationId={organisationId}
+          customerId={customerId}
+          invoice={payingInvoice}
+          onClose={() => setPaying(null)}
         />
       )}
 
@@ -628,6 +659,92 @@ function ConfirmLifecycle({
         </button>
       </div>
     </div>
+  );
+}
+
+/**
+ * Recording a payment (task 6).
+ *
+ * ⚠️ THE AMOUNT DEFAULTS TO THE WHOLE BALANCE, because that is what usually
+ * happens — a client pays what they owe, and the common case should be one
+ * click. A part payment is then an edit of a filled field rather than a blank
+ * box to work out.
+ *
+ * ⚠️ AND IT IS PRE-FILLED WITH THE BALANCE, NOT THE INVOICE TOTAL. On an
+ * invoice that has already been part paid those are different numbers, and
+ * defaulting to the total would quietly record an overpayment every time
+ * somebody accepted the default on a second instalment.
+ */
+function RecordPaymentForm({
+  organisationId,
+  customerId,
+  invoice,
+  onClose,
+}: {
+  organisationId: string;
+  customerId: string;
+  invoice: InvoiceRow;
+  onClose: () => void;
+}) {
+  const [state, action, pending] = useActionState<PaymentActionState, FormData>(recordPayment, {});
+
+  return (
+    <form
+      action={action}
+      className="flex flex-col gap-3 rounded-[var(--radius-card)] bg-muted px-6 py-4"
+    >
+      <input type="hidden" name="organisationId" value={organisationId} />
+      <input type="hidden" name="customerId" value={customerId} />
+      <input type="hidden" name="invoiceId" value={invoice.id} />
+      {/* The invoice's OWN currency decides how many decimals the amount may
+          have — 3 for a Kuwaiti invoice, 0 for a Japanese one. It travels with
+          the form rather than being looked up again. */}
+      <input type="hidden" name="currency" value={invoice.currency} />
+
+      <p className="text-sm font-medium">{`Record a payment against ${invoice.invoiceNumber}`}</p>
+      <p className="text-sm text-muted-foreground">
+        {`${formatMoney(invoice.outstandingMinorUnits, invoice.currency)} is outstanding on a total of ${formatMoney(invoice.amountMinorUnits, invoice.currency)}.`}
+      </p>
+
+      <div className="grid gap-3 sm:grid-cols-2">
+        <label className={LABEL_CLASS}>
+          Amount received
+          <input
+            name="amount"
+            required
+            type="text"
+            inputMode="decimal"
+            autoComplete="off"
+            defaultValue={
+              state.amount ?? amountInputValue(invoice.outstandingMinorUnits, invoice.currency)
+            }
+            className={FIELD_CLASS}
+          />
+          <span className="text-xs text-muted-foreground">
+            {`In ${invoice.currency}. Enter less than the full amount if they have only paid part of it.`}
+          </span>
+        </label>
+
+        <label className={LABEL_CLASS}>
+          Date received
+          <input name="paidAt" type="date" defaultValue={dateInputValue(new Date())} className={FIELD_CLASS} />
+          <span className="text-xs text-muted-foreground">
+            Used to work out how long this client takes to pay.
+          </span>
+        </label>
+      </div>
+
+      <Feedback state={state} />
+
+      <div className="flex flex-wrap gap-2">
+        <button type="submit" disabled={pending} className={BUTTON_CLASS}>
+          {pending ? "Recording…" : "Record payment"}
+        </button>
+        <button type="button" onClick={onClose} disabled={pending} className={SMALL_BUTTON_CLASS}>
+          Close
+        </button>
+      </div>
+    </form>
   );
 }
 

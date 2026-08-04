@@ -628,8 +628,21 @@ describe("Invoices: state machine (BRD 4.1 — the only status code path)", () =
     await transition(cancelled, "cancel").expect(409);
   });
 
+  /**
+   * ⚠️ `partially_paid` LEFT THIS LIST IN SLICE 1.6C, and deliberately.
+   *
+   * It was an outcome status with no API path, alongside paid and written_off.
+   * Recording a payment made it a CHASED status — Eva is still collecting the
+   * balance — so it must accept `pause` and `cancel` like any other invoice
+   * being chased. Without that, taking a part payment would produce an invoice
+   * nobody could ever stop.
+   *
+   * The rest genuinely have no path until slice 1.8. `paid` is terminal for a
+   * different reason: it is reached only by money clearing the balance, and the
+   * way out is a refund, which this product does not do.
+   */
   it("outcome statuses have no API path (plan §7.3): seeded rows reject every action", async () => {
-    for (const status of ["paid", "partially_paid", "promise_to_pay", "disputed", "written_off"]) {
+    for (const status of ["paid", "promise_to_pay", "disputed", "written_off"]) {
       const invoice = await owner.invoice.create({
         data: {
           id: randomUUID(),
@@ -650,6 +663,30 @@ describe("Invoices: state machine (BRD 4.1 — the only status code path)", () =
       const row = await owner.invoice.findUniqueOrThrow({ where: { id: invoice.id } });
       expect(row.status).toBe(status);
     }
+  });
+
+  it("a part-paid invoice CAN be paused and cancelled, because it is still being chased", async () => {
+    // The other half of the rule above: `partially_paid` gained a path in 1.6c
+    // precisely so a part-paid invoice is not stranded beyond anyone's control.
+    const invoice = await owner.invoice.create({
+      data: {
+        id: randomUUID(),
+        organisationId: org.id,
+        customerId,
+        invoiceNumber: `PART-${randomUUID().slice(0, 6)}`,
+        amountMinorUnits: 1000,
+        amountPaidMinorUnits: 400,
+        issueDate: new Date(orgDate(-30)),
+        dueDate: new Date(orgDate(-2)),
+        status: "partially_paid",
+        createdBy: ownerMember.id,
+      },
+    });
+    await transition(invoice.id, "pause").expect(200);
+    await transition(invoice.id, "resume").expect(200);
+    await transition(invoice.id, "cancel").expect(200);
+    // But it is not a draft, so it can never be activated.
+    await transition(invoice.id, "activate").expect(409);
   });
 
   it("update schema is structurally status-free: no module file changes status outside the state machine", async () => {
@@ -1249,6 +1286,293 @@ describe("Invoices: reminder scheduling hooks (Slice 1.5 — plan §3 recompute 
     // Draft creates stay unscheduled.
     const draftId = await createDraft({ contactId });
     expect(await actionsOf(draftId)).toHaveLength(0);
+  });
+});
+
+/**
+ * Recording a payment (slice 1.6c, tasks 5-7).
+ *
+ * ⚠️ WHAT THIS IS FOR. A debtor who owed 10,000 and paid 6,000 used to leave
+ * two bad choices: leave the invoice Active and Eva chases the FULL 10,000, or
+ * cancel it and Eva stops chasing the 4,000 still owed. Migration 0019 added
+ * `amount_paid_minor_units` for exactly this and nothing ever wrote to it.
+ */
+describe("Invoices: recording a payment", () => {
+  let app: INestApplication;
+  let owner: EvaPrismaClient;
+  let org: FixtureOrg;
+  let customerId: string;
+  let contactId: string;
+  const tokens = new Map<string, string>();
+
+  const baseUrl = () => `/organisations/${org.id}/customers/${customerId}/invoices`;
+
+  beforeAll(async () => {
+    owner = createOwnerClient();
+    await seedTestDatabase(owner);
+    app = await createTestApp();
+    org = await createOrgWithMembers(owner, "payments", ["owner", "finance", "read_only"]);
+    for (const member of org.members) {
+      tokens.set(member.roleKey, await signToken({ sub: member.authUserId, email: member.email }));
+    }
+    const ownerId = org.members.find((m) => m.roleKey === "owner")!.id;
+    await owner.emailAccount.create({
+      data: {
+        organisationId: org.id,
+        provider: "microsoft",
+        emailAddress: `pay-${randomUUID().slice(0, 8)}@example.com`,
+        isPrimary: true,
+      },
+    });
+    customerId = (
+      await owner.customer.create({
+        data: { id: randomUUID(), organisationId: org.id, name: "Payer Ltd", createdBy: ownerId },
+      })
+    ).id;
+    contactId = (
+      await owner.contact.create({
+        data: {
+          id: randomUUID(),
+          organisationId: org.id,
+          customerId,
+          name: "Accounts",
+          email: `pay-ap-${randomUUID().slice(0, 8)}@example.com`,
+          createdBy: ownerId,
+        },
+      })
+    ).id;
+  });
+
+  afterAll(async () => {
+    await app.close();
+    await owner.$disconnect();
+  });
+
+  /** An issued invoice for 10,000.00, with a recipient, being chased. */
+  async function issued(overrides: Record<string, unknown> = {}) {
+    const response = await request(app.getHttpServer())
+      .post(baseUrl())
+      .set("Authorization", `Bearer ${tokens.get("finance")}`)
+      .send({
+        invoiceNumber: `PAY-${randomUUID().slice(0, 8)}`,
+        amountMinorUnits: 1_000_000,
+        dueDate: orgDate(7),
+        contactId,
+        status: "active",
+        ...overrides,
+      })
+      .expect(201);
+    return response.body as { id: string; status: string };
+  }
+
+  function pay(invoiceId: string, body: Record<string, unknown>, role = "finance") {
+    return request(app.getHttpServer())
+      .post(`${baseUrl()}/${invoiceId}/payments`)
+      .set("Authorization", `Bearer ${tokens.get(role)}`)
+      .send(body);
+  }
+
+  it("a part payment leaves partially_paid, with the balance still owed", async () => {
+    const invoice = await issued();
+    const paid = await pay(invoice.id, { amountMinorUnits: 600_000 }).expect(200);
+    expect(paid.body.status).toBe("partially_paid");
+    expect(paid.body.amountPaidMinorUnits).toBe(600_000);
+    expect(paid.body.outstandingMinorUnits).toBe(400_000);
+    expect(paid.body.lastPaymentAt).not.toBeNull();
+  });
+
+  /**
+   * ⚠️ THE TRAP THIS WHOLE FEATURE NEARLY WALKED INTO, AND THE REASON
+   * `CHASED_INVOICE_STATUSES` EXISTS.
+   *
+   * The scheduler's eligibility gate, both reconcile-sweep queries and the
+   * display derivation all asked `status === "active"`. Moving a part-paid
+   * invoice to `partially_paid` would therefore have made Eva stop chasing the
+   * balance — the precise defect migration 0019 was created to fix, arriving by
+   * the back door and looking like a feature.
+   */
+  it("KEEPS CHASING a part-paid invoice — the reminders are not cancelled", async () => {
+    const invoice = await issued();
+    const before = await owner.scheduledAction.count({
+      where: { invoiceId: invoice.id, status: { in: ["pending", "ready"] } },
+    });
+    expect(before).toBeGreaterThan(0);
+
+    const paid = await pay(invoice.id, { amountMinorUnits: 1 }).expect(200);
+    expect(paid.body.status).toBe("partially_paid");
+
+    const after = await owner.scheduledAction.count({
+      where: { invoiceId: invoice.id, status: { in: ["pending", "ready"] } },
+    });
+    expect(after).toBe(before);
+    // And the scheduler must still consider it eligible, or 1.7 would refuse
+    // every one of those rows at send time.
+    expect(paid.body.chaseBlockedReason).toBeNull();
+  });
+
+  it("a part-paid invoice past its due date still reads OVERDUE", async () => {
+    // Derivation used to apply to `active` only, so a part-paid invoice forty
+    // days late could never show Overdue — dropping it out of every overdue
+    // view, which is exactly where a debtor who paid a token amount belongs.
+    const invoice = await issued({ dueDate: orgDate(-40) });
+    const paid = await pay(invoice.id, { amountMinorUnits: 1000 }).expect(200);
+    expect(paid.body.status).toBe("partially_paid");
+    expect(paid.body.displayStatus).toBe("overdue");
+  });
+
+  it("a part-paid invoice NOT yet due reads as part paid", async () => {
+    const invoice = await issued({ dueDate: orgDate(30) });
+    const paid = await pay(invoice.id, { amountMinorUnits: 1000 }).expect(200);
+    expect(paid.body.displayStatus).toBe("partially_paid");
+  });
+
+  it("payment to the exact balance settles it and stops the chase", async () => {
+    const invoice = await issued();
+    const paid = await pay(invoice.id, { amountMinorUnits: 1_000_000 }).expect(200);
+    expect(paid.body.status).toBe("paid");
+    expect(paid.body.outstandingMinorUnits).toBe(0);
+    const live = await owner.scheduledAction.count({
+      where: { invoiceId: invoice.id, status: { in: ["pending", "ready"] } },
+    });
+    expect(live).toBe(0);
+  });
+
+  it("two part payments that together clear it settle it", async () => {
+    const invoice = await issued();
+    await pay(invoice.id, { amountMinorUnits: 400_000 }).expect(200);
+    const second = await pay(invoice.id, { amountMinorUnits: 600_000 }).expect(200);
+    expect(second.body.status).toBe("paid");
+    expect(second.body.amountPaidMinorUnits).toBe(1_000_000);
+    expect(second.body.outstandingMinorUnits).toBe(0);
+  });
+
+  it("overpayment is allowed, and the balance clamps at zero rather than going negative", async () => {
+    // Founder ruling 2026-08-02. A debtor who rounds up or settles two invoices
+    // with one transfer is real, and refusing to record what actually arrived
+    // would leave the customer's books disagreeing with their bank.
+    const invoice = await issued();
+    const paid = await pay(invoice.id, { amountMinorUnits: 1_500_000 }).expect(200);
+    expect(paid.body.status).toBe("paid");
+    expect(paid.body.amountPaidMinorUnits).toBe(1_500_000);
+    expect(paid.body.outstandingMinorUnits).toBe(0);
+  });
+
+  it("records the payment DATE, which is what makes days-to-pay computable", async () => {
+    const invoice = await issued();
+    const paid = await pay(invoice.id, {
+      amountMinorUnits: 1_000_000,
+      paidAt: "2026-07-15",
+    }).expect(200);
+    expect(String(paid.body.lastPaymentAt)).toContain("2026-07-15");
+    const stored = await owner.invoice.findUniqueOrThrow({ where: { id: invoice.id } });
+    expect(stored.lastPaymentAt).not.toBeNull();
+  });
+
+  it("a payment on a PAUSED invoice records the money and leaves it paused", async () => {
+    /**
+     * Somebody paused that chase deliberately — a query, a dispute — and them
+     * banking a part payment is not them asking for it to start again. Moving
+     * it to `partially_paid` would silently resume chasing, because that IS a
+     * chased status.
+     */
+    const invoice = await issued();
+    await request(app.getHttpServer())
+      .post(`${baseUrl()}/${invoice.id}/pause`)
+      .set("Authorization", `Bearer ${tokens.get("finance")}`)
+      .expect(200);
+
+    const paid = await pay(invoice.id, { amountMinorUnits: 100_000 }).expect(200);
+    expect(paid.body.status).toBe("paused");
+    expect(paid.body.amountPaidMinorUnits).toBe(100_000);
+    // Still paused, so still not chased — and the reason says so.
+    const live = await owner.scheduledAction.count({
+      where: { invoiceId: invoice.id, status: { in: ["pending", "ready"] } },
+    });
+    expect(live).toBe(0);
+  });
+
+  it("settling a PAUSED invoice does mark it paid, because that is what happened", async () => {
+    const invoice = await issued();
+    await request(app.getHttpServer())
+      .post(`${baseUrl()}/${invoice.id}/pause`)
+      .set("Authorization", `Bearer ${tokens.get("finance")}`)
+      .expect(200);
+    const paid = await pay(invoice.id, { amountMinorUnits: 1_000_000 }).expect(200);
+    expect(paid.body.status).toBe("paid");
+  });
+
+  it("refuses a payment on a draft — it was never issued", async () => {
+    const invoice = await issued({ status: "draft" });
+    const refused = await pay(invoice.id, { amountMinorUnits: 1000 }).expect(409);
+    expect(String(refused.body.message)).toMatch(/draft/i);
+  });
+
+  /**
+   * ⚠️ AND THE MONEY MUST NOT BE WRITTEN EITHER. The status change and the
+   * amount move in one transaction on purpose: a recorded payment on an invoice
+   * whose status did not follow is the two-numbers-disagree failure this slice
+   * exists to remove.
+   */
+  it("refuses a payment on a cancelled invoice, and writes nothing at all", async () => {
+    const invoice = await issued();
+    await request(app.getHttpServer())
+      .post(`${baseUrl()}/${invoice.id}/cancel`)
+      .set("Authorization", `Bearer ${tokens.get("finance")}`)
+      .expect(200);
+
+    await pay(invoice.id, { amountMinorUnits: 1000 }).expect(409);
+
+    const stored = await owner.invoice.findUniqueOrThrow({ where: { id: invoice.id } });
+    expect(stored.status).toBe("cancelled");
+    expect(stored.amountPaidMinorUnits).toBe(0n);
+    expect(stored.lastPaymentAt).toBeNull();
+  });
+
+  it("refuses a second payment once it is settled", async () => {
+    const invoice = await issued();
+    await pay(invoice.id, { amountMinorUnits: 1_000_000 }).expect(200);
+    await pay(invoice.id, { amountMinorUnits: 500 }).expect(409);
+  });
+
+  it("rejects zero, negative and fractional amounts", async () => {
+    const invoice = await issued();
+    await pay(invoice.id, { amountMinorUnits: 0 }).expect(400);
+    await pay(invoice.id, { amountMinorUnits: -500 }).expect(400);
+    await pay(invoice.id, { amountMinorUnits: 12.5 }).expect(400);
+  });
+
+  it("rejects a status field on the payload — the balance decides, not the caller", async () => {
+    // There is no "mark as paid" in this API. The schema is strict so an
+    // attempt to assert one is a 400 rather than a silently ignored field.
+    const invoice = await issued();
+    await pay(invoice.id, { amountMinorUnits: 1000, status: "paid" }).expect(400);
+  });
+
+  it("needs invoices:write — read_only is refused and nothing is written", async () => {
+    const invoice = await issued();
+    await pay(invoice.id, { amountMinorUnits: 1000 }, "read_only").expect(403);
+    const stored = await owner.invoice.findUniqueOrThrow({ where: { id: invoice.id } });
+    expect(stored.amountPaidMinorUnits).toBe(0n);
+  });
+
+  it("audits the payment with the status it moved between, and no amount", async () => {
+    // BRD 14: audit metadata carries counts, ids and outcomes — never money.
+    const invoice = await issued();
+    await pay(invoice.id, { amountMinorUnits: 600_000 }).expect(200);
+    const audit = await owner.auditLog.findFirst({
+      where: { organisationId: org.id, entityId: invoice.id, action: "invoice.payment_recorded" },
+    });
+    expect(audit).not.toBeNull();
+    expect(audit!.metadata).toMatchObject({ from: "active", to: "partially_paid", settled: false });
+    expect(JSON.stringify(audit!.metadata)).not.toContain("600000");
+  });
+
+  it("handles a currency with three decimals without losing the third digit", async () => {
+    // 987.654 KWD is 987654 fils. A part payment of 500.000 leaves 487.654.
+    const invoice = await issued({ amountMinorUnits: 987_654, currency: "KWD" });
+    const paid = await pay(invoice.id, { amountMinorUnits: 500_000 }).expect(200);
+    expect(paid.body.outstandingMinorUnits).toBe(487_654);
+    expect(paid.body.currency).toBe("KWD");
   });
 });
 

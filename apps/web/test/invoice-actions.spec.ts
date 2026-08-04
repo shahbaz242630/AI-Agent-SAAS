@@ -356,6 +356,131 @@ describe("updateInvoice — editing a draft (task 4)", () => {
   });
 });
 
+describe("recordPayment — the money that reaches the API (task 6)", () => {
+  function paymentForm(overrides: Record<string, string> = {}) {
+    return form(
+      Object.entries({
+        organisationId: "org-1",
+        customerId: "cust-1",
+        invoiceId: "inv-1",
+        currency: "GBP",
+        amount: "6000.00",
+        ...overrides,
+      }),
+    );
+  }
+
+  /** A settled-or-not response, as the API would send it back. */
+  function apiReturns(body: Record<string, unknown>) {
+    apiFetch.mockResolvedValue({
+      json: async () => ({
+        invoiceNumber: "INV-3001",
+        status: "partially_paid",
+        currency: "GBP",
+        chaseBlockedReason: null,
+        ...body,
+      }),
+    });
+  }
+
+  it("POSTs to the payments endpoint with integer minor units", async () => {
+    apiReturns({ outstandingMinorUnits: 400_000 });
+    const { recordPayment } = await import("../src/app/app/clients/[customerId]/invoices/actions");
+    await recordPayment({}, paymentForm());
+    expect(sentRequest()).toEqual({
+      path: "/organisations/org-1/customers/cust-1/invoices/inv-1/payments",
+      method: "POST",
+    });
+    expect(sentBody().amountMinorUnits).toBe(600_000);
+  });
+
+  it("parses the amount in the INVOICE'S currency, not a default", async () => {
+    // 500.000 KWD is 500000 fils. Judged as GBP the same string is invalid, and
+    // judged as JPY it is not an amount at all.
+    apiReturns({ outstandingMinorUnits: 487_654, currency: "KWD" });
+    const { recordPayment } = await import("../src/app/app/clients/[customerId]/invoices/actions");
+    await recordPayment({}, paymentForm({ currency: "KWD", amount: "500.000" }));
+    expect(sentBody().amountMinorUnits).toBe(500_000);
+  });
+
+  it("refuses an amount with more decimals than the currency has", async () => {
+    const { recordPayment } = await import("../src/app/app/clients/[customerId]/invoices/actions");
+    const state = await recordPayment({}, paymentForm({ currency: "JPY", amount: "1000.50" }));
+    expect(state.error).toMatch(/JPY/);
+    expect(apiFetch).not.toHaveBeenCalled();
+  });
+
+  it("refuses zero and negative payments before the API sees them", async () => {
+    const { recordPayment } = await import("../src/app/app/clients/[customerId]/invoices/actions");
+    expect((await recordPayment({}, paymentForm({ amount: "0" }))).error).toMatch(/more than zero/i);
+    expect((await recordPayment({}, paymentForm({ amount: "-50" }))).error).toMatch(/positive/i);
+    expect(apiFetch).not.toHaveBeenCalled();
+  });
+
+  it("hands the typed amount back when it is refused", async () => {
+    // React 19 empties the form when the action returns, and the amount is the
+    // one field the customer has to correct.
+    const { recordPayment } = await import("../src/app/app/clients/[customerId]/invoices/actions");
+    const state = await recordPayment({}, paymentForm({ amount: "12.3456" }));
+    expect(state.amount).toBe("12.3456");
+  });
+
+  /**
+   * ⚠️ NEVER A STATUS. There is no "mark as paid" in this product: the status
+   * follows the money, decided by the API from the resulting balance inside the
+   * state machine. A status on this payload would be an assertion with nothing
+   * behind it.
+   */
+  it("sends no status, ever", async () => {
+    apiReturns({ outstandingMinorUnits: 0, status: "paid" });
+    const { recordPayment } = await import("../src/app/app/clients/[customerId]/invoices/actions");
+    await recordPayment({}, paymentForm());
+    expect(sentBody()).not.toHaveProperty("status");
+  });
+
+  it("omits the date rather than sending a blank one", async () => {
+    apiReturns({ outstandingMinorUnits: 400_000 });
+    const { recordPayment } = await import("../src/app/app/clients/[customerId]/invoices/actions");
+    await recordPayment({}, paymentForm({ paidAt: "" }));
+    expect(sentBody()).not.toHaveProperty("paidAt");
+  });
+
+  it("sends the date when one is given, because it is what makes DSO computable", async () => {
+    apiReturns({ outstandingMinorUnits: 400_000 });
+    const { recordPayment } = await import("../src/app/app/clients/[customerId]/invoices/actions");
+    await recordPayment({}, paymentForm({ paidAt: "2026-07-15" }));
+    expect(sentBody().paidAt).toBe("2026-07-15");
+  });
+
+  it("describes the outcome from the API's answer, not from what was sent", async () => {
+    // The customer paid part; the API says it is settled (they had already paid
+    // some earlier). The message must follow the server.
+    apiReturns({ outstandingMinorUnits: 0, status: "paid" });
+    const { recordPayment } = await import("../src/app/app/clients/[customerId]/invoices/actions");
+    const state = await recordPayment({}, paymentForm({ amount: "10.00" }));
+    expect(state.success).toMatch(/settled in full/i);
+  });
+
+  it("says the balance is still chased when one remains", async () => {
+    apiReturns({ outstandingMinorUnits: 400_000 });
+    const { recordPayment } = await import("../src/app/app/clients/[customerId]/invoices/actions");
+    const state = await recordPayment({}, paymentForm());
+    expect(state.success).toMatch(/keeps chasing/i);
+    // Formatted with the invoice's currency, through the shared helper.
+    expect(state.success).toContain("£4,000.00");
+  });
+
+  it("passes the API's refusal through — a draft, or a cancelled invoice", async () => {
+    const { ApiError } = await import("../src/lib/api");
+    apiFetch.mockRejectedValueOnce(
+      new ApiError("This invoice is still a draft, so there is nothing to pay yet.", 409),
+    );
+    const { recordPayment } = await import("../src/app/app/clients/[customerId]/invoices/actions");
+    const state = await recordPayment({}, paymentForm());
+    expect(state.error).toMatch(/still a draft/i);
+  });
+});
+
 describe("runInvoiceAction — the four lifecycle buttons (task 4)", () => {
   function actionForm(action: string, overrides: Record<string, string> = {}) {
     return form(

@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 import type { InvoiceLifecycleAction } from "../src/lib/invoice-lifecycle";
 import {
   availableInvoiceActions,
+  canRecordPayment,
   chaseBlockedLine,
+  paymentRecordedLine,
   invoiceActionConfirmLabel,
   invoiceActionConsequence,
   invoiceActionLabel,
@@ -41,16 +43,24 @@ describe("availableInvoiceActions — a mirror of the API's state machine", () =
   it("offers nothing from a resting status, including every outcome status", () => {
     // These have no API path at all until slice 1.8. A button for one would be
     // a promise the product cannot keep.
-    for (const status of [
-      "cancelled",
-      "paid",
-      "partially_paid",
-      "promise_to_pay",
-      "disputed",
-      "written_off",
-    ]) {
+    for (const status of ["cancelled", "paid", "promise_to_pay", "disputed", "written_off"]) {
       expect(availableInvoiceActions(status)).toEqual([]);
     }
+  });
+
+  /**
+   * ⚠️ FOUND ON SCREEN. This table mirrors the api's state machine, and it went
+   * stale the moment payments changed that machine: a part-paid, forty-days-
+   * overdue invoice offered "Record a payment" and nothing else — no way to
+   * stop chasing it at all. `partially_paid` is a CHASED status, so it stops
+   * like any other invoice being chased.
+   */
+  it("lets a PART-PAID invoice be paused and cancelled, because Eva is still chasing it", () => {
+    expect(availableInvoiceActions("partially_paid")).toEqual(["pause", "cancel"]);
+    // It can never be activated — it was issued long ago — nor resumed, because
+    // it was never paused.
+    expect(availableInvoiceActions("partially_paid")).not.toContain("activate");
+    expect(availableInvoiceActions("partially_paid")).not.toContain("resume");
   });
 
   /**
@@ -254,6 +264,110 @@ describe("the consequence stated before the click", () => {
   });
 });
 
+describe("recording a payment (tasks 5-7)", () => {
+  it("is offered on an issued invoice that is not settled or abandoned", () => {
+    for (const status of ["active", "paused", "partially_paid"]) {
+      expect(canRecordPayment(status)).toBe(true);
+    }
+    // Including through the derived statuses — an overdue invoice is the one
+    // most likely to be paid today.
+    for (const derived of ["due_soon", "due_today", "overdue"]) {
+      expect(canRecordPayment(derived)).toBe(true);
+    }
+  });
+
+  it("is NOT offered on a draft, a settled or an abandoned invoice", () => {
+    // A draft was never sent, so nothing can have been paid against it; a
+    // cancelled invoice cannot be revived by a payment; a paid one is done.
+    for (const status of ["draft", "cancelled", "paid", "written_off"]) {
+      expect(canRecordPayment(status)).toBe(false);
+    }
+  });
+
+  /**
+   * ⚠️ EVERY BRANCH SAYS WHAT HAPPENS TO THE REST OF THE MONEY. That is the
+   * entire point of being able to record a part payment: before it, a debtor
+   * who owed 10,000 and paid 6,000 left two bad choices — chase the full
+   * 10,000, or stop chasing the 4,000 still owed. "Payment recorded" on its own
+   * would leave somebody guessing which they had just done.
+   */
+  it("says the balance is still being chased after a part payment", () => {
+    const line = paymentRecordedLine({
+      invoiceNumber: "INV-3001",
+      status: "partially_paid",
+      outstandingMinorUnits: 400_000,
+      formattedOutstanding: "£4,000.00",
+      chaseBlockedReason: null,
+    });
+    expect(line).toContain("£4,000.00");
+    expect(line).toContain("INV-3001");
+    expect(line).toMatch(/keeps chasing/i);
+  });
+
+  it("says a settled invoice is settled and the chase has stopped", () => {
+    const line = paymentRecordedLine({
+      invoiceNumber: "INV-3001",
+      status: "paid",
+      outstandingMinorUnits: 0,
+      formattedOutstanding: "£0.00",
+      chaseBlockedReason: null,
+    });
+    expect(line).toMatch(/settled in full/i);
+    expect(line).toMatch(/stopped chasing/i);
+    // And must not promise more chasing.
+    expect(line).not.toMatch(/keeps chasing/i);
+  });
+
+  it("treats an overpayment as settled rather than reporting a negative balance", () => {
+    // Overpayment is allowed (founder ruling) and the balance clamps at zero,
+    // so this branch is reached with 0 rather than a minus figure.
+    const line = paymentRecordedLine({
+      invoiceNumber: "INV-3001",
+      status: "paid",
+      outstandingMinorUnits: 0,
+      formattedOutstanding: "£0.00",
+      chaseBlockedReason: null,
+    });
+    expect(line).toMatch(/settled in full/i);
+    // No negative money anywhere — a minus balance would read as a debt owed
+    // the other way. (Not a bare "-": the invoice number contains one.)
+    expect(line).not.toMatch(/-\s*[£$€¥]|[£$€¥]\s*-/);
+    expect(line).not.toMatch(/still owed/i);
+  });
+
+  it("says a paused invoice is STILL paused, so nobody expects chasing to resume", () => {
+    // A part payment against a paused invoice deliberately leaves it paused —
+    // somebody stopped that chase on purpose. Saying so is the difference
+    // between a quiet surprise and a decision.
+    const line = paymentRecordedLine({
+      invoiceNumber: "INV-2005",
+      status: "paused",
+      outstandingMinorUnits: 89_000,
+      formattedOutstanding: "£890.00",
+      chaseBlockedReason: null,
+    });
+    expect(line).toMatch(/still paused/i);
+    expect(line).toMatch(/not chasing/i);
+    expect(line).toContain("£890.00");
+  });
+
+  it("does not promise to chase a balance nothing can be sent for", () => {
+    // The same honesty rule as the lifecycle buttons: a balance is owed, and
+    // Eva still cannot email anybody about it.
+    for (const reason of BLOCKERS) {
+      const line = paymentRecordedLine({
+        invoiceNumber: "INV-3001",
+        status: "partially_paid",
+        outstandingMinorUnits: 400_000,
+        formattedOutstanding: "£4,000.00",
+        chaseBlockedReason: reason,
+      });
+      expect(line).toMatch(/nothing will be sent/i);
+      expect(line).not.toMatch(/keeps chasing/i);
+    }
+  });
+});
+
 describe("what the row says about whether Eva is chasing it", () => {
   it("stays silent when nothing is wrong", () => {
     expect(chaseBlockedLine("active", null)).toBeNull();
@@ -290,6 +404,14 @@ describe("what the row says about whether Eva is chasing it", () => {
     }
   });
 
+  it("speaks up on a PART-PAID invoice, where money is still owed", () => {
+    // It stayed silent on `partially_paid` at first, which is the worst place
+    // to be quiet: a balance is outstanding and nothing is collecting it.
+    expect(chaseBlockedLine("partially_paid", "no_mailbox")).toMatch(/no working mailbox/);
+    expect(isBeingChased("partially_paid", null)).toBe(true);
+    expect(isBeingChased("partially_paid", "no_email")).toBe(false);
+  });
+
   /**
    * ⚠️ BOTH HALVES, AND THIS IS THE ONE THAT FIXES THE CANCELLED-BALANCE
    * DEFECT. The demo book's cancelled INV-1003 was showing £320.00 in the
@@ -303,7 +425,9 @@ describe("what the row says about whether Eva is chasing it", () => {
     for (const derived of ["due_soon", "due_today", "overdue"]) {
       expect(isBeingChased(derived, null)).toBe(true);
     }
-    // Not active: nobody is collecting it, whatever the balance says.
+    // Part paid IS chased — the balance is still owed and Eva still emails.
+    expect(isBeingChased("partially_paid", null)).toBe(true);
+    // Not chased: nobody is collecting it, whatever the balance says.
     for (const resting of ["draft", "paused", "cancelled", "paid", "written_off"]) {
       expect(isBeingChased(resting, null)).toBe(false);
     }

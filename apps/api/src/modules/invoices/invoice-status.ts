@@ -1,3 +1,4 @@
+import { isChasedInvoiceStatus } from "@eva/types";
 import type { InvoiceDisplayStatus, InvoiceStoredStatus } from "@eva/types";
 
 /**
@@ -23,19 +24,29 @@ function calendarDayKey(instant: Date, timezone: string): number {
 }
 
 /**
- * The display status for an invoice: the stored status, unless the invoice is
- * Active — then due_date relative to TODAY IN THE ORG TIMEZONE decides:
+ * The display status for an invoice: the stored status, unless Eva is CHASING
+ * it — then due_date relative to TODAY IN THE ORG TIMEZONE decides:
  * past → overdue, today → due_today, within 3 days → due_soon (the first
- * BRD 4.1 reminder stage), otherwise active. Derivation never applies to
- * non-Active invoices, so Paid/Disputed/Paused/Cancelled can never receive
- * reminders by accident (plan §7.1).
+ * BRD 4.1 reminder stage), otherwise the stored status. Derivation never
+ * applies to unchased invoices, so Paid/Disputed/Paused/Cancelled can never
+ * receive reminders by accident (plan §7.1).
+ *
+ * ⚠️ `partially_paid` DERIVES TOO, and it must (slice 1.6c). This tested
+ * `!== "active"`, so a part-paid invoice forty days late would have shown
+ * "Part paid" and could never have shown "Overdue" — dropping it out of every
+ * overdue view in the product, which is precisely where a debtor who paid a
+ * token amount and went quiet needs to appear. How much has been paid is not
+ * lost by this: it is on the row, beside the balance.
+ *
+ * The fall-through returns the STORED status rather than "active" so a
+ * part-paid invoice that is not yet due still reads "Part paid".
  */
 export function deriveDisplayStatus(
   invoice: { status: string; dueDate: Date },
   timezone: string,
   now: Date = new Date(),
 ): InvoiceDisplayStatus {
-  if (invoice.status !== "active") return invoice.status as InvoiceStoredStatus;
+  if (!isChasedInvoiceStatus(invoice.status)) return invoice.status as InvoiceStoredStatus;
   // due_date is a DATE column (UTC midnight); compare calendar days, never
   // server-local time — all business logic runs in the org timezone.
   const diffDays = Math.round(
@@ -44,7 +55,7 @@ export function deriveDisplayStatus(
   if (diffDays < 0) return "overdue";
   if (diffDays === 0) return "due_today";
   if (diffDays <= 3) return "due_soon";
-  return "active";
+  return invoice.status;
 }
 
 /** The calendar day `now` falls on in `timezone`, as a UTC-midnight Date. */

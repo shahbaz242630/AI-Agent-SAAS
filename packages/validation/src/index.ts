@@ -167,6 +167,32 @@ export const updateInvoiceRequestSchema = createInvoiceRequestSchema
 
 export type UpdateInvoiceRequest = z.infer<typeof updateInvoiceRequestSchema>;
 
+/**
+ * POST .../invoices/:invoiceId/payments payload (slice 1.6c, task 5).
+ *
+ * ⚠️ NO `status` FIELD, AND THERE MUST NEVER BE ONE. What a payment does to the
+ * status is decided by the resulting BALANCE inside the state machine — that is
+ * what stops "mark this paid" from being an assertion anybody can make without
+ * money to back it.
+ *
+ * ⚠️ NO UPPER BOUND ON THE AMOUNT. Overpayment is allowed (founder ruling
+ * 2026-08-02): a debtor who rounds up, pays twice, or settles two invoices with
+ * one transfer is a real thing, and refusing to record what actually arrived
+ * would leave the customer's books disagreeing with their bank. The balance
+ * clamps at zero rather than going negative.
+ */
+export const recordPaymentRequestSchema = z
+  .object({
+    /** Integer minor units of the invoice's own currency; never a float. */
+    amountMinorUnits: z.number().int().positive(),
+    /** When the money arrived. Defaults to now — a payment is usually recorded
+     *  the day it lands, and a required field there is friction for nothing. */
+    paidAt: z.iso.date().optional(),
+  })
+  .strict();
+
+export type RecordPaymentRequest = z.infer<typeof recordPaymentRequestSchema>;
+
 // --- Slice 1.3: CSV/Excel import ---
 
 /** Canonical fields a file column can map to (Phase 1.3 plan §3). */

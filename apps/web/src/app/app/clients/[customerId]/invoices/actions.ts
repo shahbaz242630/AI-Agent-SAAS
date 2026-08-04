@@ -3,8 +3,12 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { ApiError, apiFetch } from "@/lib/api";
-import { invoiceActionSuccess, isInvoiceLifecycleAction } from "@/lib/invoice-lifecycle";
-import { parseAmountInput } from "@/lib/money";
+import {
+  invoiceActionSuccess,
+  isInvoiceLifecycleAction,
+  paymentRecordedLine,
+} from "@/lib/invoice-lifecycle";
+import { formatMoney, parseAmountInput } from "@/lib/money";
 import { createClient } from "@/lib/supabase/server";
 
 /**
@@ -253,6 +257,98 @@ export async function updateInvoice(
 
   revalidatePath(`/app/clients/${customerId}/invoices`);
   return { success: `Invoice ${values.invoiceNumber} saved. It is still a draft.` };
+}
+
+/**
+ * Record money received against an invoice (slice 1.6c, task 6).
+ *
+ * ⚠️ THE AMOUNT IS PARSED WITH THE INVOICE'S OWN CURRENCY, not the
+ * organisation's and not a default. A payment against a Kuwaiti invoice is in
+ * fils and takes three decimals; the same string against a yen invoice is not
+ * an amount at all. The currency comes from a hidden field carrying what the
+ * row displayed — and the API validates the number independently, so the worst
+ * a tampered field can do is produce a refusal here or there.
+ *
+ * ⚠️ THERE IS NO "MARK AS PAID" and this action must never become one. The
+ * status follows the money: the API decides `partially_paid` or `paid` from the
+ * resulting balance, inside the state machine, in the transaction that writes
+ * the amount.
+ */
+export interface PaymentActionState {
+  error?: string;
+  success?: string;
+  /** Echoed back on a refusal — React 19 empties the form otherwise. */
+  amount?: string;
+}
+
+export async function recordPayment(
+  _prevState: PaymentActionState,
+  formData: FormData,
+): Promise<PaymentActionState> {
+  const organisationId = String(formData.get("organisationId") ?? "");
+  const customerId = String(formData.get("customerId") ?? "");
+  const invoiceId = String(formData.get("invoiceId") ?? "");
+  const currency = String(formData.get("currency") ?? "GBP")
+    .trim()
+    .toUpperCase();
+  const paidAt = optional(formData, "paidAt");
+  const amount = String(formData.get("amount") ?? "");
+
+  const parsed = parseAmountInput(amount, currency);
+  if (!parsed.ok) return { error: parsed.message, amount };
+
+  const accessToken = await getAccessToken();
+  if (!accessToken) redirect("/sign-in");
+
+  let invoice: {
+    invoiceNumber?: string;
+    status?: string;
+    outstandingMinorUnits?: number;
+    currency?: string;
+    chaseBlockedReason?: string | null;
+  };
+  try {
+    const response = await apiFetch(
+      `/organisations/${organisationId}/customers/${customerId}/invoices/${invoiceId}/payments`,
+      accessToken,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          amountMinorUnits: parsed.minorUnits,
+          ...(paidAt ? { paidAt } : {}),
+        }),
+      },
+    );
+    invoice = (await response.json()) as typeof invoice;
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 401) redirect("/sign-in");
+    return {
+      error:
+        error instanceof ApiError ? error.message : "Something went wrong. Please try again.",
+      amount,
+    };
+  }
+
+  revalidatePath(`/app/clients/${customerId}/invoices`);
+
+  /**
+   * ⚠️ THE OUTCOME IS DESCRIBED FROM THE API'S ANSWER, not from what was sent.
+   * Whether this cleared the invoice, left a balance Eva keeps chasing, or left
+   * a balance nobody is chasing because it is paused, is the server's fact —
+   * and it is the only part of this the customer actually needs.
+   */
+  const outstanding = invoice.outstandingMinorUnits ?? 0;
+  const invoiceCurrency = invoice.currency ?? currency;
+  return {
+    success: paymentRecordedLine({
+      invoiceNumber: invoice.invoiceNumber ?? "That invoice",
+      status: invoice.status ?? "active",
+      outstandingMinorUnits: outstanding,
+      formattedOutstanding: formatMoney(outstanding, invoiceCurrency),
+      chaseBlockedReason: invoice.chaseBlockedReason ?? null,
+    }),
+  };
 }
 
 /**

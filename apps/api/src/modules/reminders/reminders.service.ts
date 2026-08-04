@@ -4,6 +4,7 @@ import { Injectable, NotFoundException } from "@nestjs/common";
 // eslint-disable-next-line @typescript-eslint/consistent-type-imports
 import { PinoLogger } from "nestjs-pino";
 import { withTenant } from "@eva/database";
+import { CHASED_INVOICE_STATUSES } from "@eva/types";
 import type {
   ReminderActionType,
   ReminderSequenceDto,
@@ -94,8 +95,10 @@ export class RemindersService {
           },
         });
         const timezone = await this.orgTimezone(tx, organisationId);
+        // Every CHASED status, not just `active` — a part-paid invoice is still
+        // being chased for its balance (slice 1.6c).
         const activeInvoices = await tx.invoice.findMany({
-          where: { status: "active", deletedAt: null },
+          where: { status: { in: [...CHASED_INVOICE_STATUSES] }, deletedAt: null },
           select: { id: true },
         });
         for (const invoice of activeInvoices) {
@@ -210,11 +213,12 @@ export class RemindersService {
         });
       }
 
-      // (c) Backfill: live active invoices with zero non-cancelled actions
-      // (created before the 1.5 hooks, or by paths that bypass them).
+      // (c) Backfill: live CHASED invoices with zero non-cancelled actions
+      // (created before the 1.5 hooks, or by paths that bypass them). Includes
+      // part-paid invoices — the balance is still owed (slice 1.6c).
       const unscheduled = await tx.invoice.findMany({
         where: {
-          status: "active",
+          status: { in: [...CHASED_INVOICE_STATUSES] },
           deletedAt: null,
           scheduledActions: { none: { status: { not: "cancelled" } } },
         },
