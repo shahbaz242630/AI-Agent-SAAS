@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { ApiError, apiFetch } from "@/lib/api";
+import { invoiceActionSuccess, isInvoiceLifecycleAction } from "@/lib/invoice-lifecycle";
 import { parseAmountInput } from "@/lib/money";
 import { createClient } from "@/lib/supabase/server";
 
@@ -65,6 +66,54 @@ function failed(error: unknown, values: SubmittedInvoice): InvoiceActionState {
   };
 }
 
+/** Everything both invoice forms collect, read once so a refusal can echo it. */
+function readSubmitted(formData: FormData): SubmittedInvoice {
+  return {
+    invoiceNumber: String(formData.get("invoiceNumber") ?? "").trim(),
+    amount: String(formData.get("amount") ?? ""),
+    // Uppercased here so "aed" typed in a hurry is not refused by the API's
+    // `^[A-Z]{3}$` — a case difference is not a mistake worth a round trip.
+    currency: String(formData.get("currency") ?? "GBP")
+      .trim()
+      .toUpperCase(),
+    issueDate: optional(formData, "issueDate") ?? "",
+    dueDate: optional(formData, "dueDate") ?? "",
+    contactId: optional(formData, "contactId") ?? "",
+    status: String(formData.get("status") ?? "draft") === "active" ? "active" : "draft",
+  };
+}
+
+/**
+ * The checks raising and editing an invoice have in common → the amount in
+ * minor units, or the sentence to show instead.
+ *
+ * ⚠️ SHARED ON PURPOSE, AND THE ORDER IS PART OF IT. The currency is judged
+ * BEFORE the amount because `12.345` is a valid Kuwaiti amount and an invalid
+ * British one — the same string is right or wrong depending on another field on
+ * the same form. Two copies of this sequence would eventually disagree about
+ * which of two mistakes to name first, and the edit form would tell someone
+ * something different from the form that created the same invoice.
+ */
+function checkSubmitted(values: SubmittedInvoice): { minorUnits: number } | { error: string } {
+  if (!/^[A-Z]{3}$/.test(values.currency)) {
+    return { error: "Currency must be a three-letter code, like GBP or AED." };
+  }
+
+  const amount = parseAmountInput(values.amount, values.currency);
+  if (!amount.ok) return { error: amount.message };
+
+  if (values.invoiceNumber === "") return { error: "Enter the invoice number." };
+  if (values.dueDate === "") return { error: "Enter the date this invoice is due." };
+
+  // Caught here rather than at the API because the API has no opinion on it,
+  // and an invoice due before it was raised is a typo every time.
+  if (values.issueDate !== "" && values.issueDate > values.dueDate) {
+    return { error: "The due date can't be before the invoice date." };
+  }
+
+  return { minorUnits: amount.minorUnits };
+}
+
 /**
  * Raise an invoice.
  *
@@ -86,43 +135,10 @@ export async function createInvoice(
   const organisationId = String(formData.get("organisationId") ?? "");
   const customerId = String(formData.get("customerId") ?? "");
 
-  // Uppercased here so "aed" typed in a hurry is not refused by the API's
-  // `^[A-Z]{3}$` — a case difference is not a mistake worth a round trip.
-  const currency = String(formData.get("currency") ?? "GBP")
-    .trim()
-    .toUpperCase();
-  const status = String(formData.get("status") ?? "draft") === "active" ? "active" : "draft";
-  const invoiceNumber = String(formData.get("invoiceNumber") ?? "").trim();
-  const dueDate = optional(formData, "dueDate");
-  const issueDate = optional(formData, "issueDate");
-
   // Captured BEFORE any refusal so every early return can hand it back.
-  const values: SubmittedInvoice = {
-    invoiceNumber,
-    amount: String(formData.get("amount") ?? ""),
-    currency,
-    issueDate: issueDate ?? "",
-    dueDate: dueDate ?? "",
-    contactId: optional(formData, "contactId") ?? "",
-    status,
-  };
-  const refuse = (error: string): InvoiceActionState => ({ error, values });
-
-  if (!/^[A-Z]{3}$/.test(currency)) {
-    return refuse("Currency must be a three-letter code, like GBP or AED.");
-  }
-
-  const amount = parseAmountInput(values.amount, currency);
-  if (!amount.ok) return refuse(amount.message);
-
-  if (invoiceNumber === "") return refuse("Enter the invoice number.");
-  if (!dueDate) return refuse("Enter the date this invoice is due.");
-
-  // Caught here rather than at the API because the API has no opinion on it,
-  // and an invoice due before it was raised is a typo every time.
-  if (issueDate && issueDate > dueDate) {
-    return refuse("The due date can't be before the invoice date.");
-  }
+  const values = readSubmitted(formData);
+  const checked = checkSubmitted(values);
+  if ("error" in checked) return { error: checked.error, values };
 
   const accessToken = await getAccessToken();
   if (!accessToken) redirect("/sign-in");
@@ -135,15 +151,13 @@ export async function createInvoice(
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          invoiceNumber,
-          amountMinorUnits: amount.minorUnits,
-          currency,
-          dueDate,
-          ...(issueDate ? { issueDate } : {}),
-          ...(optional(formData, "contactId")
-            ? { contactId: optional(formData, "contactId") }
-            : {}),
-          status,
+          invoiceNumber: values.invoiceNumber,
+          amountMinorUnits: checked.minorUnits,
+          currency: values.currency,
+          dueDate: values.dueDate,
+          ...(values.issueDate ? { issueDate: values.issueDate } : {}),
+          ...(values.contactId ? { contactId: values.contactId } : {}),
+          status: values.status,
         }),
       },
     );
@@ -153,12 +167,167 @@ export async function createInvoice(
   }
 
   revalidatePath(`/app/clients/${customerId}/invoices`);
-  // Saying WHICH state it landed in matters: "active" means Eva will start
-  // chasing it, and that is not something to discover later.
+  /**
+   * Saying WHICH state it landed in matters: "active" means Eva starts
+   * chasing, and that is not something to discover later.
+   *
+   * ⚠️ NOT "from its due date", which is what this said until task 4 checked
+   * it. The default sequence's first email goes THREE DAYS BEFORE the due date
+   * (`DEFAULT_REMINDER_STEPS`), so that sentence promised the client would not
+   * hear from Eva until the money was late, and they will.
+   */
   return {
     success:
-      status === "active"
-        ? `Invoice ${invoiceNumber} added. Eva will chase it from its due date.`
-        : `Invoice ${invoiceNumber} saved as a draft. It won't be chased until you issue it.`,
+      values.status === "active"
+        ? `Invoice ${values.invoiceNumber} added. Eva will chase it on your reminder schedule.`
+        : `Invoice ${values.invoiceNumber} saved as a draft. It won't be chased until you start it.`,
+  };
+}
+
+/**
+ * Edit a DRAFT invoice (slice 1.6c, task 4).
+ *
+ * `PATCH` is draft-only in the API and the screen does not offer the form on
+ * anything else (trap 4) — but this is checked there too, because a server
+ * action is reachable by direct POST and the API's 409 is the real gate.
+ *
+ * ⚠️ THE REFUSAL STILL HAS TO HAND BACK WHAT WAS TYPED, and it is easy to think
+ * otherwise here. On the ADD form a React 19 reset empties the fields; on this
+ * one it quietly restores the invoice's ORIGINAL values, so a rejected edit
+ * looks like it simply did not happen. That is worse: nothing is obviously
+ * wrong, so the natural response is to assume it saved.
+ */
+export async function updateInvoice(
+  _prevState: InvoiceActionState,
+  formData: FormData,
+): Promise<InvoiceActionState> {
+  const organisationId = String(formData.get("organisationId") ?? "");
+  const customerId = String(formData.get("customerId") ?? "");
+  const invoiceId = String(formData.get("invoiceId") ?? "");
+
+  const values = readSubmitted(formData);
+  const checked = checkSubmitted(values);
+  if ("error" in checked) return { error: checked.error, values };
+
+  const accessToken = await getAccessToken();
+  if (!accessToken) redirect("/sign-in");
+
+  /**
+   * ⚠️ `contactId` IS ONLY SENT WHEN THE FORM ACTUALLY OFFERED THE FIELD.
+   *
+   * An absent field means "leave the recipient alone" and an explicit null
+   * means "nobody" — so sending null unconditionally would be a silent wipe for
+   * any user whose role cannot read contacts, because the page omits the picker
+   * for them (that fetch has its own `try` for exactly this reason). They would
+   * change an amount and remove the reminder recipient without being told.
+   *
+   * The marker is a hidden input rendered beside the picker, so the two can
+   * only be present together.
+   */
+  const offeredContactPicker = formData.get("contactPicker") !== null;
+
+  try {
+    await apiFetch(
+      `/organisations/${organisationId}/customers/${customerId}/invoices/${invoiceId}`,
+      accessToken,
+      {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          invoiceNumber: values.invoiceNumber,
+          amountMinorUnits: checked.minorUnits,
+          currency: values.currency,
+          dueDate: values.dueDate,
+          ...(values.issueDate ? { issueDate: values.issueDate } : {}),
+          ...(offeredContactPicker ? { contactId: values.contactId || null } : {}),
+        }),
+      },
+    );
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 401) redirect("/sign-in");
+    return failed(error, values);
+  }
+
+  revalidatePath(`/app/clients/${customerId}/invoices`);
+  return { success: `Invoice ${values.invoiceNumber} saved. It is still a draft.` };
+}
+
+/**
+ * Run one of the four lifecycle actions (slice 1.6c, task 4).
+ *
+ * The consequence was stated before the click by `invoice-lifecycle.ts`; this
+ * carries it out and says what happened.
+ */
+export async function runInvoiceAction(
+  _prevState: InvoiceActionState,
+  formData: FormData,
+): Promise<InvoiceActionState> {
+  const organisationId = String(formData.get("organisationId") ?? "");
+  const customerId = String(formData.get("customerId") ?? "");
+  const invoiceId = String(formData.get("invoiceId") ?? "");
+  const invoiceNumber = String(formData.get("invoiceNumber") ?? "").trim();
+  const action = String(formData.get("action") ?? "");
+
+  /**
+   * ⚠️ FAIL CLOSED ON THE ACTION NAME. A server action is a POST endpoint, so
+   * this string is not necessarily one of our four buttons — without the guard
+   * it would be interpolated straight into an API path. The API would refuse
+   * an unknown one with a 404, but building a URL out of unchecked input is not
+   * something to leave to the far end.
+   */
+  if (!isInvoiceLifecycleAction(action)) {
+    return { error: "That isn't something you can do to an invoice." };
+  }
+
+  const accessToken = await getAccessToken();
+  if (!accessToken) redirect("/sign-in");
+
+  /**
+   * Whether anyone will actually be emailed — read from the API's OWN response
+   * to the transition, not from a hidden field on the form.
+   *
+   * `activate` and `resume` schedule ZERO reminders when the invoice has no
+   * contact, and both still return 200. Saying "Eva will chase it" there
+   * contradicts the warning the confirm panel just gave, one click earlier.
+   */
+  let hasRecipient = true;
+
+  try {
+    const response = await apiFetch(
+      `/organisations/${organisationId}/customers/${customerId}/invoices/${invoiceId}/${action}`,
+      accessToken,
+      { method: "POST" },
+    );
+    try {
+      const invoice = (await response.json()) as { contactId?: string | null };
+      hasRecipient = invoice.contactId != null;
+    } catch {
+      // The transition SUCCEEDED; only the body was unreadable. Assume a
+      // recipient rather than inventing an alarm about one — the cautious
+      // direction here is not to shout, because the action itself worked.
+      hasRecipient = true;
+    }
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 401) redirect("/sign-in");
+    /**
+     * A 409 here is the state machine refusing an illegal move, and its message
+     * — "Invoice cannot 'pause' from status 'draft'" — is a sentence for us,
+     * not for a customer. It means one thing in practice: the page is showing
+     * an invoice that has since changed, usually in another tab.
+     */
+    if (error instanceof ApiError && error.status === 409) {
+      return {
+        error: `${invoiceNumber || "That invoice"} has already changed since this page was loaded. Refresh to see where it is now.`,
+      };
+    }
+    return {
+      error:
+        error instanceof ApiError ? error.message : "Something went wrong. Please try again.",
+    };
+  }
+
+  revalidatePath(`/app/clients/${customerId}/invoices`);
+  return {
+    success: invoiceActionSuccess(action, invoiceNumber || "That invoice", { hasRecipient }),
   };
 }

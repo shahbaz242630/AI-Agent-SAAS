@@ -56,6 +56,23 @@ export function formatMoney(minorUnits: number, currency: string, locale = "en-G
 }
 
 /**
+ * Integer minor units → the string an amount INPUT should be filled with.
+ *
+ * `12345` KWD → `"12.345"`. Deliberately NOT `formatMoney`: an edit form has to
+ * be pre-filled with something `parseAmountInput` can read BACK, and
+ * `"£1,234.56"` would either be refused or — far worse — put a comma in front of
+ * the parser, which is the ambiguity that turns 1,5 into fifteen hundred. So no
+ * symbol and no grouping: the exact value, and nothing about presentation.
+ *
+ * The property that matters is the round trip. Opening a draft and saving it
+ * untouched must store the number it started with, in every exponent group —
+ * which is what `money.spec.ts` asserts rather than checking one string.
+ */
+export function amountInputValue(minorUnits: number, currency: string): string {
+  return formatMinorUnits(BigInt(minorUnits), currency);
+}
+
+/**
  * What a human typed in the amount box → what the API wants, or WHY not.
  *
  * ⚠️ THE VALUE COMES FROM `@eva/types` AND NOWHERE ELSE. This function never
@@ -157,6 +174,22 @@ export function parseAmountInput(raw: string, currency: string): AmountParseResu
  * early on half the world's screens is the kind of defect that looks like a
  * data problem for weeks.
  */
+/**
+ * The same date, in the `YYYY-MM-DD` a `<input type="date">` requires.
+ *
+ * ⚠️ UTC, for the reason `formatDueDate` explains. `due_date` is a DATE column
+ * arriving as midnight UTC, so reading the local calendar day out of it puts
+ * the PREVIOUS day into the edit form for anyone west of UTC — and unlike a
+ * misprinted label, an edit form that opens on the wrong date SAVES the wrong
+ * date the moment anyone touches another field. Every invoice edited in New
+ * York would quietly move a day earlier.
+ */
+export function dateInputValue(value: string | Date): string {
+  const date = typeof value === "string" ? new Date(value) : value;
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toISOString().slice(0, 10);
+}
+
 export function formatDueDate(value: string | Date, locale = "en-GB"): string {
   const date = typeof value === "string" ? new Date(value) : value;
   if (Number.isNaN(date.getTime())) return "—";

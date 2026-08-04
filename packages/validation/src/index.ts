@@ -150,10 +150,19 @@ export type CreateInvoiceRequest = z.infer<typeof createInvoiceRequestSchema>;
  * update. `status` is deliberately absent and the object is strict, so a
  * status field on an update payload is rejected 400 — status changes ONLY via
  * the state machine actions (BRD 4.1 hard rule).
+ *
+ * ⚠️ `contactId` IS NULLABLE HERE AND NOT ON CREATE, and the difference is real
+ * (slice 1.6c, task 4). On create, "no reminder recipient" is said by leaving
+ * the field out. On update it cannot be: an absent field means "leave this
+ * alone", so without an explicit null there is no way to UNDO having picked the
+ * wrong person — the edit screen would offer "Nobody in particular", accept the
+ * click and silently change nothing, which is the failure this project keeps
+ * finding (the right outcome reported, the wrong record kept).
  */
 export const updateInvoiceRequestSchema = createInvoiceRequestSchema
   .omit({ status: true })
   .partial()
+  .extend({ contactId: z.uuid().nullable().optional() })
   .strict();
 
 export type UpdateInvoiceRequest = z.infer<typeof updateInvoiceRequestSchema>;

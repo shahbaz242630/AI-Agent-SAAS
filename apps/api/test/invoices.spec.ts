@@ -331,6 +331,53 @@ describe("Invoices: CRUD, validation and permissions", () => {
       .expect(409);
   });
 
+  /**
+   * Slice 1.6c task 4: the edit screen has to be able to UNDO a recipient.
+   *
+   * Absent and null mean different things on a PATCH, and before this the
+   * schema had no way to say the second one — `contactId` was `z.uuid()`, so
+   * the only expressible update was "change it to somebody else". Picking the
+   * wrong person was therefore permanent, and a screen offering "Nobody in
+   * particular" would have accepted the click and changed nothing.
+   *
+   * The two halves are asserted together on purpose: null must CLEAR, and
+   * absent must still LEAVE ALONE. A schema that accepted null by making the
+   * whole field meaningless would pass the first half on its own.
+   */
+  it("clears the reminder recipient on an explicit null, and leaves it alone when absent", async () => {
+    const invoice = await createInvoice({ contactId }).expect(201);
+    expect(invoice.body.contactId).toBe(contactId);
+
+    const untouched = await request(app.getHttpServer())
+      .patch(`${baseUrl()}/${invoice.body.id}`)
+      .set("Authorization", `Bearer ${tokens.get("finance")}`)
+      .send({ amountMinorUnits: 4200 })
+      .expect(200);
+    expect(untouched.body.contactId).toBe(contactId);
+
+    const cleared = await request(app.getHttpServer())
+      .patch(`${baseUrl()}/${invoice.body.id}`)
+      .set("Authorization", `Bearer ${tokens.get("finance")}`)
+      .send({ contactId: null })
+      .expect(200);
+    expect(cleared.body.contactId).toBeNull();
+
+    // Read back rather than trusting the response body — the column is what a
+    // reminder is later addressed from.
+    const stored = await owner.invoice.findUniqueOrThrow({ where: { id: invoice.body.id } });
+    expect(stored.contactId).toBeNull();
+  });
+
+  it("still refuses a contact belonging to somebody else on update", async () => {
+    // Nullable must not have loosened the check that a REAL id is validated.
+    const invoice = await createInvoice().expect(201);
+    await request(app.getHttpServer())
+      .patch(`${baseUrl()}/${invoice.body.id}`)
+      .set("Authorization", `Bearer ${tokens.get("finance")}`)
+      .send({ contactId: randomUUID() })
+      .expect(400);
+  });
+
   it("rejects a status field on update payloads → 400 (state machine only)", async () => {
     const invoice = await createInvoice().expect(201);
     await request(app.getHttpServer())

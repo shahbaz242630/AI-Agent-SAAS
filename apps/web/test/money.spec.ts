@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { formatDueDate, formatMoney, parseAmountInput } from "../src/lib/money";
+import {
+  amountInputValue,
+  dateInputValue,
+  formatDueDate,
+  formatMoney,
+  parseAmountInput,
+} from "../src/lib/money";
 
 /** The value, when it parsed; throws the message otherwise so a broken case
  *  fails loudly instead of comparing against undefined. */
@@ -17,6 +23,60 @@ function refusal(raw: string, currency: string): string {
     );
   return result.message;
 }
+
+describe("amountInputValue — filling an edit form without changing the number", () => {
+  /**
+   * The property, not a string. Slice 1.6c task 4 puts the stored amount back
+   * into the box a human types into, and the only thing that matters is that
+   * opening a draft and saving it untouched stores what it started with.
+   *
+   * One case per exponent group, because a round trip through `/100` and `*100`
+   * would pass on GBP and lose the third Kuwaiti digit.
+   */
+  it("round-trips through the parser in every exponent group", () => {
+    for (const [minor, currency] of [
+      [12_345, "KWD"],
+      [987_654, "KWD"],
+      [450_000, "JPY"],
+      [123_456, "GBP"],
+      [1230, "AED"],
+      [5, "GBP"],
+    ] as const) {
+      const typed = amountInputValue(minor, currency);
+      expect(minorUnits(typed, currency)).toBe(minor);
+    }
+  });
+
+  it("writes the currency's own number of decimals", () => {
+    expect(amountInputValue(12_345, "KWD")).toBe("12.345");
+    expect(amountInputValue(450_000, "JPY")).toBe("450000");
+    expect(amountInputValue(1230, "AED")).toBe("12.30");
+  });
+
+  it("carries no symbol and no grouping, unlike the display format", () => {
+    // A grouped "1,234.56" in the box would meet the comma ambiguity check on
+    // the way back — the parser refuses what it cannot read unambiguously, so
+    // an edit form filled that way could not be saved at all.
+    const typed = amountInputValue(123_456, "GBP");
+    expect(typed).toBe("1234.56");
+    expect(typed).not.toContain(",");
+    expect(formatMoney(123_456, "GBP")).toContain(",");
+  });
+});
+
+describe("dateInputValue — the date an edit form opens on", () => {
+  it("reads the UTC calendar day, not the reader's", () => {
+    // A DATE column arrives as midnight UTC. Taken locally, this is 30 Sep for
+    // anyone west of UTC — and an edit form that opens a day early SAVES a day
+    // early as soon as any other field is touched.
+    expect(dateInputValue("2026-10-01T00:00:00.000Z")).toBe("2026-10-01");
+  });
+
+  it("is empty rather than 'Invalid Date' when there is nothing to show", () => {
+    expect(dateInputValue("")).toBe("");
+    expect(dateInputValue("not a date")).toBe("");
+  });
+});
 
 describe("parseAmountInput — what a human types becomes minor units", () => {
   it("converts one case per exponent group, which is the point of the whole slice", () => {

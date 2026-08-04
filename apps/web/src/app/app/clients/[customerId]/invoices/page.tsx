@@ -2,14 +2,8 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { ApiError, apiFetch } from "@/lib/api";
 import { invoiceCountLine, noInvoicesLine } from "@/lib/invoice-messages";
-import {
-  invoiceStatusLabel,
-  invoiceStatusTone,
-  type InvoiceStatusTone,
-} from "@/lib/invoice-status";
-import { formatDueDate, formatMoney } from "@/lib/money";
 import { createClient } from "@/lib/supabase/server";
-import { AddInvoiceForm } from "./invoice-controls";
+import { AddInvoiceForm, InvoiceTable, type InvoiceRow } from "./invoice-controls";
 
 /**
  * One client's invoices (slice 1.6c, task 1).
@@ -37,21 +31,6 @@ interface ClientRow {
   name: string;
   email: string | null;
   reference: string | null;
-}
-
-interface InvoiceRow {
-  id: string;
-  invoiceNumber: string;
-  description: string | null;
-  amountMinorUnits: number;
-  amountPaidMinorUnits: number;
-  /** `amount - paid`, clamped at zero. Derived by the API, never stored. */
-  outstandingMinorUnits: number;
-  currency: string;
-  dueDate: string;
-  status: string;
-  /** Stored status, or due_soon/due_today/overdue for Active rows. */
-  displayStatus: string;
 }
 
 export default async function CustomerInvoicesPage({
@@ -239,94 +218,14 @@ export default async function CustomerInvoicesPage({
           {noInvoicesLine(client.name)}
         </p>
       ) : (
-        <InvoiceTable invoices={invoices} />
+        <InvoiceTable
+          organisationId={organisation.id}
+          customerId={customerId}
+          invoices={invoices}
+          contacts={contacts}
+        />
       )}
     </Shell>
-  );
-}
-
-function InvoiceTable({ invoices }: { invoices: InvoiceRow[] }) {
-  return (
-    <section className="w-full max-w-4xl overflow-x-auto">
-      <table className="w-full border-collapse text-sm">
-        <thead>
-          <tr className="border-b border-muted text-left text-muted-foreground">
-            <th className="px-3 py-2 font-medium">Invoice</th>
-            <th className="px-3 py-2 font-medium">Due</th>
-            <th className="px-3 py-2 text-right font-medium">Amount</th>
-            {/* The balance sits beside the amount deliberately: Eva chases what
-                is LEFT, and a list that shows only the total is the reason a
-                part-payment had no correct answer before this slice. */}
-            <th className="px-3 py-2 text-right font-medium">Outstanding</th>
-            <th className="px-3 py-2 font-medium">Status</th>
-          </tr>
-        </thead>
-        <tbody>
-          {invoices.map((invoice) => (
-            <tr key={invoice.id} className="border-b border-muted/50 align-top">
-              <td className="px-3 py-3">
-                <span className="font-medium">{invoice.invoiceNumber}</span>
-                {invoice.description && (
-                  <span className="block text-xs text-muted-foreground">{invoice.description}</span>
-                )}
-              </td>
-              <td className="px-3 py-3 whitespace-nowrap">{formatDueDate(invoice.dueDate)}</td>
-              <td className="px-3 py-3 text-right whitespace-nowrap">
-                {formatMoney(invoice.amountMinorUnits, invoice.currency)}
-              </td>
-              <td className="px-3 py-3 text-right whitespace-nowrap">
-                <span className={invoice.outstandingMinorUnits > 0 ? "font-medium" : ""}>
-                  {formatMoney(invoice.outstandingMinorUnits, invoice.currency)}
-                </span>
-                {/* Shown only when part of it has actually been paid, so the
-                    common case stays quiet and the exception is obvious. */}
-                {invoice.amountPaidMinorUnits > 0 && (
-                  <span className="block text-xs text-muted-foreground">
-                    {`${formatMoney(invoice.amountPaidMinorUnits, invoice.currency)} paid`}
-                  </span>
-                )}
-              </td>
-              <td className="px-3 py-3 whitespace-nowrap">
-                <StatusBadge status={invoice.displayStatus} />
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-      {/*
-        ⚠️ NO TOTAL ROW, AND THAT IS DELIBERATE (trap 3b). Currency is per
-        invoice, so a column of AED and GBP cannot honestly be added up. A
-        confident wrong total is worse than no total. When a total is wanted it
-        has to group by currency — that is the org-wide list in task 9.
-      */}
-    </section>
-  );
-}
-
-/**
- * ⚠️ ONLY TOKENS THAT EXIST IN `packages/design-system/tokens.css`.
- *
- * The first version used `bg-destructive/10 text-destructive`. There is no
- * `destructive` token — the palette calls it `danger` — so Tailwind emitted
- * nothing at all and OVERDUE, the one status that should shout, rendered as
- * plain unstyled text while "Paid" carried a badge. It typechecked, it passed
- * the gate, and it was only visible by looking at the screen.
- */
-const TONE_CLASSES: Record<InvoiceStatusTone, string> = {
-  urgent: "bg-danger/10 text-danger",
-  attention: "bg-warning/10 text-warning",
-  positive: "bg-success/10 text-success",
-  neutral: "bg-muted text-foreground",
-  muted: "bg-muted text-muted-foreground",
-};
-
-function StatusBadge({ status }: { status: string }) {
-  return (
-    <span
-      className={`inline-block rounded-[var(--radius-card)] px-2 py-1 text-xs font-medium ${TONE_CLASSES[invoiceStatusTone(status)]}`}
-    >
-      {invoiceStatusLabel(status)}
-    </span>
   );
 }
 

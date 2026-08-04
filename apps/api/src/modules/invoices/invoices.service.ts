@@ -208,7 +208,15 @@ export class InvoicesService {
       await requirePermission(tx, organisationId, user.id, "invoices:write");
       const existing = await this.findOrThrow(tx, customerId, invoiceId);
       this.requireDraft(existing, "updated");
-      if (input.contactId !== undefined) {
+      /**
+       * `null` is an explicit "nobody", and there is nothing to look up.
+       *
+       * Distinct from ABSENT, which means "leave the recipient alone". Without
+       * this branch a null would be handed to `findFirst` and come back as
+       * "contactId must reference a contact of this customer" — refusing the one
+       * request that removes a wrongly chosen recipient.
+       */
+      if (input.contactId !== undefined && input.contactId !== null) {
         await this.requireContactOfCustomer(tx, customerId, input.contactId);
       }
       if (input.invoiceNumber !== undefined && input.invoiceNumber !== existing.invoiceNumber) {
