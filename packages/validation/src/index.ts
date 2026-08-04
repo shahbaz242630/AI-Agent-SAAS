@@ -193,6 +193,49 @@ export const recordPaymentRequestSchema = z
 
 export type RecordPaymentRequest = z.infer<typeof recordPaymentRequestSchema>;
 
+/**
+ * POST /organisations/:id/invoices — one typed row of the book (slice 1.6c).
+ *
+ * ⚠️ THE SAME COLUMNS AS THE CSV IMPORTER, deliberately. A row somebody types
+ * and a row they upload are the same thing, and the API resolves the client
+ * through the same `common/ledger` code either way — so the two cannot drift
+ * into creating clients differently.
+ */
+export const addBookRowRequestSchema = z
+  .object({
+    clientName: z.string().trim().min(1).max(200),
+    clientEmail: z.email().max(320).optional(),
+    clientReference: z.string().trim().min(1).max(100).optional(),
+    /** Who Eva writes to. Without an email there is nobody to chase. */
+    contactName: z.string().trim().min(1).max(200).optional(),
+    contactEmail: z.email().max(320).optional(),
+    /**
+     * ⚠️ E.164 ONLY — `+447700900123`. The founder's reason is the calling
+     * agent, and it is right: a dialler cannot ring "07700 900123" without
+     * knowing which country it belongs to. Free text is cheap now and a
+     * data-cleaning project later, so the country code is required rather than
+     * hoped for.
+     */
+    contactPhone: z
+      .string()
+      .trim()
+      .regex(/^\+[1-9]\d{6,14}$/, "phone must include the country code, like +447700900123")
+      .optional(),
+    invoiceNumber: z.string().trim().min(1).max(50),
+    amountMinorUnits: z.number().int().positive(),
+    currency: z
+      .string()
+      .regex(/^[A-Z]{3}$/, "currency must be a 3-letter uppercase ISO 4217 code")
+      .default("GBP"),
+    issueDate: isoDate.optional(),
+    dueDate: isoDate,
+    /** Unlike an import, a typed row may start chasing at once — see the service. */
+    status: z.enum(["draft", "active"]).default("draft"),
+  })
+  .strict();
+
+export type AddBookRowRequest = z.infer<typeof addBookRowRequestSchema>;
+
 // --- Slice 1.3: CSV/Excel import ---
 
 /** Canonical fields a file column can map to (Phase 1.3 plan §3). */

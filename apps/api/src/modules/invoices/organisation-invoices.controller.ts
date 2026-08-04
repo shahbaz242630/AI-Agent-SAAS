@@ -1,7 +1,9 @@
-import { Controller, Get, Param, ParseUUIDPipe, Query } from "@nestjs/common";
+import { Body, Controller, Get, Param, ParseUUIDPipe, Post, Query } from "@nestjs/common";
+import { addBookRowRequestSchema, type AddBookRowRequest } from "@eva/validation";
+import { ZodValidationPipe } from "../../common/validation/zod-validation.pipe.js";
 import { CurrentAuthUser, type AuthUser } from "../authentication/current-auth-user.decorator.js";
 // eslint-disable-next-line @typescript-eslint/consistent-type-imports
-import { InvoicesService, type InvoiceBook } from "./invoices.service.js";
+import { InvoicesService, type InvoiceBook, type InvoiceSummary } from "./invoices.service.js";
 
 /**
  * The organisation's whole book (slice 1.6c, task 9 — the founder's one table).
@@ -48,6 +50,21 @@ export class OrganisationInvoicesController {
       ...(toPositiveInt(limit) !== null ? { limit: toPositiveInt(limit)! } : {}),
       ...(toPositiveInt(offset) !== null ? { offset: toPositiveInt(offset)! } : {}),
     });
+  }
+
+  /**
+   * ⚠️ NOT NESTED UNDER A CUSTOMER, and that is the point: the customer may not
+   * exist yet. `POST .../customers/:customerId/invoices` needs one already,
+   * which is precisely the three-step journey the founder asked us to remove —
+   * add the client, then find them again, then add the invoice.
+   */
+  @Post()
+  addRow(
+    @CurrentAuthUser() authUser: AuthUser,
+    @Param("organisationId", ParseUUIDPipe) organisationId: string,
+    @Body(new ZodValidationPipe(addBookRowRequestSchema)) body: AddBookRowRequest,
+  ): Promise<InvoiceSummary> {
+    return this.invoicesService.addBookRow(authUser, organisationId, body);
   }
 }
 

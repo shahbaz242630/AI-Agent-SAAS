@@ -14,10 +14,18 @@ import {
   type InvoiceDisplayStatus,
 } from "@eva/types";
 import type {
+  AddBookRowRequest,
   CreateInvoiceRequest,
   RecordPaymentRequest,
   UpdateInvoiceRequest,
 } from "@eva/validation";
+import {
+  createCustomerFromCanonical,
+  listLiveCustomers,
+  resolveCustomer,
+  resolveOrCreateContact,
+  type CanonicalRow,
+} from "../../common/ledger/ledger.js";
 // eslint-disable-next-line @typescript-eslint/consistent-type-imports
 import { PrismaService } from "../../common/database/prisma.service.js";
 // eslint-disable-next-line @typescript-eslint/consistent-type-imports
@@ -463,45 +471,138 @@ export class InvoicesService {
       if (input.contactId !== undefined) {
         await this.requireContactOfCustomer(tx, customerId, input.contactId);
       }
-      await this.ensureInvoiceNumberAvailable(tx, organisationId, input.invoiceNumber);
-      const timezone = await this.orgTimezone(tx, organisationId);
-      const invoice = await this.createRow(tx, {
+      return this.createInvoiceInTx(tx, organisationId, user.id, customerId, input);
+    });
+  }
+
+  /**
+   * Creating the invoice row itself, inside a caller's transaction.
+   *
+   * ⚠️ EXTRACTED SO THE TABLE'S "ADD A ROW" IS THE SAME ACT, not a second one
+   * that drifts. Typing a row and raising an invoice from a client's page must
+   * audit identically, schedule identically and refuse a duplicate number
+   * identically — this project has already watched the api and the web keep
+   * separate copies of one rule and disagree within the hour.
+   */
+  private async createInvoiceInTx(
+    tx: TenantTx,
+    organisationId: string,
+    userId: string,
+    customerId: string,
+    input: CreateInvoiceRequest,
+  ): Promise<InvoiceSummary> {
+    await this.ensureInvoiceNumberAvailable(tx, organisationId, input.invoiceNumber);
+    const timezone = await this.orgTimezone(tx, organisationId);
+    const invoice = await this.createRow(tx, {
+      organisationId,
+      customerId,
+      contactId: input.contactId ?? null,
+      invoiceNumber: input.invoiceNumber,
+      amountMinorUnits: input.amountMinorUnits,
+      currency: input.currency,
+      issueDate:
+        input.issueDate !== undefined ? new Date(input.issueDate) : todayInTimezone(timezone),
+      dueDate: new Date(input.dueDate),
+      status: input.status,
+      createdBy: userId,
+    });
+    await writeAuditLog(tx, {
+      organisationId,
+      actorUserId: userId,
+      action: "invoice.created",
+      entityType: "invoice",
+      entityId: invoice.id,
+      metadata: { customerId, invoiceNumber: invoice.invoiceNumber, status: invoice.status },
+    });
+    // Slice 1.5: an invoice created directly as Active ("already sent") gets
+    // the same schedule a Draft→Active activation would — in the same
+    // transaction, so a scheduling failure rolls the create back too.
+    if (invoice.status === "active") {
+      await scheduleInvoiceReminders(tx, {
         organisationId,
+        invoiceId: invoice.id,
+        timezone,
+        actorUserId: userId,
+      });
+    }
+    return this.toSummary(
+      invoice,
+      timezone,
+      await this.chaseBlockerFor(tx, organisationId, invoice),
+    );
+  }
+
+  /**
+   * Add a row to the book: client, contact and invoice in one act (slice 1.6c).
+   *
+   * ⚠️ THE CLIENT IS RESOLVED THE WAY THE IMPORTER RESOLVES IT — the shared
+   * `resolveCustomer` in `common/ledger`, by reference then case-insensitive
+   * exact name, where **ambiguous is an error and never a guess**. Typing a row
+   * and uploading the same row must land in the same place; a second matching
+   * rule here is how one client quietly becomes two.
+   *
+   * ⚠️ UNLIKE AN IMPORT, THIS MAY START CHASING IMMEDIATELY. Imported invoices
+   * are forced to Draft because nobody has read them; a row somebody has just
+   * typed has been read by definition, which is the same reasoning the
+   * per-client "Add an invoice" form already uses.
+   */
+  async addBookRow(
+    authUser: AuthUser,
+    organisationId: string,
+    input: AddBookRowRequest,
+  ): Promise<InvoiceSummary> {
+    const user = await this.usersService.resolveOrProvision(authUser);
+    return withTenant(this.prisma.db, { organisationId, userId: user.id }, async (tx) => {
+      await requirePermission(tx, organisationId, user.id, "invoices:write");
+
+      /** The importer's own row shape — one typed row IS a one-row import. */
+      const canonical: CanonicalRow = {
+        customerName: input.clientName,
+        ...(input.clientEmail ? { customerEmail: input.clientEmail } : {}),
+        ...(input.clientReference ? { customerReference: input.clientReference } : {}),
+        ...(input.contactName ? { contactName: input.contactName } : {}),
+        ...(input.contactEmail ? { contactEmail: input.contactEmail } : {}),
+      };
+
+      const resolution = resolveCustomer(canonical, await listLiveCustomers(tx));
+      if (resolution.kind === "ambiguous") {
+        throw new ConflictException(
+          `More than one client is called '${input.clientName}'. Open the client you mean and add the invoice there.`,
+        );
+      }
+      const customerId =
+        resolution.kind === "matched"
+          ? resolution.customerId
+          : (await createCustomerFromCanonical(tx, organisationId, user.id, canonical)).id;
+
+      const contactId = await resolveOrCreateContact(
+        tx,
+        organisationId,
+        user.id,
         customerId,
-        contactId: input.contactId ?? null,
+        canonical,
+      );
+
+      /**
+       * ⚠️ THE PHONE IS WRITTEN HERE AND NOT BY THE LEDGER, because the
+       * importer's canonical fields have no phone column — a phone column in an
+       * uploaded spreadsheet is ignored today. Typed rows can carry one, which
+       * is the difference the upload screen states out loud rather than leaving
+       * somebody to discover. Stored in E.164 so a dialler can use it.
+       */
+      if (contactId !== null && input.contactPhone) {
+        await tx.contact.update({ where: { id: contactId }, data: { phone: input.contactPhone } });
+      }
+
+      return this.createInvoiceInTx(tx, organisationId, user.id, customerId, {
         invoiceNumber: input.invoiceNumber,
         amountMinorUnits: input.amountMinorUnits,
         currency: input.currency,
-        issueDate:
-          input.issueDate !== undefined ? new Date(input.issueDate) : todayInTimezone(timezone),
-        dueDate: new Date(input.dueDate),
+        ...(input.issueDate !== undefined ? { issueDate: input.issueDate } : {}),
+        dueDate: input.dueDate,
+        ...(contactId !== null ? { contactId } : {}),
         status: input.status,
-        createdBy: user.id,
       });
-      await writeAuditLog(tx, {
-        organisationId,
-        actorUserId: user.id,
-        action: "invoice.created",
-        entityType: "invoice",
-        entityId: invoice.id,
-        metadata: { customerId, invoiceNumber: invoice.invoiceNumber, status: invoice.status },
-      });
-      // Slice 1.5: an invoice created directly as Active ("already sent") gets
-      // the same schedule a Draft→Active activation would — in the same
-      // transaction, so a scheduling failure rolls the create back too.
-      if (invoice.status === "active") {
-        await scheduleInvoiceReminders(tx, {
-          organisationId,
-          invoiceId: invoice.id,
-          timezone,
-          actorUserId: user.id,
-        });
-      }
-      return this.toSummary(
-        invoice,
-        timezone,
-        await this.chaseBlockerFor(tx, organisationId, invoice),
-      );
     });
   }
 

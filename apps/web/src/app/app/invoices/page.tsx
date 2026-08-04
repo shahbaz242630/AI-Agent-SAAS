@@ -13,6 +13,7 @@ import { chaseBlockedLine, isBeingChased } from "@/lib/invoice-lifecycle";
 import { invoiceStatusLabel, invoiceStatusTone, type InvoiceStatusTone } from "@/lib/invoice-status";
 import { formatDueDate, formatMoney } from "@/lib/money";
 import { createClient } from "@/lib/supabase/server";
+import { AddRowForm } from "./add-row-form";
 
 /**
  * The whole book — every client's invoices on one screen (slice 1.6c, task 9).
@@ -202,6 +203,8 @@ export default async function InvoiceBookPage({
           </Link>
         </div>
       </section>
+
+      <AddRowForm organisationId={organisation.id} />
 
       {/* The money, one currency at a time — with the others named beside it so
           choosing GBP cannot hide the AED (founder's ruling 2026-08-04). */}

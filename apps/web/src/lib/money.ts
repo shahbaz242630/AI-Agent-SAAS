@@ -56,6 +56,30 @@ export function formatMoney(minorUnits: number, currency: string, locale = "en-G
 }
 
 /**
+ * A typed phone number → E.164 (`+447700900123`), or null when it cannot be.
+ *
+ * ⚠️ THE COUNTRY CODE IS REQUIRED, NOT GUESSED, and that is the whole decision.
+ * The founder wants these numbers for a calling agent; a dialler cannot ring
+ * "07700 900123" without knowing which country it belongs to, and assuming the
+ * customer's own country would be wrong for exactly the case Eva is for — a UK
+ * business chasing a buyer in Singapore. Refusing is visible and someone fixes
+ * it; guessing is invisible and someone gets rung in the wrong country.
+ *
+ * Spaces, brackets, dots and hyphens are formatting, so they go. A leading
+ * `00` is the international prefix much of the world dials, so it becomes `+`.
+ */
+export function normalisePhoneInput(raw: string): string | null {
+  const trimmed = raw.trim();
+  if (trimmed === "") return null;
+  // Strip everything a human uses to make a number readable.
+  let cleaned = trimmed.replace(/[\s().\- –—]/g, "");
+  if (cleaned.startsWith("00")) cleaned = `+${cleaned.slice(2)}`;
+  // E.164: a plus, a non-zero country digit, then 6–14 more. Anything else —
+  // including a bare national number starting 0 — is refused.
+  return /^\+[1-9]\d{6,14}$/.test(cleaned) ? cleaned : null;
+}
+
+/**
  * Integer minor units → the string an amount INPUT should be filled with.
  *
  * `12345` KWD → `"12.345"`. Deliberately NOT `formatMoney`: an edit form has to

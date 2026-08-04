@@ -4,6 +4,7 @@ import {
   dateInputValue,
   formatDueDate,
   formatMoney,
+  normalisePhoneInput,
   parseAmountInput,
 } from "../src/lib/money";
 
@@ -23,6 +24,37 @@ function refusal(raw: string, currency: string): string {
     );
   return result.message;
 }
+
+describe("normalisePhoneInput — a number a dialler could actually ring", () => {
+  /**
+   * ⚠️ THE COUNTRY CODE IS REQUIRED, NOT GUESSED. The founder wants these for a
+   * calling agent, and assuming the customer's own country would be wrong for
+   * exactly the case Eva exists for — a UK business chasing a buyer in
+   * Singapore. Refusing is visible and gets fixed; guessing is invisible and
+   * somebody gets rung in the wrong country.
+   */
+  it("refuses a national number with no country code", () => {
+    expect(normalisePhoneInput("07700 900123")).toBeNull();
+    expect(normalisePhoneInput("0117 496 0000")).toBeNull();
+    expect(normalisePhoneInput("")).toBeNull();
+    expect(normalisePhoneInput("not a phone")).toBeNull();
+  });
+
+  it("keeps a valid international number and strips the human formatting", () => {
+    expect(normalisePhoneInput("+44 7700 900123")).toBe("+447700900123");
+    expect(normalisePhoneInput("+971 (50) 123-4567")).toBe("+971501234567");
+    expect(normalisePhoneInput("+65 6123 4567")).toBe("+6561234567");
+  });
+
+  it("treats a leading 00 as the international prefix it is", () => {
+    // Much of the world dials 00 for "+", and typing what you dial is normal.
+    expect(normalisePhoneInput("0044 7700 900123")).toBe("+447700900123");
+  });
+
+  it("refuses a country code starting with zero, which does not exist", () => {
+    expect(normalisePhoneInput("+0 7700 900123")).toBeNull();
+  });
+});
 
 describe("amountInputValue — filling an edit form without changing the number", () => {
   /**

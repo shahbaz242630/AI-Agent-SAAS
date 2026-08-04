@@ -1626,6 +1626,128 @@ describe("Invoices: the organisation-wide book", () => {
     await book("?status=nonsense").expect(400);
   });
 
+  /**
+   * Adding a row by hand — client, contact and invoice in one act.
+   *
+   * ⚠️ THE CLIENT IS RESOLVED THE WAY THE IMPORTER RESOLVES IT. Typing a row
+   * and uploading the same row must land in the same place, or one client
+   * quietly becomes two.
+   */
+  describe("adding a row by typing it", () => {
+    function addRow(body: Record<string, unknown>, auth = token) {
+      return request(app.getHttpServer())
+        .post(url())
+        .set("Authorization", `Bearer ${auth}`)
+        .send({
+          clientName: `Typed Client ${randomUUID().slice(0, 6)}`,
+          invoiceNumber: `TYPED-${randomUUID().slice(0, 8)}`,
+          amountMinorUnits: 125_000,
+          currency: "GBP",
+          dueDate: orgDate(14),
+          ...body,
+        });
+    }
+
+    it("creates the client, the contact and the invoice together", async () => {
+      const contactEmail = `ap-${randomUUID().slice(0, 8)}@typed.example`;
+      const response = await addRow({
+        clientName: "Brand New Client Ltd",
+        contactName: "Ada Byron",
+        contactEmail,
+        contactPhone: "+447700900123",
+      }).expect(201);
+
+      expect(response.body.contactId).not.toBeNull();
+      const customer = await owner.customer.findFirst({
+        where: { organisationId: org.id, name: "Brand New Client Ltd" },
+      });
+      expect(customer).not.toBeNull();
+      const contact = await owner.contact.findFirstOrThrow({ where: { email: contactEmail } });
+      expect(contact.customerId).toBe(customer!.id);
+      // The phone the importer cannot carry.
+      expect(contact.phone).toBe("+447700900123");
+    });
+
+    it("REUSES an existing client rather than making a second one", async () => {
+      // Case-insensitive exact name, exactly as `resolveCustomer` does it for
+      // an upload — otherwise "alpha trading" typed today becomes a separate
+      // client from "Alpha Trading" imported yesterday.
+      const before = await owner.customer.count({ where: { organisationId: org.id } });
+      const response = await addRow({ clientName: "alpha trading" }).expect(201);
+      const after = await owner.customer.count({ where: { organisationId: org.id } });
+      expect(after).toBe(before);
+      const invoice = await owner.invoice.findUniqueOrThrow({ where: { id: response.body.id } });
+      expect(invoice.customerId).toBe(customerA);
+    });
+
+    it("lands as a draft by default, so nothing is chased by accident", async () => {
+      const response = await addRow({}).expect(201);
+      expect(response.body.status).toBe("draft");
+    });
+
+    /**
+     * ⚠️ UNLIKE AN IMPORT. Imported rows are forced to Draft because nobody has
+     * read them; a row somebody has just typed has been read by definition.
+     */
+    it("can start chasing immediately when asked", async () => {
+      const response = await addRow({
+        status: "active",
+        contactName: "Grace Hopper",
+        contactEmail: `grace-${randomUUID().slice(0, 8)}@typed.example`,
+      }).expect(201);
+      expect(response.body.status).toBe("active");
+      const scheduled = await owner.scheduledAction.count({
+        where: { invoiceId: response.body.id },
+      });
+      expect(scheduled).toBeGreaterThan(0);
+      /**
+       * This fixture organisation has no mailbox, and the row says so rather
+       * than claiming a chase — the two systems composing correctly. Reminders
+       * are still SCHEDULED (that gate is about the contact), which is why both
+       * assertions belong together: queued rows and nothing able to send them.
+       */
+      expect(response.body.chaseBlockedReason).toBe("no_mailbox");
+    });
+
+    it("refuses a phone number with no country code", async () => {
+      // A dialler cannot ring "07700 900123" without knowing the country, and
+      // free text now is a data-cleaning project later.
+      const refused = await addRow({ contactPhone: "07700 900123" }).expect(400);
+      expect(JSON.stringify(refused.body)).toMatch(/country code/i);
+      await addRow({ contactPhone: "+441134960000" }).expect(201);
+    });
+
+    it("refuses a duplicate invoice number, like every other create path", async () => {
+      const number = `TYPED-DUP-${randomUUID().slice(0, 6)}`;
+      await addRow({ invoiceNumber: number }).expect(201);
+      await addRow({ invoiceNumber: number }).expect(409);
+    });
+
+    it("refuses zero, negative and fractional amounts", async () => {
+      await addRow({ amountMinorUnits: 0 }).expect(400);
+      await addRow({ amountMinorUnits: -1 }).expect(400);
+      await addRow({ amountMinorUnits: 1.5 }).expect(400);
+    });
+
+    it("needs invoices:write — read_only is refused", async () => {
+      await addRow({}, readOnlyToken).expect(403);
+    });
+
+    it("keeps the currency's own decimals", async () => {
+      const response = await addRow({ amountMinorUnits: 987_654, currency: "KWD" }).expect(201);
+      expect(response.body.amountMinorUnits).toBe(987_654);
+      expect(response.body.currency).toBe("KWD");
+    });
+
+    it("audits the create like any other invoice", async () => {
+      const response = await addRow({}).expect(201);
+      const audit = await owner.auditLog.findFirst({
+        where: { organisationId: org.id, entityId: response.body.id, action: "invoice.created" },
+      });
+      expect(audit).not.toBeNull();
+    });
+  });
+
   it("is readable by read_only, and scoped to the caller's organisation", async () => {
     await book("?limit=1", readOnlyToken).expect(200);
     const other = await createOrgWithMembers(owner, "book-other", ["owner"]);
