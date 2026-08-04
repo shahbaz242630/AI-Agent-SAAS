@@ -1,6 +1,7 @@
 "use client";
 
 import { useActionState, useState } from "react";
+import { CURRENCY_SUGGESTIONS } from "@/lib/currencies";
 import { addBookRow, type AddRowState } from "./add-row-actions";
 
 /**
@@ -19,23 +20,22 @@ import { addBookRow, type AddRowState } from "./add-row-actions";
 const FIELD = "rounded-[var(--radius-card)] border border-muted-foreground/20 px-3 py-2 text-sm";
 const LABEL = "flex flex-col gap-1 text-sm";
 
-const CURRENCIES = [
-  "GBP",
-  "AED",
-  "USD",
-  "EUR",
-  "SAR",
-  "QAR",
-  "SGD",
-  "KWD",
-  "BHD",
-  "OMR",
-  "JPY",
-  "KRW",
-  "VND",
-];
+// Suggestions only, never a restriction — and one list, shared with the
+// per-client add form. See `lib/currencies.ts`.
 
-export function AddRowForm({ organisationId }: { organisationId: string }) {
+export function AddRowForm({
+  organisationId,
+  defaultCurrency,
+}: {
+  organisationId: string;
+  /**
+   * The organisation's currency default (task 13). Required rather than
+   * defaulted to "GBP" here: a silent fallback in a component is invisible, and
+   * the whole point of task 13 is that a Dubai business stops being handed
+   * sterling. `lib/currencies.ts` owns the fallback, in one place.
+   */
+  defaultCurrency: string;
+}) {
   const [open, setOpen] = useState(false);
   const [state, action, pending] = useActionState<AddRowState, FormData>(addBookRow, {});
   const sent = state.values;
@@ -150,8 +150,18 @@ export function AddRowForm({ organisationId }: { organisationId: string }) {
           </label>
           <label className={LABEL}>
             Currency
-            <select name="currency" defaultValue={sent?.currency ?? "GBP"} className={FIELD}>
-              {CURRENCIES.map((code) => (
+            <select
+              name="currency"
+              defaultValue={sent?.currency ?? defaultCurrency}
+              className={FIELD}
+            >
+              {/* The organisation's default may be a code the suggestion list
+                  does not carry, and it must still be selectable — the list is
+                  a convenience, not a whitelist (founder ruling). */}
+              {!CURRENCY_SUGGESTIONS.includes(
+                defaultCurrency as (typeof CURRENCY_SUGGESTIONS)[number],
+              ) && <option value={defaultCurrency}>{defaultCurrency}</option>}
+              {CURRENCY_SUGGESTIONS.map((code) => (
                 <option key={code} value={code}>
                   {code}
                 </option>

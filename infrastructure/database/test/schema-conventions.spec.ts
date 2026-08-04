@@ -717,6 +717,48 @@ describe("Schema conventions (BRD 10)", () => {
     }
   });
 
+  it("organisation_settings.default_currency is GBP by default and ISO-shaped (migration 0022)", async () => {
+    /**
+     * ⚠️ THE CHECK EXISTS BECAUSE A BAD CODE HERE FAILS SILENTLY, NOT LOUDLY.
+     * The money layer indexes its minor-unit table by exact ISO 4217 code, so
+     * `gbp` would miss and fall through to the 2-digit assumption — correct for
+     * sterling and wrong for KWD (3 digits) and JPY (0). A form would open on a
+     * currency whose decimals were quietly mis-stated.
+     */
+    /**
+     * Its OWN organisation, not the seeded demo one. Vitest runs spec FILES in
+     * parallel against one database, and this test deliberately writes an odd
+     * currency — doing that to a shared row would surface as somebody else's
+     * unrelated failure.
+     */
+    const organisation = await prisma.organisation.create({
+      data: { id: randomUUID(), name: `Currency Default ${randomUUID().slice(0, 8)}` },
+    });
+    const organisationId = organisation.id;
+    // Created WITHOUT naming the currency, so the column's own default is what
+    // is being asserted rather than something this test supplied.
+    await prisma.organisationSettings.create({ data: { organisationId } });
+
+    const [settings] = await prisma.$queryRaw<{ default_currency: string }[]>`
+      SELECT default_currency FROM organisation_settings WHERE organisation_id = ${organisationId}::uuid`;
+    expect(settings?.default_currency).toBe("GBP");
+
+    for (const bad of ["gbp", "GB", "GBPP", "G8P", ""]) {
+      await expect(
+        prisma.$executeRaw`
+          UPDATE organisation_settings SET default_currency = ${bad}
+          WHERE organisation_id = ${organisationId}::uuid`,
+        bad,
+      ).rejects.toThrow();
+    }
+
+    // A three-letter uppercase code we do not list anywhere is still accepted:
+    // the column is a default, not a whitelist of markets we serve.
+    await prisma.$executeRaw`
+      UPDATE organisation_settings SET default_currency = 'ZAR'
+      WHERE organisation_id = ${organisationId}::uuid`;
+  });
+
   it("invoices enforces positive amounts (CHECK constraint)", async () => {
     const customer = await invoiceFixtureCustomer();
     await expect(

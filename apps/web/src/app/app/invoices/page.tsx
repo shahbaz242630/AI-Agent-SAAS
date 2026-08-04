@@ -7,6 +7,7 @@ import {
   defaultBookCurrency,
   otherCurrenciesLine,
 } from "@/lib/invoice-book";
+import { defaultInvoiceCurrency } from "@/lib/currencies";
 import { formatMoney } from "@/lib/money";
 import { can, readOnlyInvoicesLine } from "@/lib/permissions";
 import { createClient } from "@/lib/supabase/server";
@@ -36,6 +37,8 @@ interface OrganisationSummary {
   name: string;
   /** What this person may do here — resolved by the API, never by us. */
   permissions: string[];
+  /** What a new invoice's currency dropdown opens on (task 13). */
+  defaultCurrency?: string;
 }
 
 interface Book {
@@ -200,7 +203,14 @@ export default async function InvoiceBookPage({
       </section>
 
       {canWrite ? (
-        <AddRowForm organisationId={organisation.id} />
+        <AddRowForm
+          organisationId={organisation.id}
+          /* No client is in view here, so there is no per-client evidence to
+             prefer — the organisation's own default is the best answer. */
+          defaultCurrency={defaultInvoiceCurrency({
+            organisationDefault: organisation.defaultCurrency,
+          })}
+        />
       ) : (
         <p className="w-full max-w-6xl rounded-[var(--radius-card)] bg-muted px-6 py-3 text-sm text-muted-foreground">
           {readOnlyInvoicesLine(organisation.name)}
@@ -356,6 +366,12 @@ function Shell({ children }: { children: React.ReactNode }) {
           className="text-sm font-medium text-muted-foreground hover:underline"
         >
           Clients
+        </Link>
+        <Link
+          href="/app/settings/invoices"
+          className="text-sm font-medium text-muted-foreground hover:underline"
+        >
+          Invoice settings
         </Link>
         <Link href="/app" className="text-sm font-medium text-muted-foreground hover:underline">
           Your account

@@ -288,6 +288,12 @@ describe("Organisations: the caller's own permissions", () => {
       .expect(201);
   });
 
+  it("publishes the organisation's default currency, and starts a new one on GBP", async () => {
+    const response = await listAs("owner").expect(200);
+    const mine = response.body.find((row: { id: string }) => row.id === org.id);
+    expect(mine.defaultCurrency).toBe("GBP");
+  });
+
   it("never reports a permission key this build does not have", async () => {
     /**
      * A row naming a removed or hand-written permission must not travel into a
@@ -320,5 +326,188 @@ describe("Organisations: the caller's own permissions", () => {
       .expect(200);
     const mine = response.body.find((row: { id: string }) => row.id === stray.id);
     expect(mine.permissions).toEqual(["invoices:read"]);
+  });
+});
+
+/**
+ * The organisation's default invoice currency (slice 1.6c, task 13).
+ *
+ * ⚠️ THE FOUNDER'S RULING IS THE SPEC: *"a business/solopreneur doing business
+ * from UK might have buyer in singapore, or UAE or Qatar … so 1 user might have
+ * GBP + AED + USD + SGD"*. This is a DEFAULT and never a RESTRICTION, so the
+ * load-bearing test here is not that the setting saves — it is that setting it
+ * changes nothing about which currencies an invoice may use.
+ */
+describe("Organisations: default invoice currency (task 13)", () => {
+  let app: INestApplication;
+  let owner: EvaPrismaClient;
+  let org: FixtureOrg;
+  let customerId: string;
+  const tokens = new Map<string, string>();
+
+  const setCurrency = (defaultCurrency: unknown, roleKey = "owner") =>
+    request(app.getHttpServer())
+      .patch(`/organisations/${org.id}/settings`)
+      .set("Authorization", `Bearer ${tokens.get(roleKey)}`)
+      .send({ defaultCurrency });
+
+  const readCurrency = async (roleKey = "owner"): Promise<string> => {
+    const response = await request(app.getHttpServer())
+      .get("/organisations")
+      .set("Authorization", `Bearer ${tokens.get(roleKey)}`)
+      .expect(200);
+    return response.body.find((row: { id: string }) => row.id === org.id).defaultCurrency;
+  };
+
+  beforeAll(async () => {
+    owner = createOwnerClient();
+    await seedTestDatabase(owner);
+    app = await createTestApp();
+    org = await createOrgWithMembers(owner, "orgcurrency", ["owner", "finance", "read_only"]);
+    for (const member of org.members) {
+      tokens.set(member.roleKey, await signToken({ sub: member.authUserId, email: member.email }));
+    }
+    customerId = (
+      await owner.customer.create({
+        data: {
+          id: randomUUID(),
+          organisationId: org.id,
+          name: "Currency Client Ltd",
+          createdBy: org.members[0]!.id,
+        },
+      })
+    ).id;
+  });
+
+  afterAll(async () => {
+    await app.close();
+    await owner.$disconnect();
+  });
+
+  it("defaults to GBP and stores what is set", async () => {
+    expect(await readCurrency()).toBe("GBP");
+    const updated = await setCurrency("AED").expect(200);
+    expect(updated.body.defaultCurrency).toBe("AED");
+    expect(await readCurrency()).toBe("AED");
+
+    const stored = await owner.organisationSettings.findUniqueOrThrow({
+      where: { organisationId: org.id },
+    });
+    expect(stored.defaultCurrency).toBe("AED");
+  });
+
+  it("⚠️ IS A DEFAULT, NOT A RESTRICTION: any currency can still be invoiced", async () => {
+    /**
+     * The founder's ruling, and the one thing that must never regress. With the
+     * organisation set to AED, a UK seller must still raise a GBP invoice, a
+     * Singapore one in SGD, and a Kuwaiti one in KWD with its three decimals —
+     * and each must STORE the currency it was given, not the default.
+     *
+     * If this ever fails, "default currency" has quietly become "only
+     * currency", and a business would have to change an account-wide setting to
+     * invoice a customer abroad.
+     */
+    await setCurrency("AED").expect(200);
+
+    const raised: { currency: string; amountMinorUnits: number }[] = [
+      { currency: "GBP", amountMinorUnits: 125000 },
+      { currency: "SGD", amountMinorUnits: 990050 },
+      { currency: "KWD", amountMinorUnits: 12345 },
+      { currency: "JPY", amountMinorUnits: 650000 },
+    ];
+
+    for (const [index, invoice] of raised.entries()) {
+      const response = await request(app.getHttpServer())
+        .post(`/organisations/${org.id}/customers/${customerId}/invoices`)
+        .set("Authorization", `Bearer ${tokens.get("owner")}`)
+        .send({
+          invoiceNumber: `CUR-${index}`,
+          amountMinorUnits: invoice.amountMinorUnits,
+          currency: invoice.currency,
+          dueDate: "2026-12-01",
+          status: "draft",
+        })
+        .expect(201);
+      expect(response.body.currency, invoice.currency).toBe(invoice.currency);
+      expect(response.body.amountMinorUnits, invoice.currency).toBe(invoice.amountMinorUnits);
+    }
+
+    // And the setting is untouched by any of it — nothing reads it to decide.
+    expect(await readCurrency()).toBe("AED");
+  });
+
+  it("does not touch invoices that already exist", async () => {
+    // "Default currency" is a phrase a customer can read as "convert my book".
+    // It converts nothing: the column is only ever read to pre-select a form.
+    await setCurrency("GBP").expect(200);
+    const before = await owner.invoice.findMany({
+      where: { organisationId: org.id },
+      select: { invoiceNumber: true, currency: true, amountMinorUnits: true },
+      orderBy: { invoiceNumber: "asc" },
+    });
+
+    await setCurrency("KWD").expect(200);
+
+    const after = await owner.invoice.findMany({
+      where: { organisationId: org.id },
+      select: { invoiceNumber: true, currency: true, amountMinorUnits: true },
+      orderBy: { invoiceNumber: "asc" },
+    });
+    expect(after).toEqual(before);
+  });
+
+  it("refuses a malformed code and writes nothing", async () => {
+    await setCurrency("AED").expect(200);
+    for (const bad of ["gbp", "GB", "GBPP", "G8P", "", "  ", 123, null]) {
+      await setCurrency(bad).expect(400);
+    }
+    // Asserted on the STORED row, not the response: a refusal that still wrote
+    // would look identical from the outside.
+    const stored = await owner.organisationSettings.findUniqueOrThrow({
+      where: { organisationId: org.id },
+    });
+    expect(stored.defaultCurrency).toBe("AED");
+  });
+
+  it("needs invoices:write — read_only is refused and nothing changes", async () => {
+    await setCurrency("AED").expect(200);
+    await setCurrency("USD", "read_only").expect(403);
+    expect(await readCurrency("read_only")).toBe("AED");
+  });
+
+  it("allows finance, which holds invoices:write in the default matrix", async () => {
+    await setCurrency("SGD", "finance").expect(200);
+    expect(await readCurrency()).toBe("SGD");
+  });
+
+  it("audits the change with the old and new code, and no personal data", async () => {
+    await setCurrency("GBP").expect(200);
+    await setCurrency("OMR").expect(200);
+
+    const entry = await owner.auditLog.findFirst({
+      where: { organisationId: org.id, action: "organisation.settings_updated" },
+      orderBy: { createdAt: "desc" },
+    });
+    expect(entry).not.toBeNull();
+    expect(entry!.metadata).toMatchObject({
+      field: "default_currency",
+      from: "GBP",
+      to: "OMR",
+    });
+    expect(entry!.actorUserId).toBe(org.members.find((m) => m.roleKey === "owner")!.id);
+  });
+
+  it("is scoped to the caller's organisation", async () => {
+    const other = await createOrgWithMembers(owner, "orgcurrency-other", ["owner"]);
+    await request(app.getHttpServer())
+      .patch(`/organisations/${other.id}/settings`)
+      .set("Authorization", `Bearer ${tokens.get("owner")}`)
+      .send({ defaultCurrency: "USD" })
+      .expect(404);
+
+    const stored = await owner.organisationSettings.findUniqueOrThrow({
+      where: { organisationId: other.id },
+    });
+    expect(stored.defaultCurrency).toBe("GBP");
   });
 });

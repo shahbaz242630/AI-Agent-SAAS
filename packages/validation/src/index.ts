@@ -116,6 +116,27 @@ export const putRolePermissionsRequestSchema = z.object({
 
 export type PutRolePermissionsRequest = z.infer<typeof putRolePermissionsRequestSchema>;
 
+/**
+ * PATCH /organisations/:id/settings payload (Slice 1.6c, task 13).
+ *
+ * ⚠️ THE CODE IS NOT UPPERCASED FOR THE CALLER, deliberately. The money layer
+ * indexes its minor-unit table by exact ISO 4217 code, so `gbp` would miss and
+ * silently take the 2-digit fallback — right for GBP and wrong for KWD (3
+ * digits) and JPY (0). A refusal that names the rule beats a value that looks
+ * accepted and means something else. The web uppercases what a human types
+ * before it gets here, which is where that belongs.
+ */
+export const updateOrganisationSettingsRequestSchema = z.object({
+  defaultCurrency: z
+    .string()
+    .trim()
+    .regex(/^[A-Z]{3}$/, "defaultCurrency must be a 3-letter uppercase ISO 4217 code"),
+});
+
+export type UpdateOrganisationSettingsRequest = z.infer<
+  typeof updateOrganisationSettingsRequestSchema
+>;
+
 // --- Slice 1.2: invoice records ---
 
 /** ISO calendar date (YYYY-MM-DD) for date-only invoice fields. */

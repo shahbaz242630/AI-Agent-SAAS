@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { ApiError, apiFetch } from "@/lib/api";
+import { defaultInvoiceCurrency } from "@/lib/currencies";
 import { invoiceCountLine, noInvoicesLine } from "@/lib/invoice-messages";
 import { can, readOnlyInvoicesLine } from "@/lib/permissions";
 import { createClient } from "@/lib/supabase/server";
@@ -27,6 +28,8 @@ interface OrganisationSummary {
   roleKey: string;
   /** What this person may do here — resolved by the API, never by us. */
   permissions: string[];
+  /** What a new invoice's currency dropdown opens on (task 13). */
+  defaultCurrency?: string;
 }
 
 interface ClientRow {
@@ -189,15 +192,14 @@ export default async function CustomerInvoicesPage({
   }
 
   /**
-   * Default the currency to what this client is already invoiced in.
-   *
-   * Only when every existing invoice agrees — a client holding both AED and GBP
-   * has no obvious default, and guessing one would be how the wrong currency
-   * gets onto an invoice. Falls back to GBP, which task 13 replaces with the
-   * organisation's own setting so a UAE business stops typing AED every time.
+   * Which currency the add form opens on — the rule and its ordering live in
+   * `lib/currencies.ts` (task 13), because the book's own add-a-row form has to
+   * answer the same question and two copies would drift.
    */
-  const currencies = new Set(invoices.map((invoice) => invoice.currency));
-  const defaultCurrency = currencies.size === 1 ? [...currencies][0]! : "GBP";
+  const defaultCurrency = defaultInvoiceCurrency({
+    existingCurrencies: invoices.map((invoice) => invoice.currency),
+    organisationDefault: organisation.defaultCurrency,
+  });
 
   /**
    * Task 8. `sales`, `reception` and `read_only` hold `invoices:read` and not

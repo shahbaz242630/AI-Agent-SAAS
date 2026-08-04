@@ -1,6 +1,7 @@
 "use client";
 
 import { useActionState, useState } from "react";
+import { CURRENCY_SUGGESTIONS } from "@/lib/currencies";
 import {
   availableInvoiceActions,
   canRecordPayment,
@@ -52,30 +53,8 @@ const DANGER_BUTTON_CLASS =
 
 const INITIAL_STATE: InvoiceActionState = {};
 
-/**
- * Suggestions only — NOT a restriction. The input accepts any three-letter ISO
- * code, because a hard-coded list is a decision about which markets we serve,
- * and this is a convenience widget. It covers the three exponent groups and the
- * markets named so far: 2-digit, the 3-digit Gulf currencies, and 0-digit Asia.
- */
-const CURRENCY_SUGGESTIONS = [
-  "GBP",
-  "AED",
-  "USD",
-  "EUR",
-  "SAR",
-  "QAR",
-  "KWD",
-  "BHD",
-  "OMR",
-  "JPY",
-  "KRW",
-  "VND",
-  // Added 2026-08-04: the founder named a UK seller with buyers in Singapore.
-  // 2-decimal, so the money layer already handled it — it was only missing
-  // from the convenience list.
-  "SGD",
-];
+// Suggestions only, never a restriction — and one list, shared with the book's
+// own add-a-row form. See `lib/currencies.ts`.
 
 interface ContactOption {
   id: string;

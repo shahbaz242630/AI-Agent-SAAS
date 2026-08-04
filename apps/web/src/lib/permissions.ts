@@ -102,7 +102,8 @@ export type WriteAction =
   | "add-row"
   | "upload-import"
   | "confirm-import"
-  | "cancel-import";
+  | "cancel-import"
+  | "change-settings";
 
 /**
  * ⚠️ `Record<WriteAction, string>` IS THE EXHAUSTIVENESS GUARANTEE. Adding a
@@ -121,4 +122,5 @@ const REFUSED: Record<WriteAction, string> = {
   "upload-import": "Your role can't upload invoices.",
   "confirm-import": "Your role can't import invoices.",
   "cancel-import": "Your role can't discard an upload.",
+  "change-settings": "Your role can't change invoice settings.",
 };
