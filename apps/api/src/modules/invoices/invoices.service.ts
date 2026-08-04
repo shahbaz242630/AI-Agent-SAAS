@@ -6,6 +6,7 @@ import {
 } from "@nestjs/common";
 import { Prisma, withTenant } from "@eva/database";
 import {
+  CHASED_INVOICE_STATUSES,
   INVOICE_COMPUTED_STATUSES,
   INVOICE_STORED_STATUSES,
   minorUnitsToNumber,
@@ -24,7 +25,12 @@ import { UsersService } from "../users/users.service.js";
 import { requirePermission, type TenantTx } from "../../common/permissions/permissions.js";
 import { writeAuditLog } from "../../common/audit/audit-log.js";
 import type { AuthUser } from "../authentication/current-auth-user.decorator.js";
-import { deriveDisplayStatus, todayInTimezone } from "./invoice-status.js";
+import {
+  ageingBucketFor,
+  computedStatusDueDateRange,
+  deriveDisplayStatus,
+  todayInTimezone,
+} from "./invoice-status.js";
 import {
   transitionInvoiceStatus,
   type InvoiceAction,
@@ -115,10 +121,84 @@ type InvoiceRow = {
   contact?: { deletedAt: Date | null; email: string | null } | null;
 };
 
-/** Every read of an invoice loads its contact — see `chaseBlockersFor`. */
-const WITH_CONTACT = { contact: { select: { deletedAt: true, email: true } } } as const;
+/**
+ * Every read of an invoice loads its contact — see `chaseBlockersFor`.
+ *
+ * `name` and `phone` are here for the org-wide book, which shows who Eva writes
+ * to beside each invoice. They are selected, not published: `toSummary` lists
+ * its fields explicitly, so loading a column is still not the same act as
+ * sending it to a browser.
+ */
+const WITH_CONTACT = {
+  contact: { select: { id: true, name: true, email: true, phone: true, deletedAt: true } },
+} as const;
+
+/** Ageing by due date — `DATA-MODEL-REVIEW.md` §4's buckets, derived, never stored. */
+export type AgeingBucket = "current" | "days_1_15" | "days_16_30" | "days_31_45" | "days_over_45";
+
+/**
+ * One row of the org-wide book (slice 1.6c, task 9 — the founder's one table).
+ *
+ * Carries the CLIENT beside the invoice because that is how the job is done:
+ * a credit controller reads "who owes me what, and is anyone chasing it", not
+ * an invoice in isolation. Client details repeat down the rows, exactly like
+ * the spreadsheet this replaces.
+ */
+export interface InvoiceBookRow extends InvoiceSummary {
+  customer: { id: string; name: string; reference: string | null };
+  /** The reminder recipient — the address Eva actually writes to, or null. */
+  contact: { id: string; name: string; email: string | null; phone: string | null } | null;
+  /**
+   * The org-local day of the most recent reminder actually SENT, or null.
+   *
+   * ⚠️ NULL FOR EVERYTHING UNTIL SLICE 1.7 EXISTS. Nothing sends yet, so no
+   * `scheduled_actions` row ever reaches `sent`. The column is built now so it
+   * fills in the day sending ships rather than being retrofitted then — but a
+   * screen must not present an empty value here as "never chased".
+   */
+  lastChasedOn: Date | null;
+  /** The org-local day of the next queued reminder. Real today. */
+  nextChaseOn: Date | null;
+  /** Which ageing bucket the due date falls into, in the ORG's timezone. */
+  ageingBucket: AgeingBucket;
+}
+
+/** What the book returns: the page, how many matched, and the money by currency. */
+export interface InvoiceBook {
+  rows: InvoiceBookRow[];
+  /** Rows matching the filters, before paging. */
+  totalCount: number;
+  /**
+   * Every currency the organisation is CHASING money in, each with its own
+   * total.
+   *
+   * ⚠️ NEVER SUMMED ACROSS CURRENCIES (trap 3b) — adding AED to GBP produces a
+   * confident wrong number, which is worse than no number. The screen shows one
+   * at a time and uses this list to say which others exist, so choosing GBP
+   * still tells you there is money in AED.
+   *
+   * Counts CHASED invoices only. A cancelled invoice's arithmetic balance is
+   * not money anybody is collecting, and putting it in a total is how "what am
+   * I owed" becomes wrong.
+   */
+  chasedByCurrency: {
+    currency: string;
+    invoiceCount: number;
+    outstandingMinorUnits: number;
+  }[];
+}
 
 const DEFAULT_TIMEZONE = "Europe/London";
+
+/**
+ * The most rows one request of the book can return.
+ *
+ * Bounded because this endpoint reads a whole organisation rather than one
+ * client, and an unbounded read is a query that works on the demo book and
+ * takes a server down on a real one. The screen pages; the cap is what stops a
+ * hand-written `?limit=100000` from mattering.
+ */
+const MAX_BOOK_PAGE = 200;
 
 @Injectable()
 export class InvoicesService {
@@ -165,6 +245,208 @@ export class InvoicesService {
       }
       return summaries;
     });
+  }
+
+  /**
+   * The organisation's whole book, one row per invoice (slice 1.6c, task 9).
+   *
+   * ⚠️ ONE ROW PER INVOICE, NOT PER CLIENT. A client with three unpaid invoices
+   * needs three rows, or you cannot chase one and hold another, and "amount
+   * due" becomes a total that hides which one is late.
+   *
+   * ⚠️ THE QUERY COUNT DOES NOT GROW WITH THE BOOK. Everything per-row is
+   * either loaded with the invoice or batched: the chase blockers cost two
+   * queries for any number of rows, and the chase dates one grouped query for
+   * the page. The obvious implementation asks per invoice and is fine on the
+   * demo book's fifteen rows.
+   */
+  async listForOrganisation(
+    authUser: AuthUser,
+    organisationId: string,
+    filters: {
+      status?: string;
+      currency?: string;
+      customerId?: string;
+      search?: string;
+      limit?: number;
+      offset?: number;
+    },
+  ): Promise<InvoiceBook> {
+    const user = await this.usersService.resolveOrProvision(authUser);
+    return withTenant(this.prisma.db, { organisationId, userId: user.id }, async (tx) => {
+      await requirePermission(tx, organisationId, user.id, "invoices:read");
+      const timezone = await this.orgTimezone(tx, organisationId);
+
+      if (filters.status !== undefined) {
+        const isStored = (INVOICE_STORED_STATUSES as readonly string[]).includes(filters.status);
+        const isComputed = (INVOICE_COMPUTED_STATUSES as readonly string[]).includes(
+          filters.status,
+        );
+        if (!isStored && !isComputed) {
+          throw new BadRequestException(`Unknown invoice status filter '${filters.status}'`);
+        }
+      }
+
+      /**
+       * ⚠️ A COMPUTED STATUS CANNOT BE FILTERED IN SQL. `overdue` is derived per
+       * request from the due date and the ORG's timezone — it is deliberately
+       * not a column (plan §7.1). So the filter is applied as a due-date range
+       * instead, which is the same question asked in a way the database can
+       * answer, and keeps paging honest: filtering after paging would return a
+       * page of ten and show three.
+       */
+      const today = todayInTimezone(timezone);
+      const dueDateFilter = computedStatusDueDateRange(filters.status, today);
+
+      const where = {
+        deletedAt: null,
+        ...(filters.customerId !== undefined ? { customerId: filters.customerId } : {}),
+        ...(filters.currency !== undefined
+          ? { currency: filters.currency.toUpperCase() }
+          : {}),
+        ...(dueDateFilter !== null
+          ? // A computed status always means the invoice is being CHASED — the
+            // derivation never applies to anything else.
+            { status: { in: [...CHASED_INVOICE_STATUSES] }, dueDate: dueDateFilter }
+          : filters.status !== undefined
+            ? { status: filters.status }
+            : {}),
+        ...(filters.search
+          ? {
+              OR: [
+                { invoiceNumber: { contains: filters.search, mode: "insensitive" as const } },
+                { customer: { name: { contains: filters.search, mode: "insensitive" as const } } },
+              ],
+            }
+          : {}),
+      };
+
+      const take = Math.min(Math.max(filters.limit ?? 50, 1), MAX_BOOK_PAGE);
+      const skip = Math.max(filters.offset ?? 0, 0);
+
+      const [rows, totalCount] = await Promise.all([
+        tx.invoice.findMany({
+          where,
+          // Most overdue first: the top of this screen should be the thing that
+          // needs doing today.
+          orderBy: [{ dueDate: "asc" }, { invoiceNumber: "asc" }],
+          include: {
+            ...WITH_CONTACT,
+            customer: { select: { id: true, name: true, reference: true } },
+          },
+          take,
+          skip,
+        }),
+        tx.invoice.count({ where }),
+      ]);
+
+      const blockers = await this.chaseBlockersFor(tx, organisationId, rows);
+      const chaseDates = await this.chaseDatesFor(
+        tx,
+        rows.map((row) => row.id),
+      );
+
+      return {
+        rows: rows.map((row) => {
+          const dates = chaseDates.get(row.id);
+          return {
+            ...this.toSummary(row, timezone, blockers.get(row.id) ?? null),
+            customer: row.customer,
+            contact: row.contact
+              ? {
+                  id: row.contact.id,
+                  name: row.contact.name,
+                  email: row.contact.email,
+                  phone: row.contact.phone,
+                }
+              : null,
+            lastChasedOn: dates?.lastChasedOn ?? null,
+            nextChaseOn: dates?.nextChaseOn ?? null,
+            ageingBucket: ageingBucketFor(row.dueDate, today),
+          };
+        }),
+        totalCount,
+        chasedByCurrency: await this.chasedByCurrency(tx, organisationId),
+      };
+    });
+  }
+
+  /**
+   * When each invoice was last chased and when it is next due to be — ONE
+   * grouped query for the whole page.
+   *
+   * `scheduled_date` is the org-local calendar day the action belongs to, so no
+   * timezone work happens here; the scheduler already did it.
+   */
+  private async chaseDatesFor(
+    tx: TenantTx,
+    invoiceIds: string[],
+  ): Promise<Map<string, { lastChasedOn: Date | null; nextChaseOn: Date | null }>> {
+    const dates = new Map<string, { lastChasedOn: Date | null; nextChaseOn: Date | null }>();
+    if (invoiceIds.length === 0) return dates;
+
+    const grouped = await tx.scheduledAction.groupBy({
+      by: ["invoiceId", "status"],
+      where: {
+        invoiceId: { in: invoiceIds },
+        // `sent` is the only status that means a debtor actually heard from us;
+        // pending/ready are what is still to come. Everything else — cancelled,
+        // failed, skipped — is neither, and must not be reported as a chase.
+        status: { in: ["sent", "pending", "ready"] },
+      },
+      _max: { scheduledDate: true },
+      _min: { scheduledDate: true },
+    });
+
+    for (const group of grouped) {
+      const entry = dates.get(group.invoiceId) ?? { lastChasedOn: null, nextChaseOn: null };
+      if (group.status === "sent") {
+        const sent = group._max.scheduledDate;
+        if (sent && (entry.lastChasedOn === null || sent > entry.lastChasedOn)) {
+          entry.lastChasedOn = sent;
+        }
+      } else {
+        const next = group._min.scheduledDate;
+        if (next && (entry.nextChaseOn === null || next < entry.nextChaseOn)) {
+          entry.nextChaseOn = next;
+        }
+      }
+      dates.set(group.invoiceId, entry);
+    }
+    return dates;
+  }
+
+  /**
+   * What the organisation is owed, per currency, over CHASED invoices only.
+   *
+   * ⚠️ RAW SQL BECAUSE THE BALANCE IS CLAMPED. `SUM(amount) - SUM(paid)` is NOT
+   * the same number: overpayment is allowed, so an invoice paid 25 over would
+   * quietly eat 25 off another invoice's balance and understate the total. The
+   * clamp has to happen per row, which is what `GREATEST(..., 0)` does — the
+   * same rule as `outstandingBalance` in `@eva/types`.
+   */
+  private async chasedByCurrency(
+    tx: TenantTx,
+    organisationId: string,
+  ): Promise<InvoiceBook["chasedByCurrency"]> {
+    const rows = await tx.$queryRaw<
+      { currency: string; invoice_count: bigint; outstanding: bigint | null }[]
+    >`
+      SELECT currency,
+             COUNT(*) AS invoice_count,
+             SUM(GREATEST(amount_minor_units - amount_paid_minor_units, 0)) AS outstanding
+        FROM invoices
+       WHERE organisation_id = ${organisationId}::uuid
+         AND deleted_at IS NULL
+         AND status IN ('active', 'partially_paid')
+       GROUP BY currency
+       ORDER BY currency
+    `;
+    return rows.map((row) => ({
+      currency: row.currency,
+      invoiceCount: Number(row.invoice_count),
+      outstandingMinorUnits: minorUnitsToNumber(row.outstanding ?? 0n),
+    }));
   }
 
   /** Creates an invoice as Draft (or Active when already sent) — invoices:write. */

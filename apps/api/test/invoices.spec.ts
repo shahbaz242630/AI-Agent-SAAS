@@ -1290,6 +1290,360 @@ describe("Invoices: reminder scheduling hooks (Slice 1.5 — plan §3 recompute 
 });
 
 /**
+ * The organisation's whole book — `GET /organisations/:id/invoices`
+ * (slice 1.6c, task 9: the founder's one table).
+ *
+ * Until this existed, invoices were reachable only through a client, so the
+ * first question a credit controller asks — "what is overdue right now?" —
+ * could only be answered by opening clients one at a time.
+ */
+describe("Invoices: the organisation-wide book", () => {
+  let app: INestApplication;
+  let owner: EvaPrismaClient;
+  let org: FixtureOrg;
+  let customerA: string;
+  let customerB: string;
+  let token: string;
+  let readOnlyToken: string;
+
+  const url = () => `/organisations/${org.id}/invoices`;
+
+  /** Seeded directly: this suite is about READING a book, not building one. */
+  async function seedInvoice(input: {
+    customerId: string;
+    number: string;
+    amount: number;
+    paid?: number;
+    currency?: string;
+    dueOffset: number;
+    status?: string;
+  }) {
+    return owner.invoice.create({
+      data: {
+        id: randomUUID(),
+        organisationId: org.id,
+        customerId: input.customerId,
+        invoiceNumber: input.number,
+        amountMinorUnits: input.amount,
+        amountPaidMinorUnits: input.paid ?? 0,
+        currency: input.currency ?? "GBP",
+        issueDate: new Date(orgDate(-60)),
+        dueDate: new Date(orgDate(input.dueOffset)),
+        status: input.status ?? "active",
+        createdBy: org.members[0]!.id,
+      },
+    });
+  }
+
+  beforeAll(async () => {
+    owner = createOwnerClient();
+    await seedTestDatabase(owner);
+    app = await createTestApp();
+    org = await createOrgWithMembers(owner, "book", ["owner", "read_only"]);
+    token = await signToken({
+      sub: org.members[0]!.authUserId,
+      email: org.members[0]!.email,
+    });
+    const readOnly = org.members.find((m) => m.roleKey === "read_only")!;
+    readOnlyToken = await signToken({ sub: readOnly.authUserId, email: readOnly.email });
+
+    customerA = (
+      await owner.customer.create({
+        data: {
+          id: randomUUID(),
+          organisationId: org.id,
+          name: "Alpha Trading",
+          createdBy: org.members[0]!.id,
+        },
+      })
+    ).id;
+    customerB = (
+      await owner.customer.create({
+        data: {
+          id: randomUUID(),
+          organisationId: org.id,
+          name: "Beta Works",
+          createdBy: org.members[0]!.id,
+        },
+      })
+    ).id;
+
+    // A deliberately awkward book: two clients, three currencies, every ageing
+    // bucket, an overpayment, and rows that must NOT be counted as owed.
+    await seedInvoice({ customerId: customerA, number: "BK-CURRENT", amount: 10_000, dueOffset: 5 });
+    await seedInvoice({ customerId: customerA, number: "BK-TODAY", amount: 20_000, dueOffset: 0 });
+    await seedInvoice({ customerId: customerA, number: "BK-OD10", amount: 30_000, dueOffset: -10 });
+    await seedInvoice({ customerId: customerB, number: "BK-OD20", amount: 40_000, dueOffset: -20 });
+    await seedInvoice({ customerId: customerB, number: "BK-OD40", amount: 50_000, dueOffset: -40 });
+    await seedInvoice({ customerId: customerB, number: "BK-OD99", amount: 60_000, dueOffset: -99 });
+    await seedInvoice({
+      customerId: customerB,
+      number: "BK-AED",
+      amount: 100_000,
+      currency: "AED",
+      dueOffset: -3,
+    });
+    // Overpaid: the clamp must stop this eating 2,500 off the AED total.
+    await seedInvoice({
+      customerId: customerB,
+      number: "BK-AED-OVER",
+      amount: 50_000,
+      paid: 52_500,
+      currency: "AED",
+      dueOffset: -3,
+      status: "paid",
+    });
+    // Not chased — must appear as a ROW but never in the money.
+    await seedInvoice({
+      customerId: customerA,
+      number: "BK-CANCELLED",
+      amount: 99_000,
+      dueOffset: -30,
+      status: "cancelled",
+    });
+    await seedInvoice({
+      customerId: customerA,
+      number: "BK-DRAFT",
+      amount: 88_000,
+      dueOffset: -30,
+      status: "draft",
+    });
+    // Part paid: chased, and only the BALANCE counts.
+    await seedInvoice({
+      customerId: customerA,
+      number: "BK-PART",
+      amount: 100_000,
+      paid: 60_000,
+      dueOffset: -5,
+      status: "partially_paid",
+    });
+  });
+
+  afterAll(async () => {
+    await app.close();
+    await owner.$disconnect();
+  });
+
+  function book(query = "", auth = token) {
+    return request(app.getHttpServer())
+      .get(`${url()}${query}`)
+      .set("Authorization", `Bearer ${auth}`);
+  }
+
+  it("returns invoices across EVERY client, most overdue first", async () => {
+    const response = await book().expect(200);
+    const numbers = response.body.rows.map((row: { invoiceNumber: string }) => row.invoiceNumber);
+    expect(numbers).toContain("BK-OD99");
+    expect(numbers).toContain("BK-AED");
+    // Both clients, which is the whole reason this endpoint exists.
+    const clients = new Set(
+      response.body.rows.map((row: { customer: { name: string } }) => row.customer.name),
+    );
+    expect(clients).toEqual(new Set(["Alpha Trading", "Beta Works"]));
+    // Oldest due date first: the top of the screen is what needs doing today.
+    expect(numbers[0]).toBe("BK-OD99");
+  });
+
+  it("carries the client and the reminder recipient on every row", async () => {
+    const response = await book("?search=BK-OD99").expect(200);
+    const row = response.body.rows[0];
+    expect(row.customer).toMatchObject({ name: "Beta Works" });
+    // No contact on these fixtures, so it is null rather than absent — the
+    // screen shows "nobody to email", which is a real state.
+    expect(row.contact).toBeNull();
+    expect(row.chaseBlockedReason).toBe("no_contact");
+  });
+
+  /**
+   * ⚠️ THE PAGING TRAP. `overdue` is derived per request from the org timezone
+   * and is deliberately not a column, so the obvious implementation filters in
+   * memory — which, with paging, asks the database for fifty rows and shows
+   * nine, with a total that disagrees with the page. The filter is a due-date
+   * range instead.
+   */
+  it("filters on a COMPUTED status in the database, so paging stays honest", async () => {
+    const response = await book("?status=overdue&limit=3").expect(200);
+    expect(response.body.rows).toHaveLength(3);
+    // Every returned row really is overdue...
+    for (const row of response.body.rows) {
+      expect(row.displayStatus).toBe("overdue");
+    }
+    // ...and the count is of everything matching, not of the page.
+    expect(response.body.totalCount).toBeGreaterThan(3);
+
+    const all = await book("?status=overdue&limit=200").expect(200);
+    expect(all.body.rows).toHaveLength(all.body.totalCount);
+  });
+
+  it("never counts an unchased invoice as overdue, however old", async () => {
+    // BK-CANCELLED and BK-DRAFT are both 30 days past their due date.
+    const response = await book("?status=overdue&limit=200").expect(200);
+    const numbers = response.body.rows.map((row: { invoiceNumber: string }) => row.invoiceNumber);
+    expect(numbers).not.toContain("BK-CANCELLED");
+    expect(numbers).not.toContain("BK-DRAFT");
+  });
+
+  it("filters due_today and due_soon without catching each other", async () => {
+    const today = await book("?status=due_today").expect(200);
+    expect(today.body.rows.map((r: { invoiceNumber: string }) => r.invoiceNumber)).toEqual([
+      "BK-TODAY",
+    ]);
+    const soon = await book("?status=due_soon").expect(200);
+    const soonNumbers = soon.body.rows.map((r: { invoiceNumber: string }) => r.invoiceNumber);
+    // Due in 5 days is NOT "soon" (the stage is 3), and today is its own state.
+    expect(soonNumbers).not.toContain("BK-TODAY");
+    expect(soonNumbers).not.toContain("BK-CURRENT");
+  });
+
+  it("puts each invoice in its ageing bucket, derived from the due date", async () => {
+    const response = await book("?limit=200").expect(200);
+    const bucketOf = (number: string) =>
+      response.body.rows.find((r: { invoiceNumber: string }) => r.invoiceNumber === number)
+        ?.ageingBucket;
+    expect(bucketOf("BK-CURRENT")).toBe("current");
+    // Due today is NOT late — the money is not overdue until the day is out.
+    expect(bucketOf("BK-TODAY")).toBe("current");
+    expect(bucketOf("BK-OD10")).toBe("days_1_15");
+    expect(bucketOf("BK-OD20")).toBe("days_16_30");
+    expect(bucketOf("BK-OD40")).toBe("days_31_45");
+    expect(bucketOf("BK-OD99")).toBe("days_over_45");
+  });
+
+  describe("what the organisation is owed, per currency", () => {
+    it("never adds one currency to another", async () => {
+      const response = await book().expect(200);
+      const codes = response.body.chasedByCurrency.map((c: { currency: string }) => c.currency);
+      expect(codes).toEqual(["AED", "GBP"]);
+    });
+
+    /**
+     * ⚠️ THE CLAMP, AND WHY THE TOTAL IS NOT `SUM(amount) - SUM(paid)`.
+     * Overpayment is allowed, so an invoice paid 2,500 over would quietly eat
+     * 2,500 off ANOTHER invoice's balance and understate what is owed. The
+     * clamp has to happen per row.
+     */
+    it("clamps each invoice at zero, so an overpayment cannot mask other debt", async () => {
+      const response = await book().expect(200);
+      const aed = response.body.chasedByCurrency.find(
+        (c: { currency: string }) => c.currency === "AED",
+      );
+      // Only BK-AED is chased (BK-AED-OVER is paid), so exactly its full amount.
+      expect(aed).toMatchObject({ currency: "AED", invoiceCount: 1, outstandingMinorUnits: 100_000 });
+    });
+
+    it("counts the BALANCE of a part-paid invoice, not its total", async () => {
+      const response = await book().expect(200);
+      const gbp = response.body.chasedByCurrency.find(
+        (c: { currency: string }) => c.currency === "GBP",
+      );
+      // 10,000 + 20,000 + 30,000 + 40,000 + 50,000 + 60,000 chased in full,
+      // plus BK-PART's balance of 40,000. Cancelled and draft are excluded.
+      expect(gbp.outstandingMinorUnits).toBe(250_000);
+      expect(gbp.invoiceCount).toBe(7);
+    });
+
+    it("excludes cancelled and draft invoices from the money entirely", async () => {
+      // They still appear as ROWS — nothing is hidden — but nobody is
+      // collecting them, so putting them in a total makes "what am I owed"
+      // wrong.
+      const response = await book("?limit=200").expect(200);
+      const numbers = response.body.rows.map((r: { invoiceNumber: string }) => r.invoiceNumber);
+      expect(numbers).toContain("BK-CANCELLED");
+      expect(numbers).toContain("BK-DRAFT");
+      const gbp = response.body.chasedByCurrency.find(
+        (c: { currency: string }) => c.currency === "GBP",
+      );
+      // Named explicitly rather than "less than": the total must be the chased
+      // 250,000 and NOT that plus the cancelled 99,000 and the draft 88,000.
+      expect(gbp.outstandingMinorUnits).toBe(250_000);
+      expect(gbp.outstandingMinorUnits).not.toBe(250_000 + 99_000 + 88_000);
+      // And the count is of chased invoices, not of the rows on screen.
+      expect(gbp.invoiceCount).toBeLessThan(numbers.length);
+    });
+  });
+
+  it("filters by currency and by client", async () => {
+    const aed = await book("?currency=aed").expect(200);
+    for (const row of aed.body.rows) expect(row.currency).toBe("AED");
+    const alpha = await book(`?customerId=${customerA}&limit=200`).expect(200);
+    for (const row of alpha.body.rows) expect(row.customer.id).toBe(customerA);
+  });
+
+  it("searches invoice numbers and client names", async () => {
+    const byNumber = await book("?search=BK-OD99").expect(200);
+    expect(byNumber.body.rows).toHaveLength(1);
+    const byClient = await book("?search=beta").expect(200);
+    expect(byClient.body.rows.length).toBeGreaterThan(1);
+    for (const row of byClient.body.rows) expect(row.customer.name).toBe("Beta Works");
+  });
+
+  it("pages, and caps a request that asks for the world", async () => {
+    const first = await book("?limit=2&offset=0").expect(200);
+    const second = await book("?limit=2&offset=2").expect(200);
+    expect(first.body.rows).toHaveLength(2);
+    const firstIds = first.body.rows.map((r: { id: string }) => r.id);
+    const secondIds = second.body.rows.map((r: { id: string }) => r.id);
+    expect(firstIds).not.toEqual(secondIds);
+    // An unbounded read is a query that works here and takes a server down on a
+    // real book.
+    const huge = await book("?limit=100000").expect(200);
+    expect(huge.body.rows.length).toBeLessThanOrEqual(200);
+  });
+
+  it("says when Eva is next due to chase, and stays silent about sends that have not happened", async () => {
+    /**
+     * ⚠️ `lastChasedOn` IS NULL FOR EVERYTHING UNTIL SLICE 1.7. Nothing sends
+     * yet, so no scheduled_action ever reaches `sent`. The column exists now so
+     * it fills in the day sending ships — a screen must not read the empty
+     * value as "never chased".
+     */
+    const invoice = await seedInvoice({
+      customerId: customerA,
+      number: `BK-SCHED-${randomUUID().slice(0, 6)}`,
+      amount: 1000,
+      dueOffset: 3,
+    });
+    const step = await owner.reminderStep.findFirst({ where: { organisationId: org.id } });
+    if (step) {
+      await owner.scheduledAction.create({
+        data: {
+          organisationId: org.id,
+          invoiceId: invoice.id,
+          reminderStepId: step.id,
+          actionType: "email",
+          scheduledDate: new Date(orgDate(1)),
+          status: "pending",
+          idempotencyKey: randomUUID(),
+        },
+      });
+      const response = await book(`?search=${invoice.invoiceNumber}`).expect(200);
+      expect(response.body.rows[0].nextChaseOn).not.toBeNull();
+      expect(response.body.rows[0].lastChasedOn).toBeNull();
+    }
+  });
+
+  it("rejects an unknown status filter rather than silently returning everything", async () => {
+    await book("?status=nonsense").expect(400);
+  });
+
+  it("is readable by read_only, and scoped to the caller's organisation", async () => {
+    await book("?limit=1", readOnlyToken).expect(200);
+    const other = await createOrgWithMembers(owner, "book-other", ["owner"]);
+    const otherToken = await signToken({
+      sub: other.members[0]!.authUserId,
+      email: other.members[0]!.email,
+    });
+    const response = await request(app.getHttpServer())
+      .get(`/organisations/${other.id}/invoices`)
+      .set("Authorization", `Bearer ${otherToken}`)
+      .expect(200);
+    // A different organisation's book is empty, not this one's.
+    expect(response.body.rows).toHaveLength(0);
+    expect(response.body.chasedByCurrency).toHaveLength(0);
+  });
+});
+
+/**
  * Recording a payment (slice 1.6c, tasks 5-7).
  *
  * ⚠️ WHAT THIS IS FOR. A debtor who owed 10,000 and paid 6,000 used to leave
