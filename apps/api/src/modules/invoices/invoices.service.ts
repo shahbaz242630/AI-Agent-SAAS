@@ -22,6 +22,8 @@ import { writeAuditLog } from "../../common/audit/audit-log.js";
 import type { AuthUser } from "../authentication/current-auth-user.decorator.js";
 import { deriveDisplayStatus, todayInTimezone } from "./invoice-status.js";
 import { transitionInvoiceStatus, type InvoiceAction } from "./invoice-state-machine.js";
+import { resolveChaseBlockedReason, type ChaseBlockedReason } from "./chase-blockers.js";
+import { normaliseSuppressionValue } from "../../common/suppression/suppression.js";
 import {
   cancelInvoiceReminders,
   recomputeInvoiceReminders,
@@ -61,6 +63,19 @@ export interface InvoiceSummary {
   status: string;
   /** Stored status, or due_soon/due_today/overdue derived for Active rows. */
   displayStatus: InvoiceDisplayStatus;
+  /**
+   * Why Eva could not email a reminder for this invoice, SETTING ITS STATUS
+   * ASIDE — null when nothing is in the way (slice 1.6c).
+   *
+   * Published because the screens had no way to know. They could see a missing
+   * recipient and nothing else, so an invoice whose contact had no email
+   * address, or who had asked not to be emailed, or whose organisation had no
+   * working mailbox, was scheduled nothing while the screen said "Eva will
+   * chase it". An invoice is actually being chased when it is Active AND this
+   * is null; the status is left out precisely so the Start chasing button can
+   * ask what would happen AFTER the status changes.
+   */
+  chaseBlockedReason: ChaseBlockedReason | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -80,7 +95,12 @@ type InvoiceRow = {
   status: string;
   createdAt: Date;
   updatedAt: Date;
+  /** Loaded with the invoice so the chase blockers cost no extra round trip. */
+  contact?: { deletedAt: Date | null; email: string | null } | null;
 };
+
+/** Every read of an invoice loads its contact — see `chaseBlockersFor`. */
+const WITH_CONTACT = { contact: { select: { deletedAt: true, email: true } } } as const;
 
 const DEFAULT_TIMEZONE = "Europe/London";
 
@@ -104,12 +124,15 @@ export class InvoicesService {
       await requirePermission(tx, organisationId, user.id, "invoices:read");
       await this.requireCustomer(tx, customerId);
       const timezone = await this.orgTimezone(tx, organisationId);
-      let summaries = (
-        await tx.invoice.findMany({
-          where: { customerId, deletedAt: null },
-          orderBy: [{ dueDate: "asc" }, { invoiceNumber: "asc" }],
-        })
-      ).map((row) => this.toSummary(row, timezone));
+      const rows = await tx.invoice.findMany({
+        where: { customerId, deletedAt: null },
+        orderBy: [{ dueDate: "asc" }, { invoiceNumber: "asc" }],
+        include: WITH_CONTACT,
+      });
+      const blockers = await this.chaseBlockersFor(tx, organisationId, rows);
+      let summaries = rows.map((row) =>
+        this.toSummary(row, timezone, blockers.get(row.id) ?? null),
+      );
       if (filters.status !== undefined) {
         const status = filters.status;
         const isStored = (INVOICE_STORED_STATUSES as readonly string[]).includes(status);
@@ -176,7 +199,11 @@ export class InvoicesService {
           actorUserId: user.id,
         });
       }
-      return this.toSummary(invoice, timezone);
+      return this.toSummary(
+        invoice,
+        timezone,
+        await this.chaseBlockerFor(tx, organisationId, invoice),
+      );
     });
   }
 
@@ -191,7 +218,12 @@ export class InvoicesService {
     return withTenant(this.prisma.db, { organisationId, userId: user.id }, async (tx) => {
       await requirePermission(tx, organisationId, user.id, "invoices:read");
       const timezone = await this.orgTimezone(tx, organisationId);
-      return this.toSummary(await this.findOrThrow(tx, customerId, invoiceId), timezone);
+      const invoice = await this.findOrThrow(tx, customerId, invoiceId);
+      return this.toSummary(
+        invoice,
+        timezone,
+        await this.chaseBlockerFor(tx, organisationId, invoice),
+      );
     });
   }
 
@@ -224,6 +256,7 @@ export class InvoicesService {
       }
       const invoice = await tx.invoice.update({
         where: { id: invoiceId },
+        include: WITH_CONTACT,
         data: {
           ...(input.invoiceNumber !== undefined ? { invoiceNumber: input.invoiceNumber } : {}),
           ...(input.amountMinorUnits !== undefined
@@ -248,7 +281,11 @@ export class InvoicesService {
         },
       });
       const timezone = await this.orgTimezone(tx, organisationId);
-      return this.toSummary(invoice, timezone);
+      return this.toSummary(
+        invoice,
+        timezone,
+        await this.chaseBlockerFor(tx, organisationId, invoice),
+      );
     });
   }
 
@@ -306,8 +343,15 @@ export class InvoicesService {
       });
       const timezone = await this.orgTimezone(tx, organisationId);
       await this.syncReminderSchedule(tx, organisationId, invoiceId, action, timezone, user.id);
-      const invoice = await tx.invoice.findUniqueOrThrow({ where: { id: invoiceId } });
-      return this.toSummary(invoice, timezone);
+      const invoice = await tx.invoice.findUniqueOrThrow({
+        where: { id: invoiceId },
+        include: WITH_CONTACT,
+      });
+      return this.toSummary(
+        invoice,
+        timezone,
+        await this.chaseBlockerFor(tx, organisationId, invoice),
+      );
     });
   }
 
@@ -413,7 +457,7 @@ export class InvoicesService {
     data: Prisma.InvoiceUncheckedCreateInput,
   ): Promise<InvoiceRow> {
     try {
-      return await tx.invoice.create({ data });
+      return await tx.invoice.create({ data, include: WITH_CONTACT });
     } catch (error) {
       if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
         throw new ConflictException(
@@ -422,6 +466,86 @@ export class InvoicesService {
       }
       throw error;
     }
+  }
+
+  /**
+   * Why Eva could not chase each of these invoices — keyed by invoice id.
+   *
+   * ⚠️ AT MOST TWO EXTRA QUERIES, WHATEVER THE LENGTH OF THE LIST, and that is
+   * the whole design. The obvious implementation calls `isSuppressed` and
+   * resolves a mailbox per row, which is a textbook N+1 — invisible against the
+   * demo book's fifteen invoices and ruinous on the org-wide list task 9 adds.
+   *
+   * The contact travels with the invoice (`WITH_CONTACT`), so most rows are
+   * decided with no query at all; only rows that survive that ask about
+   * suppression, and only rows that survive THAT ask whether the organisation
+   * has a mailbox at all.
+   */
+  private async chaseBlockersFor(
+    tx: TenantTx,
+    organisationId: string,
+    invoices: InvoiceRow[],
+  ): Promise<Map<string, ChaseBlockedReason | null>> {
+    const blockers = new Map<string, ChaseBlockedReason | null>();
+    const undecided: { id: string; email: string }[] = [];
+
+    for (const invoice of invoices) {
+      // Suppression and the mailbox are assumed CLEAR here on purpose: this
+      // pass only settles the reasons the loaded contact can answer by itself.
+      const reason = resolveChaseBlockedReason({
+        contact: invoice.contact ?? null,
+        suppressed: false,
+        organisationHasHealthyMailbox: true,
+      });
+      if (reason !== null) blockers.set(invoice.id, reason);
+      else undecided.push({ id: invoice.id, email: invoice.contact?.email ?? "" });
+    }
+
+    if (undecided.length === 0) return blockers;
+
+    const values = [
+      ...new Set(undecided.map((row) => normaliseSuppressionValue("email", row.email))),
+    ];
+    const suppressed = new Set(
+      (
+        await tx.suppressionEntry.findMany({
+          where: { organisationId, channel: "email", value: { in: values } },
+          select: { value: true },
+        })
+      ).map((row) => row.value),
+    );
+
+    const stillUndecided = undecided.filter((row) => {
+      if (suppressed.has(normaliseSuppressionValue("email", row.email))) {
+        blockers.set(row.id, "suppressed");
+        return false;
+      }
+      return true;
+    });
+    if (stillUndecided.length === 0) return blockers;
+
+    /**
+     * "Healthy" is defined here EXACTLY as `resolveSendingMailbox` defines it —
+     * live and `active` — because null from that resolver is what this is
+     * predicting. A looser definition here would promise a chase the sender
+     * then refuses, which is the defect one layer along.
+     */
+    const healthyMailboxes = await tx.emailAccount.count({
+      where: { deletedAt: null, healthStatus: "active" },
+    });
+    for (const row of stillUndecided) {
+      blockers.set(row.id, healthyMailboxes > 0 ? null : "no_mailbox");
+    }
+    return blockers;
+  }
+
+  /** The single-invoice case, so every caller returns the same shape. */
+  private async chaseBlockerFor(
+    tx: TenantTx,
+    organisationId: string,
+    invoice: InvoiceRow,
+  ): Promise<ChaseBlockedReason | null> {
+    return (await this.chaseBlockersFor(tx, organisationId, [invoice])).get(invoice.id) ?? null;
   }
 
   /** The org's business timezone (BRD 18.1); default Europe/London. */
@@ -437,6 +561,7 @@ export class InvoicesService {
   ): Promise<InvoiceRow> {
     const invoice = await tx.invoice.findFirst({
       where: { id: invoiceId, customerId, deletedAt: null },
+      include: WITH_CONTACT,
     });
     if (!invoice) throw new NotFoundException("Invoice not found");
     return invoice;
@@ -454,8 +579,13 @@ export class InvoicesService {
    * they existed. An explicit list means adding a column to the schema is no
    * longer the same act as publishing it.
    */
-  private toSummary(invoice: InvoiceRow, timezone: string): InvoiceSummary {
+  private toSummary(
+    invoice: InvoiceRow,
+    timezone: string,
+    chaseBlockedReason: ChaseBlockedReason | null,
+  ): InvoiceSummary {
     return {
+      chaseBlockedReason,
       id: invoice.id,
       customerId: invoice.customerId,
       contactId: invoice.contactId,

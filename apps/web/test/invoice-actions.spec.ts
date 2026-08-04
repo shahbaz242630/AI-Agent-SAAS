@@ -215,11 +215,12 @@ describe("createInvoice — what it says afterwards", () => {
     expect(state.success).toMatch(/won't be chased|not be chased/i);
   });
 
-  it("says an issued invoice WILL be chased, because that is the consequence", async () => {
+  it("says an issued invoice WILL be chased, and when it starts", async () => {
     const { createInvoice } = await import("../src/app/app/clients/[customerId]/invoices/actions");
     const state = await createInvoice({}, validForm({ status: "active" }));
     expect(sentBody().status).toBe("active");
-    expect(state.success).toMatch(/chase/i);
+    expect(state.success).toMatch(/chasing/i);
+    expect(state.success).toMatch(/three days before/i);
   });
 
   it("treats any unexpected status as a draft rather than starting a chase", async () => {
@@ -255,7 +256,11 @@ describe("createInvoice — what it says afterwards", () => {
      */
     const { createInvoice } = await import("../src/app/app/clients/[customerId]/invoices/actions");
     const state = await createInvoice({}, validForm({ status: "active" }));
-    expect(state.success).toMatch(/reminder schedule/i);
+    // Founder ruled 2026-08-04 that the pre-due nudge stays, so every screen
+    // has to say plainly that the client hears from Eva before the money is
+    // late — it is the one thing about the schedule a customer must not learn
+    // from their own client.
+    expect(state.success).toMatch(/three days before/i);
     expect(state.success).not.toMatch(/from its due date/i);
   });
 });
@@ -371,7 +376,9 @@ describe("runInvoiceAction — the four lifecycle buttons (task 4)", () => {
     );
     for (const action of ["activate", "pause", "resume", "cancel"]) {
       apiFetch.mockClear();
-      apiFetch.mockResolvedValue({ json: async () => ({ id: "inv-1", contactId: "contact-7" }) });
+      apiFetch.mockResolvedValue({
+        json: async () => ({ id: "inv-1", chaseBlockedReason: null }),
+      });
       const state = await runInvoiceAction({}, actionForm(action));
       expect(sentRequest()).toEqual({
         path: `/organisations/org-1/customers/cust-1/invoices/inv-1/${action}`,
@@ -388,16 +395,20 @@ describe("runInvoiceAction — the four lifecycle buttons (task 4)", () => {
    * field would mean the browser deciding what to claim about a chase — and the
    * page could be showing an invoice whose contact changed in another tab.
    */
-  it("says nothing will be sent when the API comes back with no recipient", async () => {
+  it("says nothing will be sent when the API reports a blocker", async () => {
     const { runInvoiceAction } = await import(
       "../src/app/app/clients/[customerId]/invoices/actions"
     );
     for (const action of ["activate", "resume"]) {
-      apiFetch.mockClear();
-      apiFetch.mockResolvedValue({ json: async () => ({ id: "inv-1", contactId: null }) });
-      const state = await runInvoiceAction({}, actionForm(action));
-      expect(state.success).toMatch(/nothing will be sent/i);
-      expect(state.success).not.toMatch(/reminder schedule/i);
+      for (const reason of ["no_contact", "no_email", "suppressed", "no_mailbox"]) {
+        apiFetch.mockClear();
+        apiFetch.mockResolvedValue({
+          json: async () => ({ id: "inv-1", chaseBlockedReason: reason }),
+        });
+        const state = await runInvoiceAction({}, actionForm(action));
+        expect(state.success).toMatch(/nothing will be sent/i);
+        expect(state.success).not.toMatch(/reminder schedule/i);
+      }
     }
   });
 

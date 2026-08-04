@@ -2,10 +2,12 @@ import { describe, expect, it } from "vitest";
 import type { InvoiceLifecycleAction } from "../src/lib/invoice-lifecycle";
 import {
   availableInvoiceActions,
+  chaseBlockedLine,
   invoiceActionConfirmLabel,
   invoiceActionConsequence,
   invoiceActionLabel,
   invoiceActionSuccess,
+  isBeingChased,
   isInvoiceActionIrreversible,
   isInvoiceLifecycleAction,
   storedStatusOf,
@@ -24,7 +26,10 @@ import {
 
 const ALL: InvoiceLifecycleAction[] = ["activate", "pause", "resume", "cancel"];
 
-const invoice = { invoiceNumber: "INV-1001", hasRecipient: true };
+const invoice = { invoiceNumber: "INV-1001", chaseBlockedReason: null };
+
+/** Every reason the API can send, so no branch is left to a single example. */
+const BLOCKERS = ["no_contact", "contact_deleted", "no_email", "suppressed", "no_mailbox"];
 
 describe("availableInvoiceActions — a mirror of the API's state machine", () => {
   it("offers exactly what the state machine allows from each stored status", () => {
@@ -96,7 +101,7 @@ describe("the consequence stated before the click", () => {
     // only safe while every sentence says which invoice it is about.
     for (const action of ALL) {
       expect(invoiceActionConsequence(action, invoice)).toContain("INV-1001");
-      expect(invoiceActionSuccess(action, "INV-1001", { hasRecipient: true })).toContain(
+      expect(invoiceActionSuccess(action, "INV-1001", { chaseBlockedReason: null })).toContain(
         "INV-1001",
       );
     }
@@ -136,35 +141,67 @@ describe("the consequence stated before the click", () => {
     expect(text).toMatch(/three days before/i);
   });
 
-  it("warns that starting a chase with no recipient chases nobody", () => {
+  it("warns that starting a chase will send nothing, for EVERY reason", () => {
     /**
-     * ⚠️ THE SILENT CASE. `checkReminderEligibility` refuses an invoice with no
-     * contact, so the transition succeeds, the badge says Active, and zero
-     * reminders are scheduled. Proven on 2026-08-04: INV-5002 activated with no
-     * contact and `scheduled_actions` stayed empty.
+     * ⚠️ THE SILENT CASES — five of them, and the first version of this code
+     * knew about one. The scheduler refuses an invoice with no contact, a
+     * removed contact, a contact with no email address, one who unsubscribed,
+     * or an organisation with no working mailbox. In every one the transition
+     * succeeds, the badge says Active, and zero reminders are written. Proven
+     * on 2026-08-04: INV-5002 activated with no contact and `scheduled_actions`
+     * stayed empty.
      *
      * ⚠️ RESUME TOO, not just activate. Both call the scheduler and both are
      * equally silent — treating this as an activation-only problem was the
      * first version's mistake.
      */
     for (const action of ["activate", "resume"] as const) {
-      const text = invoiceActionConsequence(action, {
-        invoiceNumber: "INV-1001",
-        hasRecipient: false,
-      });
-      expect(text).toMatch(/nobody set to receive reminders/i);
-      expect(text).toMatch(/nothing will be sent/i);
-      // And it must NOT be the cheerful version.
-      expect(text).not.toMatch(/will start chasing|fresh schedule/i);
+      for (const reason of BLOCKERS) {
+        const text = invoiceActionConsequence(action, {
+          invoiceNumber: "INV-1001",
+          chaseBlockedReason: reason,
+        });
+        expect(text).toMatch(/will not actually be chased/i);
+        expect(text).toMatch(/nothing will be sent/i);
+        // And it must NOT be the cheerful version.
+        expect(text).not.toMatch(/will start chasing|fresh schedule/i);
+      }
     }
   });
 
-  it("changes nothing about stopping a chase when there is no recipient", () => {
+  it("gives each reason its own words, so nobody is told the wrong thing to fix", () => {
+    const said = BLOCKERS.map((reason) =>
+      invoiceActionConsequence("activate", {
+        invoiceNumber: "INV-1001",
+        chaseBlockedReason: reason,
+      }),
+    );
+    expect(new Set(said).size).toBe(BLOCKERS.length);
+    expect(said[BLOCKERS.indexOf("no_email")]).toMatch(/no email address/i);
+    expect(said[BLOCKERS.indexOf("suppressed")]).toMatch(/asked not to be emailed/i);
+    expect(said[BLOCKERS.indexOf("no_mailbox")]).toMatch(/no working mailbox/i);
+  });
+
+  it("still says something true about a reason it has never heard of", () => {
+    // The web app can be older than the API it is talking to. Claiming all is
+    // well because we do not recognise the word is the failure that matters.
+    const text = invoiceActionConsequence("activate", {
+      invoiceNumber: "INV-1001",
+      chaseBlockedReason: "some_new_blocker",
+    });
+    expect(text).toMatch(/will not actually be chased/i);
+    expect(text).toMatch(/nothing will be sent/i);
+  });
+
+  it("changes nothing about stopping a chase when something is blocking it", () => {
     // Pausing and cancelling stop things; whether anyone was going to be
     // emailed does not change what they do.
     for (const action of ["pause", "cancel"] as const) {
       expect(
-        invoiceActionConsequence(action, { invoiceNumber: "INV-1001", hasRecipient: false }),
+        invoiceActionConsequence(action, {
+          invoiceNumber: "INV-1001",
+          chaseBlockedReason: "no_email",
+        }),
       ).toBe(invoiceActionConsequence(action, invoice));
     }
   });
@@ -182,20 +219,99 @@ describe("the consequence stated before the click", () => {
    */
   it("does not promise a chase afterwards that it warned would not happen", () => {
     for (const action of ["activate", "resume"] as const) {
-      const text = invoiceActionSuccess(action, "INV-1001", { hasRecipient: false });
-      expect(text).toMatch(/nobody set to receive reminders/i);
-      expect(text).toMatch(/nothing will be sent/i);
-      expect(text).not.toMatch(/reminder schedule|fresh schedule from today/i);
+      for (const reason of BLOCKERS) {
+        const text = invoiceActionSuccess(action, "INV-1001", { chaseBlockedReason: reason });
+        expect(text).toMatch(/nothing will be sent/i);
+        expect(text).not.toMatch(/reminder schedule|fresh schedule from today/i);
+      }
     }
   });
 
-  it("still says the cheerful thing when there IS somebody to email", () => {
-    expect(invoiceActionSuccess("activate", "INV-1001", { hasRecipient: true })).toMatch(
+  it("uses the SAME words before and after, so the two cannot disagree", () => {
+    // The defect was a warning and an outcome describing the same situation
+    // differently. One phrase table is what stops it coming back.
+    for (const reason of BLOCKERS) {
+      const before = invoiceActionConsequence("activate", {
+        invoiceNumber: "INV-1001",
+        chaseBlockedReason: reason,
+      });
+      const after = invoiceActionSuccess("activate", "INV-1001", { chaseBlockedReason: reason });
+      const phrase = chaseBlockedLine("active", reason)!
+        .replace(/^Eva can't chase this — /, "")
+        .slice(0, -1);
+      expect(before).toContain(phrase);
+      expect(after).toContain(phrase);
+    }
+  });
+
+  it("still says the cheerful thing when nothing is in the way", () => {
+    expect(invoiceActionSuccess("activate", "INV-1001", { chaseBlockedReason: null })).toMatch(
       /reminder schedule/i,
     );
-    expect(invoiceActionSuccess("resume", "INV-1001", { hasRecipient: true })).toMatch(
+    expect(invoiceActionSuccess("resume", "INV-1001", { chaseBlockedReason: null })).toMatch(
       /fresh schedule/i,
     );
+  });
+});
+
+describe("what the row says about whether Eva is chasing it", () => {
+  it("stays silent when nothing is wrong", () => {
+    expect(chaseBlockedLine("active", null)).toBeNull();
+  });
+
+  it("names every blocker in words a person can act on", () => {
+    for (const reason of BLOCKERS) {
+      const line = chaseBlockedLine("active", reason);
+      expect(line).toMatch(/^Eva can't chase this — /);
+      expect(line).toMatch(/\.$/);
+    }
+    expect(new Set(BLOCKERS.map((reason) => chaseBlockedLine("active", reason))).size).toBe(
+      BLOCKERS.length,
+    );
+  });
+
+  /**
+   * ⚠️ FOUND ON SCREEN, and only there. `chaseBlockedReason` sets the status
+   * aside, so an organisation with no mailbox reports `no_mailbox` on every
+   * invoice it has — and the row for a SETTLED invoice read "Paid · Eva can't
+   * chase this — no working mailbox is connected." Nobody wants to chase a paid
+   * invoice. Worse, a doc comment in the module already claimed this behaviour
+   * while the code did not have it.
+   */
+  it("says nothing on an invoice Eva was never going to chase", () => {
+    for (const resting of ["draft", "paused", "cancelled", "paid", "written_off"]) {
+      for (const reason of BLOCKERS) {
+        expect(chaseBlockedLine(resting, reason)).toBeNull();
+      }
+    }
+    // But an OVERDUE invoice is active, and is exactly where it must speak up.
+    for (const derived of ["active", "due_soon", "due_today", "overdue"]) {
+      expect(chaseBlockedLine(derived, "no_mailbox")).toMatch(/no working mailbox/);
+    }
+  });
+
+  /**
+   * ⚠️ BOTH HALVES, AND THIS IS THE ONE THAT FIXES THE CANCELLED-BALANCE
+   * DEFECT. The demo book's cancelled INV-1003 was showing £320.00 in the
+   * Outstanding column in the same weight as live debt, because the balance is
+   * amount minus paid and nothing asked whether anybody was collecting it.
+   */
+  it("counts an invoice as chased only when it is active AND unblocked", () => {
+    expect(isBeingChased("active", null)).toBe(true);
+    // The three derived statuses ARE active — an overdue invoice is the most
+    // chased thing there is.
+    for (const derived of ["due_soon", "due_today", "overdue"]) {
+      expect(isBeingChased(derived, null)).toBe(true);
+    }
+    // Not active: nobody is collecting it, whatever the balance says.
+    for (const resting of ["draft", "paused", "cancelled", "paid", "written_off"]) {
+      expect(isBeingChased(resting, null)).toBe(false);
+    }
+    // Active, but nothing can be sent.
+    for (const reason of BLOCKERS) {
+      expect(isBeingChased("active", reason)).toBe(false);
+      expect(isBeingChased("overdue", reason)).toBe(false);
+    }
   });
 });
 
@@ -219,7 +335,7 @@ describe("the labels", () => {
 
   it("never describes a cancelled invoice in words that could mean paid", () => {
     // Trap 7 again, this time in the outcome line.
-    const text = invoiceActionSuccess("cancel", "INV-1001", { hasRecipient: true });
+    const text = invoiceActionSuccess("cancel", "INV-1001", { chaseBlockedReason: null });
     expect(text).toMatch(/cancelled/i);
     expect(text).not.toMatch(/paid|settled|done|complete/i);
   });

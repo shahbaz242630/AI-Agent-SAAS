@@ -107,33 +107,106 @@ export function isInvoiceActionIrreversible(action: InvoiceLifecycleAction): boo
 }
 
 /**
- * The two actions that START a chase, and therefore need somebody to email.
+ * The two actions that START a chase, and therefore need a clear path to email.
  *
  * ⚠️ RESUME BELONGS HERE AS MUCH AS ACTIVATE. Both call the scheduler, both
- * schedule exactly zero reminders when the invoice has no contact, and both
- * report success either way. It was tempting to treat this as an "activating a
- * new invoice" problem — it is not; the same silence follows a resume.
+ * schedule exactly zero reminders when nothing can be sent, and both report
+ * success either way. It was tempting to treat this as an "activating a new
+ * invoice" problem — it is not; the same silence follows a resume.
  */
 function startsChasing(action: InvoiceLifecycleAction): boolean {
   return action === "activate" || action === "resume";
 }
 
 /**
+ * WHY Eva cannot email a reminder, as half a sentence.
+ *
+ * The API sends the reason (`chaseBlockedReason`) rather than a message,
+ * because the reasons are the SCHEDULER's own — `checkReminderEligibility`
+ * plus "no working mailbox" — and a screen that invented its own list would
+ * drift from the thing that actually decides. The words are ours; the facts
+ * are the server's.
+ *
+ * Written as a clause rather than a sentence so one phrase serves all three
+ * places it is needed: on the row, before the click, and afterwards. Three
+ * copies of "the contact has no email address" would eventually disagree.
+ */
+const BLOCKED_PHRASES: Readonly<Record<string, string>> = {
+  no_contact: "nobody is set to receive reminders",
+  contact_deleted: "the person it was addressed to has been removed",
+  no_email: "the contact has no email address",
+  suppressed: "that contact has asked not to be emailed",
+  no_mailbox: "no working mailbox is connected",
+};
+
+function blockedPhrase(reason: string | null): string | null {
+  if (reason === null) return null;
+  // An unknown reason still says something true. The web app can be older than
+  // the API it is talking to, and "Eva can't chase this" with no explanation is
+  // far better than silently claiming everything is fine.
+  return BLOCKED_PHRASES[reason] ?? "something is stopping it";
+}
+
+/**
+ * The line shown on an invoice row when Eva cannot chase it — null when there
+ * is nothing worth saying.
+ *
+ * ⚠️ IT NEEDS THE STATUS, AND THE FIRST VERSION DID NOT TAKE IT. Because
+ * `chaseBlockedReason` sets the invoice's own status aside, an organisation
+ * with no mailbox reports `no_mailbox` on EVERY invoice — so the row for a
+ * settled invoice read "Paid · Eva can't chase this — no working mailbox is
+ * connected." Nobody wants to chase a paid invoice. The warning is only worth
+ * making when the invoice's status says Eva is supposed to be chasing it;
+ * anywhere else the badge beside it has already explained why she is not.
+ *
+ * Seen on screen on 2026-08-04, one commit after a doc comment in this very
+ * file claimed the behaviour it did not implement.
+ */
+export function chaseBlockedLine(status: string, reason: string | null): string | null {
+  if (storedStatusOf(status) !== "active") return null;
+  const phrase = blockedPhrase(reason);
+  return phrase === null ? null : `Eva can't chase this — ${phrase}.`;
+}
+
+/**
+ * Is Eva actually chasing this invoice right now?
+ *
+ * BOTH halves are required, and this is the function that stops a screen
+ * implying otherwise: an invoice is chased when its status is Active AND
+ * nothing blocks the send. A cancelled invoice with a good contact is not being
+ * chased; nor is an active one whose contact has no email address.
+ *
+ * Used to decide whether an outstanding balance is money Eva is working on —
+ * which is why a CANCELLED invoice must not show its balance as though it were.
+ */
+export function isBeingChased(status: string, chaseBlockedReason: string | null): boolean {
+  return storedStatusOf(status) === "active" && chaseBlockedReason === null;
+}
+
+/**
  * What will happen, said BEFORE the click (the 1.6b disconnect precedent).
  *
- * `hasRecipient` changes the two chasing branches, because an invoice with
- * nobody to email is not chased at all: `checkReminderEligibility` refuses it
- * and the action schedules zero reminders. It still succeeds and still says
- * Active — so without this the screen would report a chase that was never going
- * to happen, which is the failure mode this project has shipped twice.
+ * `chaseBlockedReason` changes the two chasing branches, because an invoice
+ * nothing can be sent for is not chased at all: the scheduler refuses it and
+ * writes zero rows. It still succeeds and still says Active — so without this
+ * the screen would report a chase that was never going to happen, which is the
+ * failure mode this project has shipped twice.
+ *
+ * ⚠️ IT TOOK THE SERVER'S REASON, NOT A FLAG. The first version asked only
+ * "does it have a recipient", which is one of FIVE ways a chase silently does
+ * not happen — the others being a removed contact, a contact with no email
+ * address, one who asked not to be emailed, and an organisation with no working
+ * mailbox. In four of the five the screen said "Eva will chase it" and nothing
+ * was ever sent.
  */
 export function invoiceActionConsequence(
   action: InvoiceLifecycleAction,
-  invoice: { invoiceNumber: string; hasRecipient: boolean },
+  invoice: { invoiceNumber: string; chaseBlockedReason: string | null },
 ): string {
   const number = invoice.invoiceNumber;
-  if (startsChasing(action) && !invoice.hasRecipient) {
-    return `${number} has nobody set to receive reminders, so Eva has no one to email and will chase nothing. You can mark it active now and add a recipient later, but until you do, nothing will be sent.`;
+  const phrase = blockedPhrase(invoice.chaseBlockedReason);
+  if (startsChasing(action) && phrase !== null) {
+    return `${number} will not actually be chased — ${phrase}. You can start it now and put that right afterwards, but until you do, nothing will be sent.`;
   }
   switch (action) {
     case "activate":
@@ -158,8 +231,8 @@ export function invoiceActionConsequence(
 /**
  * What it says afterwards — stating the outcome, not "Done".
  *
- * ⚠️ `hasRecipient` IS NOT OPTIONAL DECORATION, and leaving it out produced a
- * defect on screen within a minute of the feature working. The confirm panel
+ * ⚠️ THE BLOCKED REASON IS NOT OPTIONAL DECORATION, and leaving it out produced
+ * a defect on screen within a minute of the feature working. The confirm panel
  * warned "nobody is set to receive reminders … nothing will be sent", the
  * activation succeeded, and this line then said "Eva will chase it on your
  * reminder schedule" — contradicting the warning we had just given, on an
@@ -176,10 +249,11 @@ export function invoiceActionSuccess(
   invoiceNumber: string,
   /* Required, with no default: a default would be a decision about somebody's
      customer being emailed, made by whoever forgot to pass it. */
-  invoice: { hasRecipient: boolean },
+  invoice: { chaseBlockedReason: string | null },
 ): string {
-  if (startsChasing(action) && !invoice.hasRecipient) {
-    return `${invoiceNumber} is active, but it still has nobody set to receive reminders — so nothing will be sent until you add one.`;
+  const phrase = blockedPhrase(invoice.chaseBlockedReason);
+  if (startsChasing(action) && phrase !== null) {
+    return `${invoiceNumber} is active, but nothing will be sent — ${phrase}.`;
   }
   switch (action) {
     case "activate":

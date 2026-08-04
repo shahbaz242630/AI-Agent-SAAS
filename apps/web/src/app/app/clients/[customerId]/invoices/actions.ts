@@ -174,12 +174,15 @@ export async function createInvoice(
    * ⚠️ NOT "from its due date", which is what this said until task 4 checked
    * it. The default sequence's first email goes THREE DAYS BEFORE the due date
    * (`DEFAULT_REMINDER_STEPS`), so that sentence promised the client would not
-   * hear from Eva until the money was late, and they will.
+   * hear from Eva until the money was late, and they will. Founder ruled on
+   * 2026-08-04 that the pre-due nudge STAYS — it is the most effective chaser
+   * there is, because it arrives before the client has done anything wrong — so
+   * every screen has to say plainly that it happens.
    */
   return {
     success:
       values.status === "active"
-        ? `Invoice ${values.invoiceNumber} added. Eva will chase it on your reminder schedule.`
+        ? `Invoice ${values.invoiceNumber} added. Eva starts chasing three days before it falls due.`
         : `Invoice ${values.invoiceNumber} saved as a draft. It won't be chased until you start it.`,
   };
 }
@@ -283,14 +286,14 @@ export async function runInvoiceAction(
   if (!accessToken) redirect("/sign-in");
 
   /**
-   * Whether anyone will actually be emailed — read from the API's OWN response
+   * Whether anything will actually be sent — read from the API's OWN response
    * to the transition, not from a hidden field on the form.
    *
-   * `activate` and `resume` schedule ZERO reminders when the invoice has no
-   * contact, and both still return 200. Saying "Eva will chase it" there
-   * contradicts the warning the confirm panel just gave, one click earlier.
+   * `activate` and `resume` schedule ZERO reminders whenever the scheduler
+   * refuses the invoice, and both still return 200. Saying "Eva will chase it"
+   * there contradicts the warning the confirm panel gave one click earlier.
    */
-  let hasRecipient = true;
+  let chaseBlockedReason: string | null = null;
 
   try {
     const response = await apiFetch(
@@ -299,13 +302,13 @@ export async function runInvoiceAction(
       { method: "POST" },
     );
     try {
-      const invoice = (await response.json()) as { contactId?: string | null };
-      hasRecipient = invoice.contactId != null;
+      const invoice = (await response.json()) as { chaseBlockedReason?: string | null };
+      chaseBlockedReason = invoice.chaseBlockedReason ?? null;
     } catch {
-      // The transition SUCCEEDED; only the body was unreadable. Assume a
-      // recipient rather than inventing an alarm about one — the cautious
-      // direction here is not to shout, because the action itself worked.
-      hasRecipient = true;
+      // The transition SUCCEEDED; only the body was unreadable. Claim no
+      // blocker rather than inventing an alarm — the cautious direction here is
+      // not to shout, because the action itself worked.
+      chaseBlockedReason = null;
     }
   } catch (error) {
     if (error instanceof ApiError && error.status === 401) redirect("/sign-in");
@@ -328,6 +331,6 @@ export async function runInvoiceAction(
 
   revalidatePath(`/app/clients/${customerId}/invoices`);
   return {
-    success: invoiceActionSuccess(action, invoiceNumber || "That invoice", { hasRecipient }),
+    success: invoiceActionSuccess(action, invoiceNumber || "That invoice", { chaseBlockedReason }),
   };
 }

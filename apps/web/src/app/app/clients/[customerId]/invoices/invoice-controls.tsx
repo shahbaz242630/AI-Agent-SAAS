@@ -3,9 +3,11 @@
 import { useActionState, useState } from "react";
 import {
   availableInvoiceActions,
+  chaseBlockedLine,
   invoiceActionConfirmLabel,
   invoiceActionConsequence,
   invoiceActionLabel,
+  isBeingChased,
   isInvoiceActionIrreversible,
   type InvoiceLifecycleAction,
 } from "@/lib/invoice-lifecycle";
@@ -89,6 +91,12 @@ export interface InvoiceRow {
   status: string;
   /** Stored status, or due_soon/due_today/overdue for Active rows. */
   displayStatus: string;
+  /**
+   * Why Eva could not email a reminder for this invoice, with its STATUS SET
+   * ASIDE — null when nothing is in the way. Derived by the API from the
+   * scheduler's own rules, so the screen cannot invent a different answer.
+   */
+  chaseBlockedReason: string | null;
 }
 
 function Feedback({ state }: { state: InvoiceActionState }) {
@@ -318,7 +326,7 @@ export function AddInvoiceForm({
             value="active"
             defaultChecked={sent?.status === "active"}
           />
-          Yes — Eva should chase it on your reminder schedule
+          Yes — Eva should chase it, starting three days before it falls due
         </label>
       </fieldset>
 
@@ -438,7 +446,23 @@ export function InvoiceTable({
                   {formatMoney(invoice.amountMinorUnits, invoice.currency)}
                 </td>
                 <td className="px-3 py-3 text-right whitespace-nowrap">
-                  <span className={invoice.outstandingMinorUnits > 0 ? "font-medium" : ""}>
+                  {/*
+                    ⚠️ BOLD ONLY WHEN EVA IS ACTUALLY CHASING IT. A cancelled
+                    invoice still has an arithmetic balance — amount minus paid —
+                    and the demo book's cancelled INV-1003 was showing £320.00 in
+                    the same weight as live debt under a column headed
+                    Outstanding. Nobody is collecting it. The number stays,
+                    because it is true; the emphasis goes, because the claim it
+                    was making was not.
+                  */}
+                  <span
+                    className={
+                      isBeingChased(invoice.status, invoice.chaseBlockedReason) &&
+                      invoice.outstandingMinorUnits > 0
+                        ? "font-medium"
+                        : "text-muted-foreground"
+                    }
+                  >
                     {formatMoney(invoice.outstandingMinorUnits, invoice.currency)}
                   </span>
                   {/* Shown only when part of it has actually been paid, so the
@@ -449,8 +473,22 @@ export function InvoiceTable({
                     </span>
                   )}
                 </td>
-                <td className="px-3 py-3 whitespace-nowrap">
+                <td className="px-3 py-3">
                   <StatusBadge status={invoice.displayStatus} />
+                  {/*
+                    ⚠️ THE LINE THIS PRODUCT WAS MISSING. A badge reading Active
+                    or Overdue states that Eva is on it. In five separate cases
+                    she is not — no recipient, a removed contact, a contact with
+                    no email address, one who unsubscribed, or no working mailbox
+                    — and until now every one of those looked identical to a
+                    healthy chase. Silent for Draft/Paused/Cancelled, where the
+                    badge beside it already explains itself.
+                  */}
+                  {chaseBlockedLine(invoice.status, invoice.chaseBlockedReason) && (
+                    <span className="mt-1 block max-w-[16rem] text-xs whitespace-normal text-danger">
+                      {chaseBlockedLine(invoice.status, invoice.chaseBlockedReason)}
+                    </span>
+                  )}
                 </td>
                 <td className="px-3 py-3">
                   <div className="flex flex-wrap gap-2">
@@ -556,7 +594,9 @@ function ConfirmLifecycle({
       <p className="text-sm">
         {invoiceActionConsequence(action, {
           invoiceNumber: invoice.invoiceNumber,
-          hasRecipient: invoice.contactId !== null,
+          // The API's answer, not "does it have a contact id" — that was one of
+          // five ways a chase goes silent, and the screen believed it was all.
+          chaseBlockedReason: invoice.chaseBlockedReason,
         })}
       </p>
       <div className="flex flex-wrap gap-2">

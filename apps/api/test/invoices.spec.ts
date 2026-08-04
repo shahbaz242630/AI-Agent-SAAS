@@ -1251,3 +1251,285 @@ describe("Invoices: reminder scheduling hooks (Slice 1.5 — plan §3 recompute 
     expect(await actionsOf(draftId)).toHaveLength(0);
   });
 });
+
+/**
+ * `chaseBlockedReason` — why Eva would not email a reminder (slice 1.6c).
+ *
+ * ⚠️ WHAT THIS IS DEFENDING. Before it, the screens could see exactly ONE of
+ * the ways a chase silently does not happen — a missing recipient — and said
+ * "Eva will chase it" in every other case. An invoice whose contact has no
+ * email address, or who asked not to be emailed, or whose organisation has no
+ * working mailbox, gets zero scheduled rows and reports success.
+ *
+ * Each case below therefore asserts the reason AND that nothing was scheduled,
+ * because a reason that disagrees with the scheduler is the same defect wearing
+ * a label.
+ */
+describe("Invoices: chaseBlockedReason (does Eva actually chase this?)", () => {
+  let app: INestApplication;
+  let owner: EvaPrismaClient;
+  /** Has a live, healthy mailbox — so only per-invoice reasons can fire. */
+  let org: FixtureOrg;
+  /** No mailbox at all, so nothing in it can ever be sent. */
+  let mailboxless: FixtureOrg;
+  let customerId: string;
+  let mailboxlessCustomerId: string;
+  let token: string;
+  let mailboxlessToken: string;
+  let ownerUserId: string;
+
+  const url = (orgId: string, custId: string) =>
+    `/organisations/${orgId}/customers/${custId}/invoices`;
+
+  beforeAll(async () => {
+    owner = createOwnerClient();
+    await seedTestDatabase(owner);
+    app = await createTestApp();
+
+    org = await createOrgWithMembers(owner, "chase-blockers", ["owner"]);
+    mailboxless = await createOrgWithMembers(owner, "chase-nomailbox", ["owner"]);
+    const member = org.members[0]!;
+    ownerUserId = member.id;
+    token = await signToken({ sub: member.authUserId, email: member.email });
+    const other = mailboxless.members[0]!;
+    mailboxlessToken = await signToken({ sub: other.authUserId, email: other.email });
+
+    await owner.emailAccount.create({
+      data: {
+        organisationId: org.id,
+        provider: "microsoft",
+        emailAddress: `chase-${randomUUID().slice(0, 8)}@example.com`,
+        isPrimary: true,
+      },
+    });
+
+    customerId = (
+      await owner.customer.create({
+        data: { id: randomUUID(), organisationId: org.id, name: "Chased Ltd", createdBy: member.id },
+      })
+    ).id;
+    mailboxlessCustomerId = (
+      await owner.customer.create({
+        data: {
+          id: randomUUID(),
+          organisationId: mailboxless.id,
+          name: "Unchased Ltd",
+          createdBy: other.id,
+        },
+      })
+    ).id;
+  });
+
+  afterAll(async () => {
+    await app.close();
+    await owner.$disconnect();
+  });
+
+  async function makeContact(overrides: { email?: string | null } = {}) {
+    return owner.contact.create({
+      data: {
+        id: randomUUID(),
+        organisationId: org.id,
+        customerId,
+        name: "Accounts",
+        email:
+          overrides.email === undefined
+            ? `ap-${randomUUID().slice(0, 8)}@example.com`
+            : overrides.email,
+        createdBy: ownerUserId,
+      },
+    });
+  }
+
+  async function raise(
+    body: Record<string, unknown>,
+    target = { orgId: org.id, custId: customerId, auth: token },
+  ) {
+    return request(app.getHttpServer())
+      .post(url(target.orgId, target.custId))
+      .set("Authorization", `Bearer ${target.auth}`)
+      .send({
+        invoiceNumber: `CB-${randomUUID().slice(0, 8)}`,
+        amountMinorUnits: 5000,
+        dueDate: orgDate(10),
+        status: "active",
+        ...body,
+      })
+      .expect(201);
+  }
+
+  /** How many reminder rows the invoice actually got. */
+  async function scheduledCount(invoiceId: string): Promise<number> {
+    return owner.scheduledAction.count({ where: { invoiceId } });
+  }
+
+  it("is null when Eva really will chase it, and rows are actually scheduled", async () => {
+    const contact = await makeContact();
+    const invoice = await raise({ contactId: contact.id });
+    expect(invoice.body.chaseBlockedReason).toBeNull();
+    expect(await scheduledCount(invoice.body.id)).toBeGreaterThan(0);
+  });
+
+  it("says no_contact, and schedules nothing", async () => {
+    const invoice = await raise({});
+    expect(invoice.body.chaseBlockedReason).toBe("no_contact");
+    expect(await scheduledCount(invoice.body.id)).toBe(0);
+  });
+
+  it("says no_email, and schedules nothing", async () => {
+    const contact = await makeContact({ email: null });
+    const invoice = await raise({ contactId: contact.id });
+    expect(invoice.body.chaseBlockedReason).toBe("no_email");
+    expect(await scheduledCount(invoice.body.id)).toBe(0);
+  });
+
+  it("says suppressed when the contact asked not to be emailed", async () => {
+    const contact = await makeContact();
+    await owner.suppressionEntry.create({
+      data: {
+        organisationId: org.id,
+        channel: "email",
+        value: contact.email!.toLowerCase(),
+        reason: "unsubscribed",
+      },
+    });
+    const invoice = await raise({ contactId: contact.id });
+    expect(invoice.body.chaseBlockedReason).toBe("suppressed");
+    expect(await scheduledCount(invoice.body.id)).toBe(0);
+  });
+
+  it("says contact_deleted when the recipient is removed AFTER the invoice", async () => {
+    /**
+     * ⚠️ THE ORDER HERE IS THE POINT, and the first version of this test got it
+     * wrong. Attaching an already-deleted contact is refused 400 — correctly.
+     * The reachable case is the real-world one: a live contact is chosen, the
+     * invoice starts being chased, and somebody removes the person months
+     * later. Soft-deleted contacts stay linked on `invoices.contact_id` (the
+     * 1.4 observation), so the invoice keeps pointing at a recipient who can no
+     * longer be emailed, and the chase goes quiet with nothing on screen to say
+     * so. That is exactly what this field is for.
+     */
+    const contact = await makeContact();
+    const invoice = await raise({ contactId: contact.id });
+    expect(invoice.body.chaseBlockedReason).toBeNull();
+
+    await owner.contact.update({ where: { id: contact.id }, data: { deletedAt: new Date() } });
+
+    const after = await request(app.getHttpServer())
+      .get(`${url(org.id, customerId)}/${invoice.body.id}`)
+      .set("Authorization", `Bearer ${token}`)
+      .expect(200);
+    expect(after.body.chaseBlockedReason).toBe("contact_deleted");
+  });
+
+  it("says no_mailbox when the organisation has nowhere to send from", async () => {
+    const contact = await owner.contact.create({
+      data: {
+        id: randomUUID(),
+        organisationId: mailboxless.id,
+        customerId: mailboxlessCustomerId,
+        name: "Accounts",
+        email: `ap-${randomUUID().slice(0, 8)}@example.com`,
+        createdBy: mailboxless.members[0]!.id,
+      },
+    });
+    const invoice = await raise(
+      { contactId: contact.id },
+      { orgId: mailboxless.id, custId: mailboxlessCustomerId, auth: mailboxlessToken },
+    );
+    expect(invoice.body.chaseBlockedReason).toBe("no_mailbox");
+  });
+
+  it("stops reporting no_mailbox once a mailbox is connected", async () => {
+    // Proves the reason is READ from the data rather than stamped once: the
+    // same invoice must change its answer when the organisation does.
+    const contact = await owner.contact.create({
+      data: {
+        id: randomUUID(),
+        organisationId: mailboxless.id,
+        customerId: mailboxlessCustomerId,
+        name: "Accounts Two",
+        email: `ap2-${randomUUID().slice(0, 8)}@example.com`,
+        createdBy: mailboxless.members[0]!.id,
+      },
+    });
+    const invoice = await raise(
+      { contactId: contact.id },
+      { orgId: mailboxless.id, custId: mailboxlessCustomerId, auth: mailboxlessToken },
+    );
+    expect(invoice.body.chaseBlockedReason).toBe("no_mailbox");
+
+    const account = await owner.emailAccount.create({
+      data: {
+        organisationId: mailboxless.id,
+        provider: "microsoft",
+        emailAddress: `late-${randomUUID().slice(0, 8)}@example.com`,
+        isPrimary: true,
+      },
+    });
+    const after = await request(app.getHttpServer())
+      .get(`${url(mailboxless.id, mailboxlessCustomerId)}/${invoice.body.id}`)
+      .set("Authorization", `Bearer ${mailboxlessToken}`)
+      .expect(200);
+    expect(after.body.chaseBlockedReason).toBeNull();
+
+    // An UNHEALTHY mailbox is not a mailbox: expiry must bring the block back,
+    // because `resolveSendingMailbox` would return null for it too.
+    await owner.emailAccount.update({
+      where: { id: account.id },
+      data: { healthStatus: "auth_expired" },
+    });
+    const expired = await request(app.getHttpServer())
+      .get(`${url(mailboxless.id, mailboxlessCustomerId)}/${invoice.body.id}`)
+      .set("Authorization", `Bearer ${mailboxlessToken}`)
+      .expect(200);
+    expect(expired.body.chaseBlockedReason).toBe("no_mailbox");
+
+    await owner.emailAccount.update({
+      where: { id: account.id },
+      data: { healthStatus: "active" },
+    });
+  });
+
+  /**
+   * ⚠️ THE STATUS IS SET ASIDE ON PURPOSE, and this is the test that pins it.
+   *
+   * A DRAFT with no recipient must report `no_contact`, not "it's a draft" —
+   * because the Start chasing button asks what will happen AFTER the status
+   * changes, and "it's a draft" is useless for predicting that. It is also what
+   * lets a cancelled invoice's row stay quiet: the badge already says
+   * Cancelled, so the reason field has nothing to add.
+   */
+  it("answers about the CONTACT even for a draft, so the button can predict", async () => {
+    const draft = await raise({ status: "draft" });
+    expect(draft.body.status).toBe("draft");
+    expect(draft.body.chaseBlockedReason).toBe("no_contact");
+
+    const good = await makeContact();
+    const ready = await raise({ status: "draft", contactId: good.id });
+    expect(ready.body.chaseBlockedReason).toBeNull();
+    // Still a draft, so nothing is scheduled yet — the reason is a forecast,
+    // not a claim that Eva is chasing it today.
+    expect(await scheduledCount(ready.body.id)).toBe(0);
+  });
+
+  it("reports the same reasons through the list as through a single read", async () => {
+    // The list computes them in a batch (two queries for any number of rows);
+    // a single read takes the same path with one invoice. They must not drift.
+    const list = await request(app.getHttpServer())
+      .get(url(org.id, customerId))
+      .set("Authorization", `Bearer ${token}`)
+      .expect(200);
+    expect(list.body.length).toBeGreaterThan(3);
+    for (const row of list.body) {
+      const one = await request(app.getHttpServer())
+        .get(`${url(org.id, customerId)}/${row.id}`)
+        .set("Authorization", `Bearer ${token}`)
+        .expect(200);
+      expect(one.body.chaseBlockedReason).toBe(row.chaseBlockedReason);
+    }
+    // And the batch must have produced more than one distinct answer, or this
+    // proves nothing about the batching.
+    expect(new Set(list.body.map((row: { chaseBlockedReason: string | null }) => row.chaseBlockedReason)).size).toBeGreaterThan(1);
+  });
+});
