@@ -1,4 +1,7 @@
-import { checkReminderEligibility, type IneligibilityReason } from "../reminders/reminder-eligibility.js";
+import {
+  checkReminderEligibility,
+  type IneligibilityReason,
+} from "../reminders/reminder-eligibility.js";
 
 /**
  * Why Eva would not email a reminder for this invoice (slice 1.6c).

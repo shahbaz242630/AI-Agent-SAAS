@@ -249,7 +249,10 @@ export default async function InvoiceBookPage({
               placeholder="Invoice number or client"
               className="rounded-[var(--radius-card)] border border-muted-foreground/20 px-3 py-1.5 text-xs"
             />
-            <button type="submit" className="rounded-[var(--radius-card)] bg-muted px-3 py-1.5 text-xs font-medium">
+            <button
+              type="submit"
+              className="rounded-[var(--radius-card)] bg-muted px-3 py-1.5 text-xs font-medium"
+            >
               Search
             </button>
           </form>
@@ -293,11 +296,13 @@ export default async function InvoiceBookPage({
         </section>
       )}
 
-
       {book.totalCount > PAGE_SIZE && (
         <nav className="flex w-full max-w-6xl items-center gap-3 text-sm">
           {page > 1 && (
-            <Link href={linkTo({ page: String(page - 1) })} className="font-medium text-primary hover:underline">
+            <Link
+              href={linkTo({ page: String(page - 1) })}
+              className="font-medium text-primary hover:underline"
+            >
               Previous
             </Link>
           )}
@@ -305,7 +310,10 @@ export default async function InvoiceBookPage({
             {`Page ${page} of ${Math.ceil(book.totalCount / PAGE_SIZE)}`}
           </span>
           {page * PAGE_SIZE < book.totalCount && (
-            <Link href={linkTo({ page: String(page + 1) })} className="font-medium text-primary hover:underline">
+            <Link
+              href={linkTo({ page: String(page + 1) })}
+              className="font-medium text-primary hover:underline"
+            >
               Next
             </Link>
           )}
@@ -320,7 +328,10 @@ function Shell({ children }: { children: React.ReactNode }) {
     <main className="flex flex-1 flex-col items-center gap-6 p-8">
       {children}
       <div className="flex gap-4">
-        <Link href="/app/clients" className="text-sm font-medium text-muted-foreground hover:underline">
+        <Link
+          href="/app/clients"
+          className="text-sm font-medium text-muted-foreground hover:underline"
+        >
           Clients
         </Link>
         <Link href="/app" className="text-sm font-medium text-muted-foreground hover:underline">

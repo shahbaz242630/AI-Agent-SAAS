@@ -332,8 +332,7 @@ export async function recordPayment(
   } catch (error) {
     if (error instanceof ApiError && error.status === 401) redirect("/sign-in");
     return {
-      error:
-        error instanceof ApiError ? error.message : "Something went wrong. Please try again.",
+      error: error instanceof ApiError ? error.message : "Something went wrong. Please try again.",
       amount,
     };
   }
@@ -432,8 +431,7 @@ export async function runInvoiceAction(
       };
     }
     return {
-      error:
-        error instanceof ApiError ? error.message : "Something went wrong. Please try again.",
+      error: error instanceof ApiError ? error.message : "Something went wrong. Please try again.",
     };
   }
 

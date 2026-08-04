@@ -81,7 +81,8 @@ export async function uploadImport(
   } catch (error) {
     if (error instanceof ApiError && error.status === 401) redirect("/sign-in");
     return {
-      error: error instanceof ApiError ? error.message : "We couldn't read that file. Please try again.",
+      error:
+        error instanceof ApiError ? error.message : "We couldn't read that file. Please try again.",
     };
   }
 
@@ -102,11 +103,9 @@ export async function confirmImport(
   if (!accessToken) redirect("/sign-in");
 
   try {
-    await apiFetch(
-      `/organisations/${organisationId}/imports/${importId}/confirm`,
-      accessToken,
-      { method: "POST" },
-    );
+    await apiFetch(`/organisations/${organisationId}/imports/${importId}/confirm`, accessToken, {
+      method: "POST",
+    });
   } catch (error) {
     if (error instanceof ApiError && error.status === 401) redirect("/sign-in");
     return {
@@ -138,11 +137,9 @@ export async function cancelImport(
   if (!accessToken) redirect("/sign-in");
 
   try {
-    await apiFetch(
-      `/organisations/${organisationId}/imports/${importId}/cancel`,
-      accessToken,
-      { method: "POST" },
-    );
+    await apiFetch(`/organisations/${organisationId}/imports/${importId}/cancel`, accessToken, {
+      method: "POST",
+    });
   } catch (error) {
     if (error instanceof ApiError && error.status === 401) redirect("/sign-in");
     return {

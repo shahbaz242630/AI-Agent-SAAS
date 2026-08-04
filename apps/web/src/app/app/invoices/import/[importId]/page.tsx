@@ -124,15 +124,18 @@ export default async function ImportPreviewPage({
           <h2 className="text-sm font-medium">How your columns were read</h2>
           <ul className="flex flex-wrap gap-2">
             {mappedColumns.map(([column, field]) => (
-              <li key={column} className="rounded-[var(--radius-card)] bg-background px-3 py-1 text-xs">
+              <li
+                key={column}
+                className="rounded-[var(--radius-card)] bg-background px-3 py-1 text-xs"
+              >
                 {`${column} → ${importFieldLabel(field)}`}
               </li>
             ))}
           </ul>
           {!done && (
             <p className="text-xs text-muted-foreground">
-              If any of these are wrong, discard the file and upload it again with clearer
-              headings — nothing has been created yet.
+              If any of these are wrong, discard the file and upload it again with clearer headings
+              — nothing has been created yet.
             </p>
           )}
         </section>

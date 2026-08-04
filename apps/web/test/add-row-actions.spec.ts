@@ -143,10 +143,7 @@ describe("refusals that never reach the API", () => {
 
   it("refuses an invoice due before it was raised", async () => {
     const { addBookRow } = await import("../src/app/app/invoices/add-row-actions");
-    const state = await addBookRow(
-      {},
-      form({ issueDate: "2026-10-01", dueDate: "2026-09-30" }),
-    );
+    const state = await addBookRow({}, form({ issueDate: "2026-10-01", dueDate: "2026-09-30" }));
     expect(state.error).toMatch(/due date/i);
   });
 

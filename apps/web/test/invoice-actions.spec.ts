@@ -325,17 +325,15 @@ describe("updateInvoice — editing a draft (task 4)", () => {
     it("clears it with an explicit null when the picker offered 'nobody'", async () => {
       // Absent means "leave alone" on a PATCH, so "nobody" has to be said out
       // loud or picking the wrong person would be permanent.
-      const { updateInvoice } = await import(
-        "../src/app/app/clients/[customerId]/invoices/actions"
-      );
+      const { updateInvoice } =
+        await import("../src/app/app/clients/[customerId]/invoices/actions");
       await updateInvoice({}, editForm({ contactPicker: "on", contactId: "" }));
       expect(sentBody().contactId).toBeNull();
     });
 
     it("sends the chosen contact", async () => {
-      const { updateInvoice } = await import(
-        "../src/app/app/clients/[customerId]/invoices/actions"
-      );
+      const { updateInvoice } =
+        await import("../src/app/app/clients/[customerId]/invoices/actions");
       await updateInvoice({}, editForm({ contactPicker: "on", contactId: "contact-7" }));
       expect(sentBody().contactId).toBe("contact-7");
     });
@@ -347,9 +345,8 @@ describe("updateInvoice — editing a draft (task 4)", () => {
      * an amount and delete the reminder recipient without being told.
      */
     it("leaves it alone entirely when the form never offered the picker", async () => {
-      const { updateInvoice } = await import(
-        "../src/app/app/clients/[customerId]/invoices/actions"
-      );
+      const { updateInvoice } =
+        await import("../src/app/app/clients/[customerId]/invoices/actions");
       await updateInvoice({}, editForm());
       expect(sentBody()).not.toHaveProperty("contactId");
     });
@@ -412,7 +409,9 @@ describe("recordPayment — the money that reaches the API (task 6)", () => {
 
   it("refuses zero and negative payments before the API sees them", async () => {
     const { recordPayment } = await import("../src/app/app/clients/[customerId]/invoices/actions");
-    expect((await recordPayment({}, paymentForm({ amount: "0" }))).error).toMatch(/more than zero/i);
+    expect((await recordPayment({}, paymentForm({ amount: "0" }))).error).toMatch(
+      /more than zero/i,
+    );
     expect((await recordPayment({}, paymentForm({ amount: "-50" }))).error).toMatch(/positive/i);
     expect(apiFetch).not.toHaveBeenCalled();
   });
@@ -496,9 +495,8 @@ describe("runInvoiceAction — the four lifecycle buttons (task 4)", () => {
   }
 
   it("POSTs to the action's own endpoint, never a status update", async () => {
-    const { runInvoiceAction } = await import(
-      "../src/app/app/clients/[customerId]/invoices/actions"
-    );
+    const { runInvoiceAction } =
+      await import("../src/app/app/clients/[customerId]/invoices/actions");
     for (const action of ["activate", "pause", "resume", "cancel"]) {
       apiFetch.mockClear();
       apiFetch.mockResolvedValue({
@@ -521,9 +519,8 @@ describe("runInvoiceAction — the four lifecycle buttons (task 4)", () => {
    * page could be showing an invoice whose contact changed in another tab.
    */
   it("says nothing will be sent when the API reports a blocker", async () => {
-    const { runInvoiceAction } = await import(
-      "../src/app/app/clients/[customerId]/invoices/actions"
-    );
+    const { runInvoiceAction } =
+      await import("../src/app/app/clients/[customerId]/invoices/actions");
     for (const action of ["activate", "resume"]) {
       for (const reason of ["no_contact", "no_email", "suppressed", "no_mailbox"]) {
         apiFetch.mockClear();
@@ -546,9 +543,8 @@ describe("runInvoiceAction — the four lifecycle buttons (task 4)", () => {
         throw new Error("not json");
       },
     });
-    const { runInvoiceAction } = await import(
-      "../src/app/app/clients/[customerId]/invoices/actions"
-    );
+    const { runInvoiceAction } =
+      await import("../src/app/app/clients/[customerId]/invoices/actions");
     const state = await runInvoiceAction({}, actionForm("activate"));
     expect(state.success).toMatch(/reminder schedule/i);
   });
@@ -560,9 +556,8 @@ describe("runInvoiceAction — the four lifecycle buttons (task 4)", () => {
    * out of unchecked input in the first place.
    */
   it("refuses an action it does not recognise, without calling the API", async () => {
-    const { runInvoiceAction } = await import(
-      "../src/app/app/clients/[customerId]/invoices/actions"
-    );
+    const { runInvoiceAction } =
+      await import("../src/app/app/clients/[customerId]/invoices/actions");
     for (const bogus of ["", "delete", "../../../organisations", "pay"]) {
       apiFetch.mockClear();
       const state = await runInvoiceAction({}, actionForm(bogus));
@@ -579,12 +574,9 @@ describe("runInvoiceAction — the four lifecycle buttons (task 4)", () => {
      * in another tab.
      */
     const { ApiError } = await import("../src/lib/api");
-    apiFetch.mockRejectedValueOnce(
-      new ApiError("Invoice cannot 'pause' from status 'draft'", 409),
-    );
-    const { runInvoiceAction } = await import(
-      "../src/app/app/clients/[customerId]/invoices/actions"
-    );
+    apiFetch.mockRejectedValueOnce(new ApiError("Invoice cannot 'pause' from status 'draft'", 409));
+    const { runInvoiceAction } =
+      await import("../src/app/app/clients/[customerId]/invoices/actions");
     const state = await runInvoiceAction({}, actionForm("pause"));
     expect(state.error).toMatch(/already changed/i);
     expect(state.error).toMatch(/refresh/i);
@@ -597,9 +589,8 @@ describe("runInvoiceAction — the four lifecycle buttons (task 4)", () => {
     // exactly what somebody needs to be told.
     const { ApiError } = await import("../src/lib/api");
     apiFetch.mockRejectedValueOnce(new ApiError("Module not entitled", 402));
-    const { runInvoiceAction } = await import(
-      "../src/app/app/clients/[customerId]/invoices/actions"
-    );
+    const { runInvoiceAction } =
+      await import("../src/app/app/clients/[customerId]/invoices/actions");
     const state = await runInvoiceAction({}, actionForm("cancel"));
     expect(state.error).toBe("Module not entitled");
   });

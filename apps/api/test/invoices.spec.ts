@@ -1370,7 +1370,12 @@ describe("Invoices: the organisation-wide book", () => {
 
     // A deliberately awkward book: two clients, three currencies, every ageing
     // bucket, an overpayment, and rows that must NOT be counted as owed.
-    await seedInvoice({ customerId: customerA, number: "BK-CURRENT", amount: 10_000, dueOffset: 5 });
+    await seedInvoice({
+      customerId: customerA,
+      number: "BK-CURRENT",
+      amount: 10_000,
+      dueOffset: 5,
+    });
     await seedInvoice({ customerId: customerA, number: "BK-TODAY", amount: 20_000, dueOffset: 0 });
     await seedInvoice({ customerId: customerA, number: "BK-OD10", amount: 30_000, dueOffset: -10 });
     await seedInvoice({ customerId: customerB, number: "BK-OD20", amount: 40_000, dueOffset: -20 });
@@ -1528,7 +1533,11 @@ describe("Invoices: the organisation-wide book", () => {
         (c: { currency: string }) => c.currency === "AED",
       );
       // Only BK-AED is chased (BK-AED-OVER is paid), so exactly its full amount.
-      expect(aed).toMatchObject({ currency: "AED", invoiceCount: 1, outstandingMinorUnits: 100_000 });
+      expect(aed).toMatchObject({
+        currency: "AED",
+        invoiceCount: 1,
+        outstandingMinorUnits: 100_000,
+      });
     });
 
     it("counts the BALANCE of a part-paid invoice, not its total", async () => {
@@ -2105,7 +2114,12 @@ describe("Invoices: chaseBlockedReason (does Eva actually chase this?)", () => {
 
     customerId = (
       await owner.customer.create({
-        data: { id: randomUUID(), organisationId: org.id, name: "Chased Ltd", createdBy: member.id },
+        data: {
+          id: randomUUID(),
+          organisationId: org.id,
+          name: "Chased Ltd",
+          createdBy: member.id,
+        },
       })
     ).id;
     mailboxlessCustomerId = (
@@ -2330,6 +2344,9 @@ describe("Invoices: chaseBlockedReason (does Eva actually chase this?)", () => {
     }
     // And the batch must have produced more than one distinct answer, or this
     // proves nothing about the batching.
-    expect(new Set(list.body.map((row: { chaseBlockedReason: string | null }) => row.chaseBlockedReason)).size).toBeGreaterThan(1);
+    expect(
+      new Set(list.body.map((row: { chaseBlockedReason: string | null }) => row.chaseBlockedReason))
+        .size,
+    ).toBeGreaterThan(1);
   });
 });

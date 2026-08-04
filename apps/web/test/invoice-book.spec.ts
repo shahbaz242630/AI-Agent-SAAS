@@ -84,7 +84,11 @@ describe("the money at the top of the book", () => {
   });
 
   it("says nothing is outstanding rather than showing a zero", () => {
-    const line = bookTotalLine({ currency: "AED", formattedOutstanding: "AED 0.00", invoiceCount: 0 });
+    const line = bookTotalLine({
+      currency: "AED",
+      formattedOutstanding: "AED 0.00",
+      invoiceCount: 0,
+    });
     expect(line).toMatch(/nothing outstanding in AED/i);
     expect(line).not.toContain("0 invoices");
   });

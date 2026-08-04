@@ -309,9 +309,7 @@ export class InvoicesService {
       const where = {
         deletedAt: null,
         ...(filters.customerId !== undefined ? { customerId: filters.customerId } : {}),
-        ...(filters.currency !== undefined
-          ? { currency: filters.currency.toUpperCase() }
-          : {}),
+        ...(filters.currency !== undefined ? { currency: filters.currency.toUpperCase() } : {}),
         ...(dueDateFilter !== null
           ? // A computed status always means the invoice is being CHASED — the
             // derivation never applies to anything else.

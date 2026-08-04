@@ -16,8 +16,7 @@ import { addBookRow, type AddRowState } from "./add-row-actions";
  * everything — including the field being complained about.
  */
 
-const FIELD =
-  "rounded-[var(--radius-card)] border border-muted-foreground/20 px-3 py-2 text-sm";
+const FIELD = "rounded-[var(--radius-card)] border border-muted-foreground/20 px-3 py-2 text-sm";
 const LABEL = "flex flex-col gap-1 text-sm";
 
 const CURRENCIES = [
@@ -59,7 +58,10 @@ export function AddRowForm({ organisationId }: { organisationId: string }) {
   }
 
   return (
-    <form action={action} className="flex w-full max-w-6xl flex-col gap-3 rounded-[var(--radius-card)] bg-muted px-6 py-5">
+    <form
+      action={action}
+      className="flex w-full max-w-6xl flex-col gap-3 rounded-[var(--radius-card)] bg-muted px-6 py-5"
+    >
       <input type="hidden" name="organisationId" value={organisationId} />
       <p className="text-sm font-medium">A client and their invoice, in one go</p>
 
@@ -183,11 +185,21 @@ export function AddRowForm({ organisationId }: { organisationId: string }) {
       <fieldset className="flex flex-col gap-2">
         <legend className="text-sm font-medium">Should Eva chase this one?</legend>
         <label className="flex items-center gap-2 text-sm">
-          <input type="radio" name="status" value="draft" defaultChecked={sent?.status !== "active"} />
+          <input
+            type="radio"
+            name="status"
+            value="draft"
+            defaultChecked={sent?.status !== "active"}
+          />
           Not yet — save it as a draft
         </label>
         <label className="flex items-center gap-2 text-sm">
-          <input type="radio" name="status" value="active" defaultChecked={sent?.status === "active"} />
+          <input
+            type="radio"
+            name="status"
+            value="active"
+            defaultChecked={sent?.status === "active"}
+          />
           Yes — starting three days before it falls due
         </label>
       </fieldset>

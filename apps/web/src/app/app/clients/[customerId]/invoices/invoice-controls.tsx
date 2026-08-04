@@ -653,12 +653,7 @@ function ConfirmLifecycle({
             {pending ? "Working…" : invoiceActionConfirmLabel(action)}
           </button>
         </form>
-        <button
-          type="button"
-          onClick={onDismiss}
-          disabled={pending}
-          className={SMALL_BUTTON_CLASS}
-        >
+        <button type="button" onClick={onDismiss} disabled={pending} className={SMALL_BUTTON_CLASS}>
           Leave it as it is
         </button>
       </div>
@@ -731,7 +726,12 @@ function RecordPaymentForm({
 
         <label className={LABEL_CLASS}>
           Date received
-          <input name="paidAt" type="date" defaultValue={dateInputValue(new Date())} className={FIELD_CLASS} />
+          <input
+            name="paidAt"
+            type="date"
+            defaultValue={dateInputValue(new Date())}
+            className={FIELD_CLASS}
+          />
           <span className="text-xs text-muted-foreground">
             Used to work out how long this client takes to pay.
           </span>

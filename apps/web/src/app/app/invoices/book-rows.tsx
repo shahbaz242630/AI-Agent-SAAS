@@ -20,7 +20,11 @@ import {
   isInvoiceActionIrreversible,
   type InvoiceLifecycleAction,
 } from "@/lib/invoice-lifecycle";
-import { invoiceStatusLabel, invoiceStatusTone, type InvoiceStatusTone } from "@/lib/invoice-status";
+import {
+  invoiceStatusLabel,
+  invoiceStatusTone,
+  type InvoiceStatusTone,
+} from "@/lib/invoice-status";
 import { amountInputValue, dateInputValue, formatDueDate, formatMoney } from "@/lib/money";
 
 /**
@@ -68,13 +72,7 @@ type OpenPanel =
   | { kind: "payment"; invoiceId: string }
   | null;
 
-export function BookRows({
-  organisationId,
-  rows,
-}: {
-  organisationId: string;
-  rows: BookRow[];
-}) {
+export function BookRows({ organisationId, rows }: { organisationId: string; rows: BookRow[] }) {
   const [panel, setPanel] = useState<OpenPanel>(null);
   /**
    * ONE action state for every lifecycle button in the table, held here so the
@@ -169,7 +167,9 @@ export function BookRows({
                     working on. */}
                 <span
                   className={
-                    chased && row.outstandingMinorUnits > 0 ? "font-medium" : "text-muted-foreground"
+                    chased && row.outstandingMinorUnits > 0
+                      ? "font-medium"
+                      : "text-muted-foreground"
                   }
                 >
                   {formatMoney(row.outstandingMinorUnits, row.currency)}
