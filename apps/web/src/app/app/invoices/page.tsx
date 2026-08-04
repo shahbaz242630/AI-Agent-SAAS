@@ -2,18 +2,15 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { ApiError, apiFetch } from "@/lib/api";
 import {
-  ageingBucketLabel,
   bookFilterLine,
   bookTotalLine,
-  chaseTimingLine,
   defaultBookCurrency,
   otherCurrenciesLine,
 } from "@/lib/invoice-book";
-import { chaseBlockedLine, isBeingChased } from "@/lib/invoice-lifecycle";
-import { invoiceStatusLabel, invoiceStatusTone, type InvoiceStatusTone } from "@/lib/invoice-status";
-import { formatDueDate, formatMoney } from "@/lib/money";
+import { formatMoney } from "@/lib/money";
 import { createClient } from "@/lib/supabase/server";
 import { AddRowForm } from "./add-row-form";
+import { BookRows, type BookRow } from "./book-rows";
 
 /**
  * The whole book — every client's invoices on one screen (slice 1.6c, task 9).
@@ -36,25 +33,6 @@ const PAGE_SIZE = 50;
 interface OrganisationSummary {
   id: string;
   name: string;
-}
-
-interface BookRow {
-  id: string;
-  invoiceNumber: string;
-  description: string | null;
-  amountMinorUnits: number;
-  amountPaidMinorUnits: number;
-  outstandingMinorUnits: number;
-  currency: string;
-  dueDate: string;
-  status: string;
-  displayStatus: string;
-  chaseBlockedReason: string | null;
-  ageingBucket: string;
-  lastChasedOn: string | null;
-  nextChaseOn: string | null;
-  customer: { id: string; name: string; reference: string | null };
-  contact: { id: string; name: string; email: string | null; phone: string | null } | null;
 }
 
 interface Book {
@@ -299,97 +277,22 @@ export default async function InvoiceBookPage({
                 <th className="px-3 py-2 text-right font-medium">Outstanding</th>
                 <th className="px-3 py-2 font-medium">Status</th>
                 <th className="px-3 py-2 font-medium">Chasing</th>
+                <th className="px-3 py-2 font-medium">
+                  <span className="sr-only">Actions</span>
+                </th>
               </tr>
             </thead>
             <tbody>
-              {book.rows.map((row) => {
-                const chased = isBeingChased(row.status, row.chaseBlockedReason);
-                return (
-                  <tr key={row.id} className="border-b border-muted/50 align-top">
-                    <td className="px-3 py-3">
-                      <Link
-                        href={`/app/clients/${row.customer.id}/invoices`}
-                        className="font-medium text-primary hover:underline"
-                      >
-                        {row.customer.name}
-                      </Link>
-                      {/* Who Eva actually writes to — the reason this column is
-                          the contact's address and not the client record's. */}
-                      {row.contact?.email && (
-                        <span className="block text-xs text-muted-foreground">
-                          {row.contact.email}
-                        </span>
-                      )}
-                      {row.contact?.phone && (
-                        <span className="block text-xs text-muted-foreground">
-                          {row.contact.phone}
-                        </span>
-                      )}
-                    </td>
-                    <td className="px-3 py-3">
-                      <span className="font-medium">{row.invoiceNumber}</span>
-                      {row.description && (
-                        <span className="block text-xs text-muted-foreground">
-                          {row.description}
-                        </span>
-                      )}
-                    </td>
-                    <td className="px-3 py-3 whitespace-nowrap">
-                      {formatDueDate(row.dueDate)}
-                      <span className="block text-xs text-muted-foreground">
-                        {ageingBucketLabel(row.ageingBucket)}
-                      </span>
-                    </td>
-                    <td className="px-3 py-3 text-right whitespace-nowrap">
-                      {formatMoney(row.amountMinorUnits, row.currency)}
-                    </td>
-                    <td className="px-3 py-3 text-right whitespace-nowrap">
-                      {/* Bold only when Eva is really collecting it — a
-                          cancelled invoice's arithmetic balance is not money
-                          anybody is working on. */}
-                      <span
-                        className={
-                          chased && row.outstandingMinorUnits > 0
-                            ? "font-medium"
-                            : "text-muted-foreground"
-                        }
-                      >
-                        {formatMoney(row.outstandingMinorUnits, row.currency)}
-                      </span>
-                      {row.amountPaidMinorUnits > 0 && (
-                        <span className="block text-xs text-muted-foreground">
-                          {`${formatMoney(row.amountPaidMinorUnits, row.currency)} paid`}
-                        </span>
-                      )}
-                    </td>
-                    <td className="px-3 py-3">
-                      <StatusBadge status={row.displayStatus} />
-                      {chaseBlockedLine(row.status, row.chaseBlockedReason) && (
-                        <span className="mt-1 block max-w-[14rem] text-xs whitespace-normal text-danger">
-                          {chaseBlockedLine(row.status, row.chaseBlockedReason)}
-                        </span>
-                      )}
-                    </td>
-                    <td className="px-3 py-3 text-xs whitespace-nowrap text-muted-foreground">
-                      {chaseTimingLine({
-                        isChased: chased,
-                        lastChasedOn: row.lastChasedOn,
-                        nextChaseOn: row.nextChaseOn,
-                        formatDate: (value) => formatDueDate(value),
-                      })}
-                    </td>
-                  </tr>
-                );
-              })}
+              {/* Rows are a client component because acting on one — paying it,
+                  pausing it, cancelling it — opens a panel underneath, and the
+                  rules and words for all of that come from
+                  `lib/invoice-lifecycle.ts` rather than being restated here. */}
+              <BookRows organisationId={organisation.id} rows={book.rows} />
             </tbody>
           </table>
-          {/*
-            ⚠️ NO TOTAL ROW HERE EITHER (trap 3b). The money is stated once, in
-            one currency, at the top. A column footer would have to add AED to
-            GBP to fill itself in.
-          */}
         </section>
       )}
+
 
       {book.totalCount > PAGE_SIZE && (
         <nav className="flex w-full max-w-6xl items-center gap-3 text-sm">
@@ -409,29 +312,6 @@ export default async function InvoiceBookPage({
         </nav>
       )}
     </Shell>
-  );
-}
-
-/**
- * ⚠️ ONLY TOKENS THAT EXIST IN `packages/design-system/tokens.css` — there is
- * no `destructive`, the palette calls it `danger`, and an unknown Tailwind
- * class produces no CSS and no error anywhere.
- */
-const TONE_CLASSES: Record<InvoiceStatusTone, string> = {
-  urgent: "bg-danger/10 text-danger",
-  attention: "bg-warning/10 text-warning",
-  positive: "bg-success/10 text-success",
-  neutral: "bg-muted text-foreground",
-  muted: "bg-muted text-muted-foreground",
-};
-
-function StatusBadge({ status }: { status: string }) {
-  return (
-    <span
-      className={`inline-block rounded-[var(--radius-card)] px-2 py-1 text-xs font-medium ${TONE_CLASSES[invoiceStatusTone(status)]}`}
-    >
-      {invoiceStatusLabel(status)}
-    </span>
   );
 }
 

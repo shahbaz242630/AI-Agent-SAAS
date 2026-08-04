@@ -170,7 +170,11 @@ export async function createInvoice(
     return failed(error, values);
   }
 
+  // BOTH screens, because both can start this: the client's own page and the
+  // org-wide book. Revalidating only the one the click came from leaves the
+  // other showing a status that is no longer true.
   revalidatePath(`/app/clients/${customerId}/invoices`);
+  revalidatePath("/app/invoices");
   /**
    * Saying WHICH state it landed in matters: "active" means Eva starts
    * chasing, and that is not something to discover later.
@@ -255,7 +259,11 @@ export async function updateInvoice(
     return failed(error, values);
   }
 
+  // BOTH screens, because both can start this: the client's own page and the
+  // org-wide book. Revalidating only the one the click came from leaves the
+  // other showing a status that is no longer true.
   revalidatePath(`/app/clients/${customerId}/invoices`);
+  revalidatePath("/app/invoices");
   return { success: `Invoice ${values.invoiceNumber} saved. It is still a draft.` };
 }
 
@@ -330,7 +338,11 @@ export async function recordPayment(
     };
   }
 
+  // BOTH screens, because both can start this: the client's own page and the
+  // org-wide book. Revalidating only the one the click came from leaves the
+  // other showing a status that is no longer true.
   revalidatePath(`/app/clients/${customerId}/invoices`);
+  revalidatePath("/app/invoices");
 
   /**
    * ⚠️ THE OUTCOME IS DESCRIBED FROM THE API'S ANSWER, not from what was sent.
@@ -425,7 +437,11 @@ export async function runInvoiceAction(
     };
   }
 
+  // BOTH screens, because both can start this: the client's own page and the
+  // org-wide book. Revalidating only the one the click came from leaves the
+  // other showing a status that is no longer true.
   revalidatePath(`/app/clients/${customerId}/invoices`);
+  revalidatePath("/app/invoices");
   return {
     success: invoiceActionSuccess(action, invoiceNumber || "That invoice", { chaseBlockedReason }),
   };
