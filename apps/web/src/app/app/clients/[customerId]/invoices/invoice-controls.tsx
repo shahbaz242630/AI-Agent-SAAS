@@ -71,6 +71,10 @@ const CURRENCY_SUGGESTIONS = [
   "JPY",
   "KRW",
   "VND",
+  // Added 2026-08-04: the founder named a UK seller with buyers in Singapore.
+  // 2-decimal, so the money layer already handled it — it was only missing
+  // from the convenience list.
+  "SGD",
 ];
 
 interface ContactOption {
