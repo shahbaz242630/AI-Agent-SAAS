@@ -110,8 +110,13 @@ describe("Invoice documents: upload, extraction and review payload", () => {
       { value: string | null; confidence: number }
     >;
     expect(fields.invoiceNumber).toEqual({ value: "INV-1042", confidence: 0.9 });
-    expect(fields.issueDate).toEqual({ value: "01/08/2026", confidence: 0.9 });
-    expect(fields.dueDate).toEqual({ value: "31/08/2026", confidence: 0.9 });
+    // ⚠️ DATES COME BACK AS ISO NOW (2026-08-05, the real-document fix). The
+    // extractor normalises every form it recognises, because it had to learn
+    // textual months ("10 Apr 2026" — the founder's own invoices) and
+    // `parseImportDate` at confirm accepts only ISO and DD/MM/YYYY. Slash dates
+    // keep their day-first reading, so `01/08/2026` is still 1 August.
+    expect(fields.issueDate).toEqual({ value: "2026-08-01", confidence: 0.9 });
+    expect(fields.dueDate).toEqual({ value: "2026-08-31", confidence: 0.9 });
     expect(fields.amount).toEqual({ value: "£1,234.56", confidence: 0.9 });
     expect(fields.currency).toEqual({ value: "GBP", confidence: 0.9 });
     expect(fields.customerName).toEqual({ value: "Beta Trading Co", confidence: 0.9 });
@@ -184,9 +189,10 @@ describe("Invoice documents: upload, extraction and review payload", () => {
       "finance",
       await pdfWithLines(["Invoice Number: INV-1044", "Due Date: 15/09/2026", "Total: 50.00"]),
     ).expect(201);
+    // Day-first, normalised: 15/09/2026 is 15 September, not 9 March.
     expect(
       (uk.body.extractedFields as Record<string, { value: string | null }>).dueDate?.value,
-    ).toBe("15/09/2026");
+    ).toBe("2026-09-15");
   });
 
   it("unknown currency symbol → noted, currency defaults GBP", async () => {
