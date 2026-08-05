@@ -13,15 +13,48 @@ import type { TenantTx } from "../../common/permissions/permissions.js";
  * terminal here. due_soon/due_today/overdue are computed at read time
  * (invoice-status.ts) and never pass through here.
  */
-export type InvoiceAction = "activate" | "pause" | "resume" | "cancel";
+/** The four a user can ask for directly, each with its own endpoint. */
+export type InvoiceLifecycleAction = "activate" | "pause" | "resume" | "cancel";
+
+/**
+ * Slice 1.6c, task 5 — the two transitions recording a payment adds.
+ *
+ * ⚠️ DELIBERATELY A SEPARATE TYPE, so they cannot reach `transition()` and get
+ * their own endpoint by accident. `POST :invoiceId/payments` takes an amount
+ * and the SERVICE decides which applies from the resulting balance. There is no
+ * "mark as paid" in this API: the only route to `paid` is money that clears the
+ * balance, written in the same transaction as the status.
+ */
+export type InvoicePaymentAction = "pay_in_part" | "pay_in_full";
+
+export type InvoiceAction = InvoiceLifecycleAction | InvoicePaymentAction;
 
 const ACTIONS: Readonly<
   Record<InvoiceAction, { from: readonly InvoiceStoredStatus[]; to: InvoiceStoredStatus }>
 > = {
   activate: { from: ["draft"], to: "active" },
-  pause: { from: ["active"], to: "paused" },
+  // `partially_paid` is a chased status, so it pauses and cancels like `active`.
+  pause: { from: ["active", "partially_paid"], to: "paused" },
   resume: { from: ["paused"], to: "active" },
-  cancel: { from: ["draft", "active", "paused"], to: "cancelled" },
+  cancel: { from: ["draft", "active", "paused", "partially_paid"], to: "cancelled" },
+  /**
+   * A payment that does not clear the balance. NOT legal from `paused`: the
+   * payment is still recorded there, but the status is deliberately left alone
+   * — somebody paused that chase on purpose (a query, a dispute), and taking a
+   * part payment is not them saying to start it up again. The payment service
+   * skips the transition entirely in that case.
+   */
+  pay_in_part: { from: ["active", "partially_paid"], to: "partially_paid" },
+  /**
+   * A payment that clears it. Legal from `paused` too, because "they have paid
+   * in full" is true whatever the chase was doing, and leaving it Paused would
+   * misdescribe a settled invoice.
+   *
+   * ⚠️ NOT legal from `cancelled` — the state machine has no way out of
+   * cancelled, and every screen promises that. A payment against a cancelled
+   * invoice is refused 409 rather than quietly resurrecting it; see the handoff.
+   */
+  pay_in_full: { from: ["active", "paused", "partially_paid"], to: "paid" },
 };
 
 /**

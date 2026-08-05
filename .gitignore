@@ -60,3 +60,8 @@ AGENTS.md
 
 # NOTE: README.md and SECURITY.md stay tracked — they are GitHub-facing
 # (repo landing page + vulnerability-reporting policy), not internal docs.
+
+# Disposable local tooling and working files. The repo is PUBLIC, and this is
+# where throwaway SQL, dumps and one-off scripts land — including things that
+# query the cloud database. Nothing here is ever part of the product.
+scratchpad/

@@ -116,6 +116,27 @@ export const putRolePermissionsRequestSchema = z.object({
 
 export type PutRolePermissionsRequest = z.infer<typeof putRolePermissionsRequestSchema>;
 
+/**
+ * PATCH /organisations/:id/settings payload (Slice 1.6c, task 13).
+ *
+ * ⚠️ THE CODE IS NOT UPPERCASED FOR THE CALLER, deliberately. The money layer
+ * indexes its minor-unit table by exact ISO 4217 code, so `gbp` would miss and
+ * silently take the 2-digit fallback — right for GBP and wrong for KWD (3
+ * digits) and JPY (0). A refusal that names the rule beats a value that looks
+ * accepted and means something else. The web uppercases what a human types
+ * before it gets here, which is where that belongs.
+ */
+export const updateOrganisationSettingsRequestSchema = z.object({
+  defaultCurrency: z
+    .string()
+    .trim()
+    .regex(/^[A-Z]{3}$/, "defaultCurrency must be a 3-letter uppercase ISO 4217 code"),
+});
+
+export type UpdateOrganisationSettingsRequest = z.infer<
+  typeof updateOrganisationSettingsRequestSchema
+>;
+
 // --- Slice 1.2: invoice records ---
 
 /** ISO calendar date (YYYY-MM-DD) for date-only invoice fields. */
@@ -150,13 +171,91 @@ export type CreateInvoiceRequest = z.infer<typeof createInvoiceRequestSchema>;
  * update. `status` is deliberately absent and the object is strict, so a
  * status field on an update payload is rejected 400 — status changes ONLY via
  * the state machine actions (BRD 4.1 hard rule).
+ *
+ * ⚠️ `contactId` IS NULLABLE HERE AND NOT ON CREATE, and the difference is real
+ * (slice 1.6c, task 4). On create, "no reminder recipient" is said by leaving
+ * the field out. On update it cannot be: an absent field means "leave this
+ * alone", so without an explicit null there is no way to UNDO having picked the
+ * wrong person — the edit screen would offer "Nobody in particular", accept the
+ * click and silently change nothing, which is the failure this project keeps
+ * finding (the right outcome reported, the wrong record kept).
  */
 export const updateInvoiceRequestSchema = createInvoiceRequestSchema
   .omit({ status: true })
   .partial()
+  .extend({ contactId: z.uuid().nullable().optional() })
   .strict();
 
 export type UpdateInvoiceRequest = z.infer<typeof updateInvoiceRequestSchema>;
+
+/**
+ * POST .../invoices/:invoiceId/payments payload (slice 1.6c, task 5).
+ *
+ * ⚠️ NO `status` FIELD, AND THERE MUST NEVER BE ONE. What a payment does to the
+ * status is decided by the resulting BALANCE inside the state machine — that is
+ * what stops "mark this paid" from being an assertion anybody can make without
+ * money to back it.
+ *
+ * ⚠️ NO UPPER BOUND ON THE AMOUNT. Overpayment is allowed (founder ruling
+ * 2026-08-02): a debtor who rounds up, pays twice, or settles two invoices with
+ * one transfer is a real thing, and refusing to record what actually arrived
+ * would leave the customer's books disagreeing with their bank. The balance
+ * clamps at zero rather than going negative.
+ */
+export const recordPaymentRequestSchema = z
+  .object({
+    /** Integer minor units of the invoice's own currency; never a float. */
+    amountMinorUnits: z.number().int().positive(),
+    /** When the money arrived. Defaults to now — a payment is usually recorded
+     *  the day it lands, and a required field there is friction for nothing. */
+    paidAt: z.iso.date().optional(),
+  })
+  .strict();
+
+export type RecordPaymentRequest = z.infer<typeof recordPaymentRequestSchema>;
+
+/**
+ * POST /organisations/:id/invoices — one typed row of the book (slice 1.6c).
+ *
+ * ⚠️ THE SAME COLUMNS AS THE CSV IMPORTER, deliberately. A row somebody types
+ * and a row they upload are the same thing, and the API resolves the client
+ * through the same `common/ledger` code either way — so the two cannot drift
+ * into creating clients differently.
+ */
+export const addBookRowRequestSchema = z
+  .object({
+    clientName: z.string().trim().min(1).max(200),
+    clientEmail: z.email().max(320).optional(),
+    clientReference: z.string().trim().min(1).max(100).optional(),
+    /** Who Eva writes to. Without an email there is nobody to chase. */
+    contactName: z.string().trim().min(1).max(200).optional(),
+    contactEmail: z.email().max(320).optional(),
+    /**
+     * ⚠️ E.164 ONLY — `+447700900123`. The founder's reason is the calling
+     * agent, and it is right: a dialler cannot ring "07700 900123" without
+     * knowing which country it belongs to. Free text is cheap now and a
+     * data-cleaning project later, so the country code is required rather than
+     * hoped for.
+     */
+    contactPhone: z
+      .string()
+      .trim()
+      .regex(/^\+[1-9]\d{6,14}$/, "phone must include the country code, like +447700900123")
+      .optional(),
+    invoiceNumber: z.string().trim().min(1).max(50),
+    amountMinorUnits: z.number().int().positive(),
+    currency: z
+      .string()
+      .regex(/^[A-Z]{3}$/, "currency must be a 3-letter uppercase ISO 4217 code")
+      .default("GBP"),
+    issueDate: isoDate.optional(),
+    dueDate: isoDate,
+    /** Unlike an import, a typed row may start chasing at once — see the service. */
+    status: z.enum(["draft", "active"]).default("draft"),
+  })
+  .strict();
+
+export type AddBookRowRequest = z.infer<typeof addBookRowRequestSchema>;
 
 // --- Slice 1.3: CSV/Excel import ---
 

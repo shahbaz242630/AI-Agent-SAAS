@@ -228,6 +228,30 @@ export const INVOICE_STORED_STATUSES = [
 export type InvoiceStoredStatus = (typeof INVOICE_STORED_STATUSES)[number];
 
 /**
+ * The statuses in which Eva is CHASING an invoice (slice 1.6c, tasks 5-7).
+ *
+ * ⚠️ `partially_paid` IS ONE OF THEM, AND THAT IS THE WHOLE POINT OF RECORDING
+ * A PAYMENT. Until this constant existed, four separate places asked
+ * `status === "active"` — the schedule-time eligibility gate, two reconcile
+ * sweep queries, and the display-status derivation. Moving a part-paid invoice
+ * to `partially_paid` would therefore have made the scheduler drop it, the
+ * sweep skip it, and its badge stop saying Overdue: recording that a debtor
+ * paid half would have STOPPED Eva chasing the other half.
+ *
+ * That is exactly the defect migration 0019 was created to fix, arriving by the
+ * back door. One list, imported everywhere, so the next status that ought to be
+ * chased cannot be added in three places and forgotten in the fourth.
+ */
+export const CHASED_INVOICE_STATUSES = ["active", "partially_paid"] as const;
+
+export type ChasedInvoiceStatus = (typeof CHASED_INVOICE_STATUSES)[number];
+
+/** Is Eva chasing an invoice in this stored status? */
+export function isChasedInvoiceStatus(status: string): status is ChasedInvoiceStatus {
+  return (CHASED_INVOICE_STATUSES as readonly string[]).includes(status);
+}
+
+/**
  * Time-derived statuses (plan §7.1): never stored — computed at read time
  * from due_date + the organisation timezone, and only ever applied to Active
  * invoices.

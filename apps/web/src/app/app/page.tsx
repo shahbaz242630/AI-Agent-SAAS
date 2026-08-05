@@ -126,6 +126,42 @@ export default async function AppHomePage() {
         </section>
       )}
 
+      {/*
+        The book, first and largest — it is the screen the job is actually done
+        from (`DATA-MODEL-REVIEW` §4), and everything below this is setup a
+        customer touches once. It becomes the landing page itself once the
+        upload and inline row entry land; a prominent link is the honest
+        halfway step rather than a nav change made before the screen is
+        finished.
+      */}
+      <section className="flex w-full max-w-2xl flex-col gap-3 rounded-[var(--radius-card)] bg-muted px-6 py-5">
+        <h2 className="text-lg font-semibold">What you are owed</h2>
+        <p className="text-sm text-muted-foreground">
+          Every client&apos;s invoices on one screen, oldest first, with what Eva is chasing and
+          what it cannot.
+        </p>
+        <div className="flex flex-wrap gap-2">
+          <Link
+            href="/app/invoices"
+            className="rounded-[var(--radius-card)] bg-primary px-4 py-2 text-sm font-medium text-primary-foreground"
+          >
+            Open your invoices
+          </Link>
+          <Link
+            href="/app/invoices?status=overdue"
+            className="rounded-[var(--radius-card)] bg-background px-4 py-2 text-sm font-medium hover:opacity-80"
+          >
+            What is overdue
+          </Link>
+          <Link
+            href="/app/clients"
+            className="rounded-[var(--radius-card)] bg-background px-4 py-2 text-sm font-medium hover:opacity-80"
+          >
+            Clients
+          </Link>
+        </div>
+      </section>
+
       <section className="flex w-full max-w-2xl flex-col gap-4">
         <div className="flex items-center justify-between">
           <h2 className="text-lg font-semibold">Your organisations</h2>

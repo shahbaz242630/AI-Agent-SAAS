@@ -1,6 +1,7 @@
 import { ForbiddenException, NotFoundException } from "@nestjs/common";
 import {
   DEFAULT_ROLE_PERMISSIONS,
+  PERMISSION_KEYS,
   PERMISSION_MODULE,
   type OrganisationRole,
   type PermissionKey,
@@ -20,6 +21,54 @@ export type TenantTx = Parameters<Parameters<typeof withTenant>[2]>[0];
  * regardless of configuration (BRD hard rules).
  */
 
+/**
+ * Everything a role may do here: the org's custom mapping when it has one, else
+ * the BRD default matrix.
+ *
+ * ⚠️ THIS IS THE ONLY PLACE THE RULE LIVES, and `hasPermission` below is a
+ * lookup in its result rather than a second implementation of it. The
+ * alternative — one function answering "may I?" and another answering "what may
+ * I?" — is two copies of an authorisation rule, and this project has already
+ * watched two copies of one rule disagree within an hour of the original
+ * changing.
+ *
+ * ⚠️ THE ROLE HALF ONLY. It says nothing about whether the organisation holds
+ * the product that owns a permission — that is the 402 gate in
+ * `requirePermission`, and the two must stay distinguishable because they need
+ * different answers from a screen: a 403 means "ask an owner", a 402 means
+ * "buy the product". Collapsing them here would make the caller name the wrong
+ * one (standing rule §0d).
+ *
+ * Costs the same two queries as a single check, whatever the answer's length.
+ */
+export async function effectivePermissions(
+  tx: TenantTx,
+  organisationId: string,
+  roleKey: string,
+): Promise<PermissionKey[]> {
+  const customGrants = await tx.organisationRolePermission.count({
+    where: { organisationId },
+  });
+  if (customGrants === 0) {
+    return [...(DEFAULT_ROLE_PERMISSIONS[roleKey as OrganisationRole] ?? [])];
+  }
+  const grants = await tx.organisationRolePermission.findMany({
+    where: { organisationId, role: { key: roleKey } },
+    select: { permissionKey: true },
+  });
+  /**
+   * Filtered against `PERMISSION_KEYS` rather than returned raw. A row naming a
+   * permission this build does not have is a leftover from a removed feature or
+   * a hand-edited database, and passing it through would put an unknown string
+   * into a typed list that the rest of the app trusts. Fail closed: unknown
+   * means not held.
+   */
+  const known = new Set<string>(PERMISSION_KEYS);
+  return grants
+    .map((grant) => grant.permissionKey)
+    .filter((key): key is PermissionKey => known.has(key));
+}
+
 /** Effective check: custom mapping when the org has one, else BRD defaults. */
 export async function hasPermission(
   tx: TenantTx,
@@ -27,16 +76,7 @@ export async function hasPermission(
   roleKey: string,
   permissionKey: PermissionKey,
 ): Promise<boolean> {
-  const customGrants = await tx.organisationRolePermission.count({
-    where: { organisationId },
-  });
-  if (customGrants === 0) {
-    return DEFAULT_ROLE_PERMISSIONS[roleKey as OrganisationRole]?.includes(permissionKey) ?? false;
-  }
-  const grant = await tx.organisationRolePermission.findFirst({
-    where: { organisationId, permissionKey, role: { key: roleKey } },
-  });
-  return grant !== null;
+  return (await effectivePermissions(tx, organisationId, roleKey)).includes(permissionKey);
 }
 
 /**

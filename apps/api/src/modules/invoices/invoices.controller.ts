@@ -12,8 +12,10 @@ import {
 } from "@nestjs/common";
 import {
   createInvoiceRequestSchema,
+  recordPaymentRequestSchema,
   updateInvoiceRequestSchema,
   type CreateInvoiceRequest,
+  type RecordPaymentRequest,
   type UpdateInvoiceRequest,
 } from "@eva/validation";
 import { ZodValidationPipe } from "../../common/validation/zod-validation.pipe.js";
@@ -128,6 +130,37 @@ export class InvoicesController {
       customerId,
       invoiceId,
       "resume",
+    );
+  }
+
+  /**
+   * Record money received (slice 1.6c, task 5).
+   *
+   * ⚠️ ITS OWN ENDPOINT, NOT A PATCH. `PATCH` is draft-only and cannot touch
+   * status; a payment applies to an ISSUED invoice and moves its status through
+   * the state machine. And it is a payment rather than a "mark as paid": the
+   * status follows the money, so nobody can declare an invoice settled without
+   * recording what settled it.
+   *
+   * 200, not 201: it changes an invoice and returns that invoice. Nothing
+   * addressable is created — individual payments are not stored separately, only
+   * the running total (plan §4 task 5).
+   */
+  @Post(":invoiceId/payments")
+  @HttpCode(200)
+  recordPayment(
+    @CurrentAuthUser() authUser: AuthUser,
+    @Param("organisationId", ParseUUIDPipe) organisationId: string,
+    @Param("customerId", ParseUUIDPipe) customerId: string,
+    @Param("invoiceId", ParseUUIDPipe) invoiceId: string,
+    @Body(new ZodValidationPipe(recordPaymentRequestSchema)) body: RecordPaymentRequest,
+  ): Promise<InvoiceSummary> {
+    return this.invoicesService.recordPayment(
+      authUser,
+      organisationId,
+      customerId,
+      invoiceId,
+      body,
     );
   }
 

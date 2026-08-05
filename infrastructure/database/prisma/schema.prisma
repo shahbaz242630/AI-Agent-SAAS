@@ -51,6 +51,14 @@ model OrganisationSettings {
   /// All business logic runs in this timezone (BRD 18.1).
   timezone       String       @default("Europe/London")
   locale         String       @default("en-GB")
+  /// What a new invoice's currency dropdown OPENS ON (slice 1.6c, task 13).
+  ///
+  /// ⚠️ A DEFAULT, NEVER A RESTRICTION (founder ruling 2026-08-04). Currency is
+  /// per INVOICE and stays that way: a UK seller with buyers in Singapore and
+  /// the UAE holds GBP, SGD and AED in one book, and this must never stop them
+  /// raising a USD invoice. It exists so a Dubai business stops typing AED
+  /// fifty times a week, and for no other reason.
+  defaultCurrency String      @default("GBP") @map("default_currency")
   /// Shapes refined when the modules that consume them land (Phases 1-4).
   /// Calling hours default to the UK 08:00-21:00 rule (BRD 17) but are per-org
   /// CONFIGURATION, not a code constant — BRD 18.7 (jurisdiction-as-config)

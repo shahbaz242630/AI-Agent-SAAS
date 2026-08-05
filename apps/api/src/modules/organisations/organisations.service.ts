@@ -6,13 +6,18 @@ import {
   NotFoundException,
 } from "@nestjs/common";
 import { withTenant, withUser } from "@eva/database";
-import { DEFAULT_ROLE_PERMISSIONS, ORGANISATION_ROLES, type OrganisationRole } from "@eva/types";
+import {
+  DEFAULT_ROLE_PERMISSIONS,
+  ORGANISATION_ROLES,
+  type OrganisationRole,
+  type PermissionKey,
+} from "@eva/types";
 import type { PutRolePermissionsRequest } from "@eva/validation";
 // eslint-disable-next-line @typescript-eslint/consistent-type-imports
 import { PrismaService } from "../../common/database/prisma.service.js";
 // eslint-disable-next-line @typescript-eslint/consistent-type-imports
 import { UsersService } from "../users/users.service.js";
-import { requirePermission } from "../../common/permissions/permissions.js";
+import { effectivePermissions, requirePermission } from "../../common/permissions/permissions.js";
 import { writeAuditLog } from "../../common/audit/audit-log.js";
 import type { AuthUser } from "../authentication/current-auth-user.decorator.js";
 
@@ -20,6 +25,42 @@ export interface OrganisationSummary {
   id: string;
   name: string;
   roleKey: string;
+  /**
+   * What the CALLER may do here (slice 1.6c, task 8) — resolved by the same
+   * function the guards use, so a screen cannot hold a second opinion about
+   * authorisation.
+   *
+   * ⚠️ WHY THIS IS PUBLISHED RATHER THAN WORKED OUT IN THE BROWSER. The web app
+   * could read `roleKey` and consult the BRD default matrix itself, and that is
+   * wrong for every organisation with a custom mapping — the matrix is only the
+   * FALLBACK, `organisation_role_permissions` overrides it, and an org that has
+   * granted `sales` the right to raise invoices would still have the button
+   * hidden from them. Tested: `invoices.spec.ts` "org permission override grants
+   * sales invoices:write and revokes finance".
+   *
+   * ⚠️ THE ROLE HALF ONLY — it does not mean the organisation holds the product.
+   * A screen learns that from its own 402, and must keep the two apart.
+   *
+   * It is the caller's own list, so it discloses nothing: it answers "what may
+   * I do", never "what may somebody else do". The org-wide mapping stays behind
+   * `permissions:read`.
+   */
+  permissions: PermissionKey[];
+  /**
+   * What a new invoice's currency dropdown OPENS ON (slice 1.6c, task 13).
+   *
+   * ⚠️ A DEFAULT, NEVER A RESTRICTION (founder ruling 2026-08-04). Currency is
+   * per invoice and stays that way — a UK seller with buyers in Singapore and
+   * the UAE holds GBP, SGD and AED at once, and nothing here may stop them
+   * raising a USD invoice. Nothing in the API reads this to refuse or to
+   * reinterpret a currency; the invoice's own `currency` is the only one the
+   * money layer ever uses.
+   *
+   * Published HERE rather than behind a settings endpoint because every screen
+   * that needs it already fetches this summary, and a form must not wait on a
+   * second round trip to know which option to pre-select.
+   */
+  defaultCurrency: string;
 }
 
 export interface MemberSummary {
@@ -82,10 +123,27 @@ export class OrganisationsService {
             const organisation = await tx.organisation.findUniqueOrThrow({
               where: { id: membership.organisationId },
             });
+            const settings = await tx.organisationSettings.findUnique({
+              where: { organisationId: membership.organisationId },
+            });
             return {
               id: organisation.id,
               name: organisation.name,
               roleKey: membership.role.key,
+              permissions: await effectivePermissions(
+                tx,
+                membership.organisationId,
+                membership.role.key,
+              ),
+              /**
+               * `?? "GBP"` covers a settings row that does not exist. It should
+               * not happen — `create` writes one in the same transaction as the
+               * organisation — but an org with no settings must still render a
+               * usable form rather than throw, and the launch market's currency
+               * is the honest guess. Fail SOFT here: nothing depends on this
+               * being right, only on it being present.
+               */
+              defaultCurrency: settings?.defaultCurrency ?? "GBP",
             };
           },
         ),
@@ -105,7 +163,7 @@ export class OrganisationsService {
       const organisation = await tx.organisation.create({
         data: { id: organisationId, name, createdBy: user.id },
       });
-      await tx.organisationSettings.create({
+      const settings = await tx.organisationSettings.create({
         data: {
           organisationId,
           timezone: "Europe/London",
@@ -141,7 +199,79 @@ export class OrganisationsService {
           createdBy: user.id,
         },
       });
-      return { id: organisation.id, name: organisation.name, roleKey: ownerRole.key };
+      return {
+        id: organisation.id,
+        name: organisation.name,
+        roleKey: ownerRole.key,
+        // Resolved rather than assumed to be the whole matrix: this reads the
+        // rows just written, so a future change to what a new owner gets cannot
+        // leave this response describing the old rule.
+        permissions: await effectivePermissions(tx, organisationId, ownerRole.key),
+        // Read back from the row just written rather than restated, so the
+        // column's own default stays the single answer to "what does a new
+        // organisation start on".
+        defaultCurrency: settings.defaultCurrency,
+      };
+    });
+  }
+
+  /**
+   * Change the organisation's settings — today, the invoice currency default
+   * (slice 1.6c, task 13).
+   *
+   * ⚠️ GUARDED BY `invoices:write`, NOT BY A NEW `settings:*` KEY. The BRD's
+   * permission matrix (BRD 7) is a specification, and inventing a key for it is
+   * a spec change rather than an implementation detail. This one setting is
+   * squarely an invoice-domain choice — it decides what an invoice form opens
+   * on — so the permission that already governs raising invoices is the honest
+   * fit. ⚠️ **When a second, non-invoice setting needs writing (calling hours,
+   * business hours, timezone), that is the moment to take `settings:read` /
+   * `settings:write` to the founder** rather than stretching this one further.
+   *
+   * ⚠️ THIS CANNOT RESTRICT ANYTHING. It writes one column that only ever
+   * pre-selects a dropdown option. No invoice is re-read, re-priced or refused
+   * because of it, and none ever may be.
+   */
+  async updateSettings(
+    authUser: AuthUser,
+    organisationId: string,
+    input: { defaultCurrency: string },
+  ): Promise<OrganisationSummary> {
+    const user = await this.usersService.resolveOrProvision(authUser);
+    return withTenant(this.prisma.db, { organisationId, userId: user.id }, async (tx) => {
+      const membership = await requirePermission(tx, organisationId, user.id, "invoices:write");
+
+      const before = await tx.organisationSettings.findUnique({ where: { organisationId } });
+      const settings = await tx.organisationSettings.update({
+        where: { organisationId },
+        data: { defaultCurrency: input.defaultCurrency },
+      });
+
+      await writeAuditLog(tx, {
+        organisationId,
+        actorUserId: user.id,
+        action: "organisation.settings_updated",
+        entityType: "organisation_settings",
+        entityId: settings.id,
+        // The old and new codes are the whole story and neither is personal
+        // data — a currency code says nothing about a person (BRD 14).
+        metadata: {
+          field: "default_currency",
+          from: before?.defaultCurrency ?? null,
+          to: settings.defaultCurrency,
+        },
+      });
+
+      const organisation = await tx.organisation.findUniqueOrThrow({
+        where: { id: organisationId },
+      });
+      return {
+        id: organisation.id,
+        name: organisation.name,
+        roleKey: membership.role.key,
+        permissions: await effectivePermissions(tx, organisationId, membership.role.key),
+        defaultCurrency: settings.defaultCurrency,
+      };
     });
   }
 

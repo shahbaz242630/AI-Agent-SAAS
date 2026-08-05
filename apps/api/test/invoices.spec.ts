@@ -331,6 +331,53 @@ describe("Invoices: CRUD, validation and permissions", () => {
       .expect(409);
   });
 
+  /**
+   * Slice 1.6c task 4: the edit screen has to be able to UNDO a recipient.
+   *
+   * Absent and null mean different things on a PATCH, and before this the
+   * schema had no way to say the second one — `contactId` was `z.uuid()`, so
+   * the only expressible update was "change it to somebody else". Picking the
+   * wrong person was therefore permanent, and a screen offering "Nobody in
+   * particular" would have accepted the click and changed nothing.
+   *
+   * The two halves are asserted together on purpose: null must CLEAR, and
+   * absent must still LEAVE ALONE. A schema that accepted null by making the
+   * whole field meaningless would pass the first half on its own.
+   */
+  it("clears the reminder recipient on an explicit null, and leaves it alone when absent", async () => {
+    const invoice = await createInvoice({ contactId }).expect(201);
+    expect(invoice.body.contactId).toBe(contactId);
+
+    const untouched = await request(app.getHttpServer())
+      .patch(`${baseUrl()}/${invoice.body.id}`)
+      .set("Authorization", `Bearer ${tokens.get("finance")}`)
+      .send({ amountMinorUnits: 4200 })
+      .expect(200);
+    expect(untouched.body.contactId).toBe(contactId);
+
+    const cleared = await request(app.getHttpServer())
+      .patch(`${baseUrl()}/${invoice.body.id}`)
+      .set("Authorization", `Bearer ${tokens.get("finance")}`)
+      .send({ contactId: null })
+      .expect(200);
+    expect(cleared.body.contactId).toBeNull();
+
+    // Read back rather than trusting the response body — the column is what a
+    // reminder is later addressed from.
+    const stored = await owner.invoice.findUniqueOrThrow({ where: { id: invoice.body.id } });
+    expect(stored.contactId).toBeNull();
+  });
+
+  it("still refuses a contact belonging to somebody else on update", async () => {
+    // Nullable must not have loosened the check that a REAL id is validated.
+    const invoice = await createInvoice().expect(201);
+    await request(app.getHttpServer())
+      .patch(`${baseUrl()}/${invoice.body.id}`)
+      .set("Authorization", `Bearer ${tokens.get("finance")}`)
+      .send({ contactId: randomUUID() })
+      .expect(400);
+  });
+
   it("rejects a status field on update payloads → 400 (state machine only)", async () => {
     const invoice = await createInvoice().expect(201);
     await request(app.getHttpServer())
@@ -581,8 +628,21 @@ describe("Invoices: state machine (BRD 4.1 — the only status code path)", () =
     await transition(cancelled, "cancel").expect(409);
   });
 
+  /**
+   * ⚠️ `partially_paid` LEFT THIS LIST IN SLICE 1.6C, and deliberately.
+   *
+   * It was an outcome status with no API path, alongside paid and written_off.
+   * Recording a payment made it a CHASED status — Eva is still collecting the
+   * balance — so it must accept `pause` and `cancel` like any other invoice
+   * being chased. Without that, taking a part payment would produce an invoice
+   * nobody could ever stop.
+   *
+   * The rest genuinely have no path until slice 1.8. `paid` is terminal for a
+   * different reason: it is reached only by money clearing the balance, and the
+   * way out is a refund, which this product does not do.
+   */
   it("outcome statuses have no API path (plan §7.3): seeded rows reject every action", async () => {
-    for (const status of ["paid", "partially_paid", "promise_to_pay", "disputed", "written_off"]) {
+    for (const status of ["paid", "promise_to_pay", "disputed", "written_off"]) {
       const invoice = await owner.invoice.create({
         data: {
           id: randomUUID(),
@@ -603,6 +663,30 @@ describe("Invoices: state machine (BRD 4.1 — the only status code path)", () =
       const row = await owner.invoice.findUniqueOrThrow({ where: { id: invoice.id } });
       expect(row.status).toBe(status);
     }
+  });
+
+  it("a part-paid invoice CAN be paused and cancelled, because it is still being chased", async () => {
+    // The other half of the rule above: `partially_paid` gained a path in 1.6c
+    // precisely so a part-paid invoice is not stranded beyond anyone's control.
+    const invoice = await owner.invoice.create({
+      data: {
+        id: randomUUID(),
+        organisationId: org.id,
+        customerId,
+        invoiceNumber: `PART-${randomUUID().slice(0, 6)}`,
+        amountMinorUnits: 1000,
+        amountPaidMinorUnits: 400,
+        issueDate: new Date(orgDate(-30)),
+        dueDate: new Date(orgDate(-2)),
+        status: "partially_paid",
+        createdBy: ownerMember.id,
+      },
+    });
+    await transition(invoice.id, "pause").expect(200);
+    await transition(invoice.id, "resume").expect(200);
+    await transition(invoice.id, "cancel").expect(200);
+    // But it is not a draft, so it can never be activated.
+    await transition(invoice.id, "activate").expect(409);
   });
 
   it("update schema is structurally status-free: no module file changes status outside the state machine", async () => {
@@ -1202,5 +1286,1067 @@ describe("Invoices: reminder scheduling hooks (Slice 1.5 — plan §3 recompute 
     // Draft creates stay unscheduled.
     const draftId = await createDraft({ contactId });
     expect(await actionsOf(draftId)).toHaveLength(0);
+  });
+});
+
+/**
+ * The organisation's whole book — `GET /organisations/:id/invoices`
+ * (slice 1.6c, task 9: the founder's one table).
+ *
+ * Until this existed, invoices were reachable only through a client, so the
+ * first question a credit controller asks — "what is overdue right now?" —
+ * could only be answered by opening clients one at a time.
+ */
+describe("Invoices: the organisation-wide book", () => {
+  let app: INestApplication;
+  let owner: EvaPrismaClient;
+  let org: FixtureOrg;
+  let customerA: string;
+  let customerB: string;
+  let token: string;
+  let readOnlyToken: string;
+
+  const url = () => `/organisations/${org.id}/invoices`;
+
+  /** Seeded directly: this suite is about READING a book, not building one. */
+  async function seedInvoice(input: {
+    customerId: string;
+    number: string;
+    amount: number;
+    paid?: number;
+    currency?: string;
+    dueOffset: number;
+    status?: string;
+  }) {
+    return owner.invoice.create({
+      data: {
+        id: randomUUID(),
+        organisationId: org.id,
+        customerId: input.customerId,
+        invoiceNumber: input.number,
+        amountMinorUnits: input.amount,
+        amountPaidMinorUnits: input.paid ?? 0,
+        currency: input.currency ?? "GBP",
+        issueDate: new Date(orgDate(-60)),
+        dueDate: new Date(orgDate(input.dueOffset)),
+        status: input.status ?? "active",
+        createdBy: org.members[0]!.id,
+      },
+    });
+  }
+
+  beforeAll(async () => {
+    owner = createOwnerClient();
+    await seedTestDatabase(owner);
+    app = await createTestApp();
+    org = await createOrgWithMembers(owner, "book", ["owner", "read_only"]);
+    token = await signToken({
+      sub: org.members[0]!.authUserId,
+      email: org.members[0]!.email,
+    });
+    const readOnly = org.members.find((m) => m.roleKey === "read_only")!;
+    readOnlyToken = await signToken({ sub: readOnly.authUserId, email: readOnly.email });
+
+    customerA = (
+      await owner.customer.create({
+        data: {
+          id: randomUUID(),
+          organisationId: org.id,
+          name: "Alpha Trading",
+          createdBy: org.members[0]!.id,
+        },
+      })
+    ).id;
+    customerB = (
+      await owner.customer.create({
+        data: {
+          id: randomUUID(),
+          organisationId: org.id,
+          name: "Beta Works",
+          createdBy: org.members[0]!.id,
+        },
+      })
+    ).id;
+
+    // A deliberately awkward book: two clients, three currencies, every ageing
+    // bucket, an overpayment, and rows that must NOT be counted as owed.
+    await seedInvoice({
+      customerId: customerA,
+      number: "BK-CURRENT",
+      amount: 10_000,
+      dueOffset: 5,
+    });
+    await seedInvoice({ customerId: customerA, number: "BK-TODAY", amount: 20_000, dueOffset: 0 });
+    await seedInvoice({ customerId: customerA, number: "BK-OD10", amount: 30_000, dueOffset: -10 });
+    await seedInvoice({ customerId: customerB, number: "BK-OD20", amount: 40_000, dueOffset: -20 });
+    await seedInvoice({ customerId: customerB, number: "BK-OD40", amount: 50_000, dueOffset: -40 });
+    await seedInvoice({ customerId: customerB, number: "BK-OD99", amount: 60_000, dueOffset: -99 });
+    await seedInvoice({
+      customerId: customerB,
+      number: "BK-AED",
+      amount: 100_000,
+      currency: "AED",
+      dueOffset: -3,
+    });
+    // Overpaid: the clamp must stop this eating 2,500 off the AED total.
+    await seedInvoice({
+      customerId: customerB,
+      number: "BK-AED-OVER",
+      amount: 50_000,
+      paid: 52_500,
+      currency: "AED",
+      dueOffset: -3,
+      status: "paid",
+    });
+    // Not chased — must appear as a ROW but never in the money.
+    await seedInvoice({
+      customerId: customerA,
+      number: "BK-CANCELLED",
+      amount: 99_000,
+      dueOffset: -30,
+      status: "cancelled",
+    });
+    await seedInvoice({
+      customerId: customerA,
+      number: "BK-DRAFT",
+      amount: 88_000,
+      dueOffset: -30,
+      status: "draft",
+    });
+    // Part paid: chased, and only the BALANCE counts.
+    await seedInvoice({
+      customerId: customerA,
+      number: "BK-PART",
+      amount: 100_000,
+      paid: 60_000,
+      dueOffset: -5,
+      status: "partially_paid",
+    });
+  });
+
+  afterAll(async () => {
+    await app.close();
+    await owner.$disconnect();
+  });
+
+  function book(query = "", auth = token) {
+    return request(app.getHttpServer())
+      .get(`${url()}${query}`)
+      .set("Authorization", `Bearer ${auth}`);
+  }
+
+  it("returns invoices across EVERY client, most overdue first", async () => {
+    const response = await book().expect(200);
+    const numbers = response.body.rows.map((row: { invoiceNumber: string }) => row.invoiceNumber);
+    expect(numbers).toContain("BK-OD99");
+    expect(numbers).toContain("BK-AED");
+    // Both clients, which is the whole reason this endpoint exists.
+    const clients = new Set(
+      response.body.rows.map((row: { customer: { name: string } }) => row.customer.name),
+    );
+    expect(clients).toEqual(new Set(["Alpha Trading", "Beta Works"]));
+    // Oldest due date first: the top of the screen is what needs doing today.
+    expect(numbers[0]).toBe("BK-OD99");
+  });
+
+  it("carries the client and the reminder recipient on every row", async () => {
+    const response = await book("?search=BK-OD99").expect(200);
+    const row = response.body.rows[0];
+    expect(row.customer).toMatchObject({ name: "Beta Works" });
+    // No contact on these fixtures, so it is null rather than absent — the
+    // screen shows "nobody to email", which is a real state.
+    expect(row.contact).toBeNull();
+    expect(row.chaseBlockedReason).toBe("no_contact");
+  });
+
+  /**
+   * ⚠️ THE PAGING TRAP. `overdue` is derived per request from the org timezone
+   * and is deliberately not a column, so the obvious implementation filters in
+   * memory — which, with paging, asks the database for fifty rows and shows
+   * nine, with a total that disagrees with the page. The filter is a due-date
+   * range instead.
+   */
+  it("filters on a COMPUTED status in the database, so paging stays honest", async () => {
+    const response = await book("?status=overdue&limit=3").expect(200);
+    expect(response.body.rows).toHaveLength(3);
+    // Every returned row really is overdue...
+    for (const row of response.body.rows) {
+      expect(row.displayStatus).toBe("overdue");
+    }
+    // ...and the count is of everything matching, not of the page.
+    expect(response.body.totalCount).toBeGreaterThan(3);
+
+    const all = await book("?status=overdue&limit=200").expect(200);
+    expect(all.body.rows).toHaveLength(all.body.totalCount);
+  });
+
+  it("never counts an unchased invoice as overdue, however old", async () => {
+    // BK-CANCELLED and BK-DRAFT are both 30 days past their due date.
+    const response = await book("?status=overdue&limit=200").expect(200);
+    const numbers = response.body.rows.map((row: { invoiceNumber: string }) => row.invoiceNumber);
+    expect(numbers).not.toContain("BK-CANCELLED");
+    expect(numbers).not.toContain("BK-DRAFT");
+  });
+
+  it("filters due_today and due_soon without catching each other", async () => {
+    const today = await book("?status=due_today").expect(200);
+    expect(today.body.rows.map((r: { invoiceNumber: string }) => r.invoiceNumber)).toEqual([
+      "BK-TODAY",
+    ]);
+    const soon = await book("?status=due_soon").expect(200);
+    const soonNumbers = soon.body.rows.map((r: { invoiceNumber: string }) => r.invoiceNumber);
+    // Due in 5 days is NOT "soon" (the stage is 3), and today is its own state.
+    expect(soonNumbers).not.toContain("BK-TODAY");
+    expect(soonNumbers).not.toContain("BK-CURRENT");
+  });
+
+  it("puts each invoice in its ageing bucket, derived from the due date", async () => {
+    const response = await book("?limit=200").expect(200);
+    const bucketOf = (number: string) =>
+      response.body.rows.find((r: { invoiceNumber: string }) => r.invoiceNumber === number)
+        ?.ageingBucket;
+    expect(bucketOf("BK-CURRENT")).toBe("current");
+    // Due today is NOT late — the money is not overdue until the day is out.
+    expect(bucketOf("BK-TODAY")).toBe("current");
+    expect(bucketOf("BK-OD10")).toBe("days_1_15");
+    expect(bucketOf("BK-OD20")).toBe("days_16_30");
+    expect(bucketOf("BK-OD40")).toBe("days_31_45");
+    expect(bucketOf("BK-OD99")).toBe("days_over_45");
+  });
+
+  describe("what the organisation is owed, per currency", () => {
+    it("never adds one currency to another", async () => {
+      const response = await book().expect(200);
+      const codes = response.body.chasedByCurrency.map((c: { currency: string }) => c.currency);
+      expect(codes).toEqual(["AED", "GBP"]);
+    });
+
+    /**
+     * ⚠️ THE CLAMP, AND WHY THE TOTAL IS NOT `SUM(amount) - SUM(paid)`.
+     * Overpayment is allowed, so an invoice paid 2,500 over would quietly eat
+     * 2,500 off ANOTHER invoice's balance and understate what is owed. The
+     * clamp has to happen per row.
+     */
+    it("clamps each invoice at zero, so an overpayment cannot mask other debt", async () => {
+      const response = await book().expect(200);
+      const aed = response.body.chasedByCurrency.find(
+        (c: { currency: string }) => c.currency === "AED",
+      );
+      // Only BK-AED is chased (BK-AED-OVER is paid), so exactly its full amount.
+      expect(aed).toMatchObject({
+        currency: "AED",
+        invoiceCount: 1,
+        outstandingMinorUnits: 100_000,
+      });
+    });
+
+    it("counts the BALANCE of a part-paid invoice, not its total", async () => {
+      const response = await book().expect(200);
+      const gbp = response.body.chasedByCurrency.find(
+        (c: { currency: string }) => c.currency === "GBP",
+      );
+      // 10,000 + 20,000 + 30,000 + 40,000 + 50,000 + 60,000 chased in full,
+      // plus BK-PART's balance of 40,000. Cancelled and draft are excluded.
+      expect(gbp.outstandingMinorUnits).toBe(250_000);
+      expect(gbp.invoiceCount).toBe(7);
+    });
+
+    it("excludes cancelled and draft invoices from the money entirely", async () => {
+      // They still appear as ROWS — nothing is hidden — but nobody is
+      // collecting them, so putting them in a total makes "what am I owed"
+      // wrong.
+      const response = await book("?limit=200").expect(200);
+      const numbers = response.body.rows.map((r: { invoiceNumber: string }) => r.invoiceNumber);
+      expect(numbers).toContain("BK-CANCELLED");
+      expect(numbers).toContain("BK-DRAFT");
+      const gbp = response.body.chasedByCurrency.find(
+        (c: { currency: string }) => c.currency === "GBP",
+      );
+      // Named explicitly rather than "less than": the total must be the chased
+      // 250,000 and NOT that plus the cancelled 99,000 and the draft 88,000.
+      expect(gbp.outstandingMinorUnits).toBe(250_000);
+      expect(gbp.outstandingMinorUnits).not.toBe(250_000 + 99_000 + 88_000);
+      // And the count is of chased invoices, not of the rows on screen.
+      expect(gbp.invoiceCount).toBeLessThan(numbers.length);
+    });
+  });
+
+  it("filters by currency and by client", async () => {
+    const aed = await book("?currency=aed").expect(200);
+    for (const row of aed.body.rows) expect(row.currency).toBe("AED");
+    const alpha = await book(`?customerId=${customerA}&limit=200`).expect(200);
+    for (const row of alpha.body.rows) expect(row.customer.id).toBe(customerA);
+  });
+
+  it("searches invoice numbers and client names", async () => {
+    const byNumber = await book("?search=BK-OD99").expect(200);
+    expect(byNumber.body.rows).toHaveLength(1);
+    const byClient = await book("?search=beta").expect(200);
+    expect(byClient.body.rows.length).toBeGreaterThan(1);
+    for (const row of byClient.body.rows) expect(row.customer.name).toBe("Beta Works");
+  });
+
+  it("pages, and caps a request that asks for the world", async () => {
+    const first = await book("?limit=2&offset=0").expect(200);
+    const second = await book("?limit=2&offset=2").expect(200);
+    expect(first.body.rows).toHaveLength(2);
+    const firstIds = first.body.rows.map((r: { id: string }) => r.id);
+    const secondIds = second.body.rows.map((r: { id: string }) => r.id);
+    expect(firstIds).not.toEqual(secondIds);
+    // An unbounded read is a query that works here and takes a server down on a
+    // real book.
+    const huge = await book("?limit=100000").expect(200);
+    expect(huge.body.rows.length).toBeLessThanOrEqual(200);
+  });
+
+  it("says when Eva is next due to chase, and stays silent about sends that have not happened", async () => {
+    /**
+     * ⚠️ `lastChasedOn` IS NULL FOR EVERYTHING UNTIL SLICE 1.7. Nothing sends
+     * yet, so no scheduled_action ever reaches `sent`. The column exists now so
+     * it fills in the day sending ships — a screen must not read the empty
+     * value as "never chased".
+     */
+    const invoice = await seedInvoice({
+      customerId: customerA,
+      number: `BK-SCHED-${randomUUID().slice(0, 6)}`,
+      amount: 1000,
+      dueOffset: 3,
+    });
+    const step = await owner.reminderStep.findFirst({ where: { organisationId: org.id } });
+    if (step) {
+      await owner.scheduledAction.create({
+        data: {
+          organisationId: org.id,
+          invoiceId: invoice.id,
+          reminderStepId: step.id,
+          actionType: "email",
+          scheduledDate: new Date(orgDate(1)),
+          status: "pending",
+          idempotencyKey: randomUUID(),
+        },
+      });
+      const response = await book(`?search=${invoice.invoiceNumber}`).expect(200);
+      expect(response.body.rows[0].nextChaseOn).not.toBeNull();
+      expect(response.body.rows[0].lastChasedOn).toBeNull();
+    }
+  });
+
+  it("rejects an unknown status filter rather than silently returning everything", async () => {
+    await book("?status=nonsense").expect(400);
+  });
+
+  /**
+   * Adding a row by hand — client, contact and invoice in one act.
+   *
+   * ⚠️ THE CLIENT IS RESOLVED THE WAY THE IMPORTER RESOLVES IT. Typing a row
+   * and uploading the same row must land in the same place, or one client
+   * quietly becomes two.
+   */
+  describe("adding a row by typing it", () => {
+    function addRow(body: Record<string, unknown>, auth = token) {
+      return request(app.getHttpServer())
+        .post(url())
+        .set("Authorization", `Bearer ${auth}`)
+        .send({
+          clientName: `Typed Client ${randomUUID().slice(0, 6)}`,
+          invoiceNumber: `TYPED-${randomUUID().slice(0, 8)}`,
+          amountMinorUnits: 125_000,
+          currency: "GBP",
+          dueDate: orgDate(14),
+          ...body,
+        });
+    }
+
+    it("creates the client, the contact and the invoice together", async () => {
+      const contactEmail = `ap-${randomUUID().slice(0, 8)}@typed.example`;
+      const response = await addRow({
+        clientName: "Brand New Client Ltd",
+        contactName: "Ada Byron",
+        contactEmail,
+        contactPhone: "+447700900123",
+      }).expect(201);
+
+      expect(response.body.contactId).not.toBeNull();
+      const customer = await owner.customer.findFirst({
+        where: { organisationId: org.id, name: "Brand New Client Ltd" },
+      });
+      expect(customer).not.toBeNull();
+      const contact = await owner.contact.findFirstOrThrow({ where: { email: contactEmail } });
+      expect(contact.customerId).toBe(customer!.id);
+      // The phone the importer cannot carry.
+      expect(contact.phone).toBe("+447700900123");
+    });
+
+    it("REUSES an existing client rather than making a second one", async () => {
+      // Case-insensitive exact name, exactly as `resolveCustomer` does it for
+      // an upload — otherwise "alpha trading" typed today becomes a separate
+      // client from "Alpha Trading" imported yesterday.
+      const before = await owner.customer.count({ where: { organisationId: org.id } });
+      const response = await addRow({ clientName: "alpha trading" }).expect(201);
+      const after = await owner.customer.count({ where: { organisationId: org.id } });
+      expect(after).toBe(before);
+      const invoice = await owner.invoice.findUniqueOrThrow({ where: { id: response.body.id } });
+      expect(invoice.customerId).toBe(customerA);
+    });
+
+    it("lands as a draft by default, so nothing is chased by accident", async () => {
+      const response = await addRow({}).expect(201);
+      expect(response.body.status).toBe("draft");
+    });
+
+    /**
+     * ⚠️ UNLIKE AN IMPORT. Imported rows are forced to Draft because nobody has
+     * read them; a row somebody has just typed has been read by definition.
+     */
+    it("can start chasing immediately when asked", async () => {
+      const response = await addRow({
+        status: "active",
+        contactName: "Grace Hopper",
+        contactEmail: `grace-${randomUUID().slice(0, 8)}@typed.example`,
+      }).expect(201);
+      expect(response.body.status).toBe("active");
+      const scheduled = await owner.scheduledAction.count({
+        where: { invoiceId: response.body.id },
+      });
+      expect(scheduled).toBeGreaterThan(0);
+      /**
+       * This fixture organisation has no mailbox, and the row says so rather
+       * than claiming a chase — the two systems composing correctly. Reminders
+       * are still SCHEDULED (that gate is about the contact), which is why both
+       * assertions belong together: queued rows and nothing able to send them.
+       */
+      expect(response.body.chaseBlockedReason).toBe("no_mailbox");
+    });
+
+    it("refuses a phone number with no country code", async () => {
+      // A dialler cannot ring "07700 900123" without knowing the country, and
+      // free text now is a data-cleaning project later.
+      const refused = await addRow({ contactPhone: "07700 900123" }).expect(400);
+      expect(JSON.stringify(refused.body)).toMatch(/country code/i);
+      await addRow({ contactPhone: "+441134960000" }).expect(201);
+    });
+
+    it("refuses a duplicate invoice number, like every other create path", async () => {
+      const number = `TYPED-DUP-${randomUUID().slice(0, 6)}`;
+      await addRow({ invoiceNumber: number }).expect(201);
+      await addRow({ invoiceNumber: number }).expect(409);
+    });
+
+    it("refuses zero, negative and fractional amounts", async () => {
+      await addRow({ amountMinorUnits: 0 }).expect(400);
+      await addRow({ amountMinorUnits: -1 }).expect(400);
+      await addRow({ amountMinorUnits: 1.5 }).expect(400);
+    });
+
+    it("needs invoices:write — read_only is refused", async () => {
+      await addRow({}, readOnlyToken).expect(403);
+    });
+
+    it("keeps the currency's own decimals", async () => {
+      const response = await addRow({ amountMinorUnits: 987_654, currency: "KWD" }).expect(201);
+      expect(response.body.amountMinorUnits).toBe(987_654);
+      expect(response.body.currency).toBe("KWD");
+    });
+
+    it("audits the create like any other invoice", async () => {
+      const response = await addRow({}).expect(201);
+      const audit = await owner.auditLog.findFirst({
+        where: { organisationId: org.id, entityId: response.body.id, action: "invoice.created" },
+      });
+      expect(audit).not.toBeNull();
+    });
+  });
+
+  it("is readable by read_only, and scoped to the caller's organisation", async () => {
+    await book("?limit=1", readOnlyToken).expect(200);
+    const other = await createOrgWithMembers(owner, "book-other", ["owner"]);
+    const otherToken = await signToken({
+      sub: other.members[0]!.authUserId,
+      email: other.members[0]!.email,
+    });
+    const response = await request(app.getHttpServer())
+      .get(`/organisations/${other.id}/invoices`)
+      .set("Authorization", `Bearer ${otherToken}`)
+      .expect(200);
+    // A different organisation's book is empty, not this one's.
+    expect(response.body.rows).toHaveLength(0);
+    expect(response.body.chasedByCurrency).toHaveLength(0);
+  });
+});
+
+/**
+ * Recording a payment (slice 1.6c, tasks 5-7).
+ *
+ * ⚠️ WHAT THIS IS FOR. A debtor who owed 10,000 and paid 6,000 used to leave
+ * two bad choices: leave the invoice Active and Eva chases the FULL 10,000, or
+ * cancel it and Eva stops chasing the 4,000 still owed. Migration 0019 added
+ * `amount_paid_minor_units` for exactly this and nothing ever wrote to it.
+ */
+describe("Invoices: recording a payment", () => {
+  let app: INestApplication;
+  let owner: EvaPrismaClient;
+  let org: FixtureOrg;
+  let customerId: string;
+  let contactId: string;
+  const tokens = new Map<string, string>();
+
+  const baseUrl = () => `/organisations/${org.id}/customers/${customerId}/invoices`;
+
+  beforeAll(async () => {
+    owner = createOwnerClient();
+    await seedTestDatabase(owner);
+    app = await createTestApp();
+    org = await createOrgWithMembers(owner, "payments", ["owner", "finance", "read_only"]);
+    for (const member of org.members) {
+      tokens.set(member.roleKey, await signToken({ sub: member.authUserId, email: member.email }));
+    }
+    const ownerId = org.members.find((m) => m.roleKey === "owner")!.id;
+    await owner.emailAccount.create({
+      data: {
+        organisationId: org.id,
+        provider: "microsoft",
+        emailAddress: `pay-${randomUUID().slice(0, 8)}@example.com`,
+        isPrimary: true,
+      },
+    });
+    customerId = (
+      await owner.customer.create({
+        data: { id: randomUUID(), organisationId: org.id, name: "Payer Ltd", createdBy: ownerId },
+      })
+    ).id;
+    contactId = (
+      await owner.contact.create({
+        data: {
+          id: randomUUID(),
+          organisationId: org.id,
+          customerId,
+          name: "Accounts",
+          email: `pay-ap-${randomUUID().slice(0, 8)}@example.com`,
+          createdBy: ownerId,
+        },
+      })
+    ).id;
+  });
+
+  afterAll(async () => {
+    await app.close();
+    await owner.$disconnect();
+  });
+
+  /** An issued invoice for 10,000.00, with a recipient, being chased. */
+  async function issued(overrides: Record<string, unknown> = {}) {
+    const response = await request(app.getHttpServer())
+      .post(baseUrl())
+      .set("Authorization", `Bearer ${tokens.get("finance")}`)
+      .send({
+        invoiceNumber: `PAY-${randomUUID().slice(0, 8)}`,
+        amountMinorUnits: 1_000_000,
+        dueDate: orgDate(7),
+        contactId,
+        status: "active",
+        ...overrides,
+      })
+      .expect(201);
+    return response.body as { id: string; status: string };
+  }
+
+  function pay(invoiceId: string, body: Record<string, unknown>, role = "finance") {
+    return request(app.getHttpServer())
+      .post(`${baseUrl()}/${invoiceId}/payments`)
+      .set("Authorization", `Bearer ${tokens.get(role)}`)
+      .send(body);
+  }
+
+  it("a part payment leaves partially_paid, with the balance still owed", async () => {
+    const invoice = await issued();
+    const paid = await pay(invoice.id, { amountMinorUnits: 600_000 }).expect(200);
+    expect(paid.body.status).toBe("partially_paid");
+    expect(paid.body.amountPaidMinorUnits).toBe(600_000);
+    expect(paid.body.outstandingMinorUnits).toBe(400_000);
+    expect(paid.body.lastPaymentAt).not.toBeNull();
+  });
+
+  /**
+   * ⚠️ THE TRAP THIS WHOLE FEATURE NEARLY WALKED INTO, AND THE REASON
+   * `CHASED_INVOICE_STATUSES` EXISTS.
+   *
+   * The scheduler's eligibility gate, both reconcile-sweep queries and the
+   * display derivation all asked `status === "active"`. Moving a part-paid
+   * invoice to `partially_paid` would therefore have made Eva stop chasing the
+   * balance — the precise defect migration 0019 was created to fix, arriving by
+   * the back door and looking like a feature.
+   */
+  it("KEEPS CHASING a part-paid invoice — the reminders are not cancelled", async () => {
+    const invoice = await issued();
+    const before = await owner.scheduledAction.count({
+      where: { invoiceId: invoice.id, status: { in: ["pending", "ready"] } },
+    });
+    expect(before).toBeGreaterThan(0);
+
+    const paid = await pay(invoice.id, { amountMinorUnits: 1 }).expect(200);
+    expect(paid.body.status).toBe("partially_paid");
+
+    const after = await owner.scheduledAction.count({
+      where: { invoiceId: invoice.id, status: { in: ["pending", "ready"] } },
+    });
+    expect(after).toBe(before);
+    // And the scheduler must still consider it eligible, or 1.7 would refuse
+    // every one of those rows at send time.
+    expect(paid.body.chaseBlockedReason).toBeNull();
+  });
+
+  it("a part-paid invoice past its due date still reads OVERDUE", async () => {
+    // Derivation used to apply to `active` only, so a part-paid invoice forty
+    // days late could never show Overdue — dropping it out of every overdue
+    // view, which is exactly where a debtor who paid a token amount belongs.
+    const invoice = await issued({ dueDate: orgDate(-40) });
+    const paid = await pay(invoice.id, { amountMinorUnits: 1000 }).expect(200);
+    expect(paid.body.status).toBe("partially_paid");
+    expect(paid.body.displayStatus).toBe("overdue");
+  });
+
+  it("a part-paid invoice NOT yet due reads as part paid", async () => {
+    const invoice = await issued({ dueDate: orgDate(30) });
+    const paid = await pay(invoice.id, { amountMinorUnits: 1000 }).expect(200);
+    expect(paid.body.displayStatus).toBe("partially_paid");
+  });
+
+  it("payment to the exact balance settles it and stops the chase", async () => {
+    const invoice = await issued();
+    const paid = await pay(invoice.id, { amountMinorUnits: 1_000_000 }).expect(200);
+    expect(paid.body.status).toBe("paid");
+    expect(paid.body.outstandingMinorUnits).toBe(0);
+    const live = await owner.scheduledAction.count({
+      where: { invoiceId: invoice.id, status: { in: ["pending", "ready"] } },
+    });
+    expect(live).toBe(0);
+  });
+
+  it("two part payments that together clear it settle it", async () => {
+    const invoice = await issued();
+    await pay(invoice.id, { amountMinorUnits: 400_000 }).expect(200);
+    const second = await pay(invoice.id, { amountMinorUnits: 600_000 }).expect(200);
+    expect(second.body.status).toBe("paid");
+    expect(second.body.amountPaidMinorUnits).toBe(1_000_000);
+    expect(second.body.outstandingMinorUnits).toBe(0);
+  });
+
+  it("overpayment is allowed, and the balance clamps at zero rather than going negative", async () => {
+    // Founder ruling 2026-08-02. A debtor who rounds up or settles two invoices
+    // with one transfer is real, and refusing to record what actually arrived
+    // would leave the customer's books disagreeing with their bank.
+    const invoice = await issued();
+    const paid = await pay(invoice.id, { amountMinorUnits: 1_500_000 }).expect(200);
+    expect(paid.body.status).toBe("paid");
+    expect(paid.body.amountPaidMinorUnits).toBe(1_500_000);
+    expect(paid.body.outstandingMinorUnits).toBe(0);
+  });
+
+  it("records the payment DATE, which is what makes days-to-pay computable", async () => {
+    const invoice = await issued();
+    const paid = await pay(invoice.id, {
+      amountMinorUnits: 1_000_000,
+      paidAt: "2026-07-15",
+    }).expect(200);
+    expect(String(paid.body.lastPaymentAt)).toContain("2026-07-15");
+    const stored = await owner.invoice.findUniqueOrThrow({ where: { id: invoice.id } });
+    expect(stored.lastPaymentAt).not.toBeNull();
+  });
+
+  it("a payment on a PAUSED invoice records the money and leaves it paused", async () => {
+    /**
+     * Somebody paused that chase deliberately — a query, a dispute — and them
+     * banking a part payment is not them asking for it to start again. Moving
+     * it to `partially_paid` would silently resume chasing, because that IS a
+     * chased status.
+     */
+    const invoice = await issued();
+    await request(app.getHttpServer())
+      .post(`${baseUrl()}/${invoice.id}/pause`)
+      .set("Authorization", `Bearer ${tokens.get("finance")}`)
+      .expect(200);
+
+    const paid = await pay(invoice.id, { amountMinorUnits: 100_000 }).expect(200);
+    expect(paid.body.status).toBe("paused");
+    expect(paid.body.amountPaidMinorUnits).toBe(100_000);
+    // Still paused, so still not chased — and the reason says so.
+    const live = await owner.scheduledAction.count({
+      where: { invoiceId: invoice.id, status: { in: ["pending", "ready"] } },
+    });
+    expect(live).toBe(0);
+  });
+
+  it("settling a PAUSED invoice does mark it paid, because that is what happened", async () => {
+    const invoice = await issued();
+    await request(app.getHttpServer())
+      .post(`${baseUrl()}/${invoice.id}/pause`)
+      .set("Authorization", `Bearer ${tokens.get("finance")}`)
+      .expect(200);
+    const paid = await pay(invoice.id, { amountMinorUnits: 1_000_000 }).expect(200);
+    expect(paid.body.status).toBe("paid");
+  });
+
+  it("refuses a payment on a draft — it was never issued", async () => {
+    const invoice = await issued({ status: "draft" });
+    const refused = await pay(invoice.id, { amountMinorUnits: 1000 }).expect(409);
+    expect(String(refused.body.message)).toMatch(/draft/i);
+  });
+
+  /**
+   * ⚠️ AND THE MONEY MUST NOT BE WRITTEN EITHER. The status change and the
+   * amount move in one transaction on purpose: a recorded payment on an invoice
+   * whose status did not follow is the two-numbers-disagree failure this slice
+   * exists to remove.
+   */
+  it("refuses a payment on a cancelled invoice, and writes nothing at all", async () => {
+    const invoice = await issued();
+    await request(app.getHttpServer())
+      .post(`${baseUrl()}/${invoice.id}/cancel`)
+      .set("Authorization", `Bearer ${tokens.get("finance")}`)
+      .expect(200);
+
+    await pay(invoice.id, { amountMinorUnits: 1000 }).expect(409);
+
+    const stored = await owner.invoice.findUniqueOrThrow({ where: { id: invoice.id } });
+    expect(stored.status).toBe("cancelled");
+    expect(stored.amountPaidMinorUnits).toBe(0n);
+    expect(stored.lastPaymentAt).toBeNull();
+  });
+
+  it("refuses a second payment once it is settled", async () => {
+    const invoice = await issued();
+    await pay(invoice.id, { amountMinorUnits: 1_000_000 }).expect(200);
+    await pay(invoice.id, { amountMinorUnits: 500 }).expect(409);
+  });
+
+  it("rejects zero, negative and fractional amounts", async () => {
+    const invoice = await issued();
+    await pay(invoice.id, { amountMinorUnits: 0 }).expect(400);
+    await pay(invoice.id, { amountMinorUnits: -500 }).expect(400);
+    await pay(invoice.id, { amountMinorUnits: 12.5 }).expect(400);
+  });
+
+  it("rejects a status field on the payload — the balance decides, not the caller", async () => {
+    // There is no "mark as paid" in this API. The schema is strict so an
+    // attempt to assert one is a 400 rather than a silently ignored field.
+    const invoice = await issued();
+    await pay(invoice.id, { amountMinorUnits: 1000, status: "paid" }).expect(400);
+  });
+
+  it("needs invoices:write — read_only is refused and nothing is written", async () => {
+    const invoice = await issued();
+    await pay(invoice.id, { amountMinorUnits: 1000 }, "read_only").expect(403);
+    const stored = await owner.invoice.findUniqueOrThrow({ where: { id: invoice.id } });
+    expect(stored.amountPaidMinorUnits).toBe(0n);
+  });
+
+  it("audits the payment with the status it moved between, and no amount", async () => {
+    // BRD 14: audit metadata carries counts, ids and outcomes — never money.
+    const invoice = await issued();
+    await pay(invoice.id, { amountMinorUnits: 600_000 }).expect(200);
+    const audit = await owner.auditLog.findFirst({
+      where: { organisationId: org.id, entityId: invoice.id, action: "invoice.payment_recorded" },
+    });
+    expect(audit).not.toBeNull();
+    expect(audit!.metadata).toMatchObject({ from: "active", to: "partially_paid", settled: false });
+    expect(JSON.stringify(audit!.metadata)).not.toContain("600000");
+  });
+
+  it("handles a currency with three decimals without losing the third digit", async () => {
+    // 987.654 KWD is 987654 fils. A part payment of 500.000 leaves 487.654.
+    const invoice = await issued({ amountMinorUnits: 987_654, currency: "KWD" });
+    const paid = await pay(invoice.id, { amountMinorUnits: 500_000 }).expect(200);
+    expect(paid.body.outstandingMinorUnits).toBe(487_654);
+    expect(paid.body.currency).toBe("KWD");
+  });
+});
+
+/**
+ * `chaseBlockedReason` — why Eva would not email a reminder (slice 1.6c).
+ *
+ * ⚠️ WHAT THIS IS DEFENDING. Before it, the screens could see exactly ONE of
+ * the ways a chase silently does not happen — a missing recipient — and said
+ * "Eva will chase it" in every other case. An invoice whose contact has no
+ * email address, or who asked not to be emailed, or whose organisation has no
+ * working mailbox, gets zero scheduled rows and reports success.
+ *
+ * Each case below therefore asserts the reason AND that nothing was scheduled,
+ * because a reason that disagrees with the scheduler is the same defect wearing
+ * a label.
+ */
+describe("Invoices: chaseBlockedReason (does Eva actually chase this?)", () => {
+  let app: INestApplication;
+  let owner: EvaPrismaClient;
+  /** Has a live, healthy mailbox — so only per-invoice reasons can fire. */
+  let org: FixtureOrg;
+  /** No mailbox at all, so nothing in it can ever be sent. */
+  let mailboxless: FixtureOrg;
+  let customerId: string;
+  let mailboxlessCustomerId: string;
+  let token: string;
+  let mailboxlessToken: string;
+  let ownerUserId: string;
+
+  const url = (orgId: string, custId: string) =>
+    `/organisations/${orgId}/customers/${custId}/invoices`;
+
+  beforeAll(async () => {
+    owner = createOwnerClient();
+    await seedTestDatabase(owner);
+    app = await createTestApp();
+
+    org = await createOrgWithMembers(owner, "chase-blockers", ["owner"]);
+    mailboxless = await createOrgWithMembers(owner, "chase-nomailbox", ["owner"]);
+    const member = org.members[0]!;
+    ownerUserId = member.id;
+    token = await signToken({ sub: member.authUserId, email: member.email });
+    const other = mailboxless.members[0]!;
+    mailboxlessToken = await signToken({ sub: other.authUserId, email: other.email });
+
+    await owner.emailAccount.create({
+      data: {
+        organisationId: org.id,
+        provider: "microsoft",
+        emailAddress: `chase-${randomUUID().slice(0, 8)}@example.com`,
+        isPrimary: true,
+      },
+    });
+
+    customerId = (
+      await owner.customer.create({
+        data: {
+          id: randomUUID(),
+          organisationId: org.id,
+          name: "Chased Ltd",
+          createdBy: member.id,
+        },
+      })
+    ).id;
+    mailboxlessCustomerId = (
+      await owner.customer.create({
+        data: {
+          id: randomUUID(),
+          organisationId: mailboxless.id,
+          name: "Unchased Ltd",
+          createdBy: other.id,
+        },
+      })
+    ).id;
+  });
+
+  afterAll(async () => {
+    await app.close();
+    await owner.$disconnect();
+  });
+
+  async function makeContact(overrides: { email?: string | null } = {}) {
+    return owner.contact.create({
+      data: {
+        id: randomUUID(),
+        organisationId: org.id,
+        customerId,
+        name: "Accounts",
+        email:
+          overrides.email === undefined
+            ? `ap-${randomUUID().slice(0, 8)}@example.com`
+            : overrides.email,
+        createdBy: ownerUserId,
+      },
+    });
+  }
+
+  async function raise(
+    body: Record<string, unknown>,
+    target = { orgId: org.id, custId: customerId, auth: token },
+  ) {
+    return request(app.getHttpServer())
+      .post(url(target.orgId, target.custId))
+      .set("Authorization", `Bearer ${target.auth}`)
+      .send({
+        invoiceNumber: `CB-${randomUUID().slice(0, 8)}`,
+        amountMinorUnits: 5000,
+        dueDate: orgDate(10),
+        status: "active",
+        ...body,
+      })
+      .expect(201);
+  }
+
+  /** How many reminder rows the invoice actually got. */
+  async function scheduledCount(invoiceId: string): Promise<number> {
+    return owner.scheduledAction.count({ where: { invoiceId } });
+  }
+
+  it("is null when Eva really will chase it, and rows are actually scheduled", async () => {
+    const contact = await makeContact();
+    const invoice = await raise({ contactId: contact.id });
+    expect(invoice.body.chaseBlockedReason).toBeNull();
+    expect(await scheduledCount(invoice.body.id)).toBeGreaterThan(0);
+  });
+
+  it("says no_contact, and schedules nothing", async () => {
+    const invoice = await raise({});
+    expect(invoice.body.chaseBlockedReason).toBe("no_contact");
+    expect(await scheduledCount(invoice.body.id)).toBe(0);
+  });
+
+  it("says no_email, and schedules nothing", async () => {
+    const contact = await makeContact({ email: null });
+    const invoice = await raise({ contactId: contact.id });
+    expect(invoice.body.chaseBlockedReason).toBe("no_email");
+    expect(await scheduledCount(invoice.body.id)).toBe(0);
+  });
+
+  it("says suppressed when the contact asked not to be emailed", async () => {
+    const contact = await makeContact();
+    await owner.suppressionEntry.create({
+      data: {
+        organisationId: org.id,
+        channel: "email",
+        value: contact.email!.toLowerCase(),
+        reason: "unsubscribed",
+      },
+    });
+    const invoice = await raise({ contactId: contact.id });
+    expect(invoice.body.chaseBlockedReason).toBe("suppressed");
+    expect(await scheduledCount(invoice.body.id)).toBe(0);
+  });
+
+  it("says contact_deleted when the recipient is removed AFTER the invoice", async () => {
+    /**
+     * ⚠️ THE ORDER HERE IS THE POINT, and the first version of this test got it
+     * wrong. Attaching an already-deleted contact is refused 400 — correctly.
+     * The reachable case is the real-world one: a live contact is chosen, the
+     * invoice starts being chased, and somebody removes the person months
+     * later. Soft-deleted contacts stay linked on `invoices.contact_id` (the
+     * 1.4 observation), so the invoice keeps pointing at a recipient who can no
+     * longer be emailed, and the chase goes quiet with nothing on screen to say
+     * so. That is exactly what this field is for.
+     */
+    const contact = await makeContact();
+    const invoice = await raise({ contactId: contact.id });
+    expect(invoice.body.chaseBlockedReason).toBeNull();
+
+    await owner.contact.update({ where: { id: contact.id }, data: { deletedAt: new Date() } });
+
+    const after = await request(app.getHttpServer())
+      .get(`${url(org.id, customerId)}/${invoice.body.id}`)
+      .set("Authorization", `Bearer ${token}`)
+      .expect(200);
+    expect(after.body.chaseBlockedReason).toBe("contact_deleted");
+  });
+
+  it("says no_mailbox when the organisation has nowhere to send from", async () => {
+    const contact = await owner.contact.create({
+      data: {
+        id: randomUUID(),
+        organisationId: mailboxless.id,
+        customerId: mailboxlessCustomerId,
+        name: "Accounts",
+        email: `ap-${randomUUID().slice(0, 8)}@example.com`,
+        createdBy: mailboxless.members[0]!.id,
+      },
+    });
+    const invoice = await raise(
+      { contactId: contact.id },
+      { orgId: mailboxless.id, custId: mailboxlessCustomerId, auth: mailboxlessToken },
+    );
+    expect(invoice.body.chaseBlockedReason).toBe("no_mailbox");
+  });
+
+  it("stops reporting no_mailbox once a mailbox is connected", async () => {
+    // Proves the reason is READ from the data rather than stamped once: the
+    // same invoice must change its answer when the organisation does.
+    const contact = await owner.contact.create({
+      data: {
+        id: randomUUID(),
+        organisationId: mailboxless.id,
+        customerId: mailboxlessCustomerId,
+        name: "Accounts Two",
+        email: `ap2-${randomUUID().slice(0, 8)}@example.com`,
+        createdBy: mailboxless.members[0]!.id,
+      },
+    });
+    const invoice = await raise(
+      { contactId: contact.id },
+      { orgId: mailboxless.id, custId: mailboxlessCustomerId, auth: mailboxlessToken },
+    );
+    expect(invoice.body.chaseBlockedReason).toBe("no_mailbox");
+
+    const account = await owner.emailAccount.create({
+      data: {
+        organisationId: mailboxless.id,
+        provider: "microsoft",
+        emailAddress: `late-${randomUUID().slice(0, 8)}@example.com`,
+        isPrimary: true,
+      },
+    });
+    const after = await request(app.getHttpServer())
+      .get(`${url(mailboxless.id, mailboxlessCustomerId)}/${invoice.body.id}`)
+      .set("Authorization", `Bearer ${mailboxlessToken}`)
+      .expect(200);
+    expect(after.body.chaseBlockedReason).toBeNull();
+
+    // An UNHEALTHY mailbox is not a mailbox: expiry must bring the block back,
+    // because `resolveSendingMailbox` would return null for it too.
+    await owner.emailAccount.update({
+      where: { id: account.id },
+      data: { healthStatus: "auth_expired" },
+    });
+    const expired = await request(app.getHttpServer())
+      .get(`${url(mailboxless.id, mailboxlessCustomerId)}/${invoice.body.id}`)
+      .set("Authorization", `Bearer ${mailboxlessToken}`)
+      .expect(200);
+    expect(expired.body.chaseBlockedReason).toBe("no_mailbox");
+
+    await owner.emailAccount.update({
+      where: { id: account.id },
+      data: { healthStatus: "active" },
+    });
+  });
+
+  /**
+   * ⚠️ THE STATUS IS SET ASIDE ON PURPOSE, and this is the test that pins it.
+   *
+   * A DRAFT with no recipient must report `no_contact`, not "it's a draft" —
+   * because the Start chasing button asks what will happen AFTER the status
+   * changes, and "it's a draft" is useless for predicting that. It is also what
+   * lets a cancelled invoice's row stay quiet: the badge already says
+   * Cancelled, so the reason field has nothing to add.
+   */
+  it("answers about the CONTACT even for a draft, so the button can predict", async () => {
+    const draft = await raise({ status: "draft" });
+    expect(draft.body.status).toBe("draft");
+    expect(draft.body.chaseBlockedReason).toBe("no_contact");
+
+    const good = await makeContact();
+    const ready = await raise({ status: "draft", contactId: good.id });
+    expect(ready.body.chaseBlockedReason).toBeNull();
+    // Still a draft, so nothing is scheduled yet — the reason is a forecast,
+    // not a claim that Eva is chasing it today.
+    expect(await scheduledCount(ready.body.id)).toBe(0);
+  });
+
+  it("reports the same reasons through the list as through a single read", async () => {
+    // The list computes them in a batch (two queries for any number of rows);
+    // a single read takes the same path with one invoice. They must not drift.
+    const list = await request(app.getHttpServer())
+      .get(url(org.id, customerId))
+      .set("Authorization", `Bearer ${token}`)
+      .expect(200);
+    expect(list.body.length).toBeGreaterThan(3);
+    for (const row of list.body) {
+      const one = await request(app.getHttpServer())
+        .get(`${url(org.id, customerId)}/${row.id}`)
+        .set("Authorization", `Bearer ${token}`)
+        .expect(200);
+      expect(one.body.chaseBlockedReason).toBe(row.chaseBlockedReason);
+    }
+    // And the batch must have produced more than one distinct answer, or this
+    // proves nothing about the batching.
+    expect(
+      new Set(list.body.map((row: { chaseBlockedReason: string | null }) => row.chaseBlockedReason))
+        .size,
+    ).toBeGreaterThan(1);
   });
 });

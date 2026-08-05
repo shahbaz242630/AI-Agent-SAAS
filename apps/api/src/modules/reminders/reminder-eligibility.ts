@@ -1,3 +1,5 @@
+import { isChasedInvoiceStatus } from "@eva/types";
+
 /**
  * Slice 1.5 schedule-time eligibility (plan §3). Pure function — the caller
  * loads the invoice/contact rows and evaluates the suppression check
@@ -25,7 +27,15 @@ export function checkReminderEligibility(input: {
   contact: { deletedAt: Date | null; email: string | null } | null;
   suppressed: boolean;
 }): { eligible: true } | { eligible: false; reason: IneligibilityReason } {
-  if (input.invoiceStatus !== "active") return { eligible: false, reason: "not_active" };
+  /**
+   * ⚠️ `partially_paid` IS CHASED (slice 1.6c). This read `!== "active"` until
+   * payments landed, which would have made recording a part payment stop the
+   * chase on the balance still owed — the exact defect migration 0019 exists to
+   * fix. `CHASED_INVOICE_STATUSES` is the one list; do not spell it out here.
+   */
+  if (!isChasedInvoiceStatus(input.invoiceStatus)) {
+    return { eligible: false, reason: "not_active" };
+  }
   if (input.contact === null) return { eligible: false, reason: "no_contact" };
   if (input.contact.deletedAt !== null) return { eligible: false, reason: "contact_deleted" };
   if (input.contact.email === null || input.contact.email.trim() === "") {

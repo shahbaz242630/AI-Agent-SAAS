@@ -13,6 +13,7 @@
   "dependencies": {
     "@eva/configuration": "workspace:*",
     "@eva/design-system": "workspace:*",
+    "@eva/types": "workspace:*",
     "@eva/ui": "workspace:*",
     "@sentry/nextjs": "^10.67.0",
     "@supabase/ssr": "^0.12.3",
