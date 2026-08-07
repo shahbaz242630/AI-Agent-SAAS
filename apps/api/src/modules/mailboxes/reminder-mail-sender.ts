@@ -4,7 +4,10 @@ import { MailboxesService } from "./mailboxes.service.js";
 import type { SendingMailboxResolution } from "./mailboxes.service.js";
 import { MICROSOFT_GRAPH_PROVIDER } from "../integrations/microsoft-graph/microsoft-graph-provider.js";
 import type { MicrosoftGraphProvider } from "../integrations/microsoft-graph/microsoft-graph-provider.js";
-import { ReauthRequiredError } from "../integrations/microsoft-graph/microsoft-graph-provider.js";
+import {
+  GraphRequestError,
+  ReauthRequiredError,
+} from "../integrations/microsoft-graph/microsoft-graph-provider.js";
 
 /**
  * The seam the reminders module sends through (Slice 1.7).
@@ -47,6 +50,39 @@ export class MailboxUnusableError extends Error {
   }
 }
 
+/**
+ * The provider could not take this message NOW, but nothing is wrong with it.
+ *
+ * ⚠️ THIS EXISTS BECAUSE THE FIRST VERSION LOST MAIL AT SCALE. Every provider
+ * error was treated the same and marked the row `failed`, which is terminal —
+ * so a Microsoft 429 (which only happens under load, i.e. exactly when a real
+ * customer's book is big) would have permanently binned that reminder. Nobody
+ * would have noticed until a debtor was never chased.
+ *
+ * `Retry-After` is surfaced rather than obeyed here: this sweep does not sleep
+ * on a rate limit, it defers the row to the next run. Honest and simple, and
+ * it keeps a slow provider from holding a transaction or a worker open.
+ */
+export class MailDeliveryDeferredError extends Error {
+  constructor(
+    readonly retryAfterSeconds: number | null,
+    cause?: unknown,
+  ) {
+    super("delivery deferred — the provider is busy or briefly unavailable");
+    this.name = "MailDeliveryDeferredError";
+    this.cause = cause;
+  }
+}
+
+/**
+ * Transient by HTTP status: 429 is rate limiting, 5xx is Microsoft having a
+ * moment. Everything else (a malformed address, a refused recipient) is ours
+ * and will fail identically next time, so it is a real failure.
+ */
+function isTransient(status: number): boolean {
+  return status === 429 || status >= 500;
+}
+
 export interface ReminderMailSender {
   deliver(delivery: ReminderMailDelivery): Promise<void>;
 }
@@ -74,10 +110,20 @@ export class GraphReminderMailSender implements ReminderMailSender {
       if (error instanceof ReauthRequiredError) throw new MailboxUnusableError(error);
       throw error;
     }
-    await this.graph.sendMail(accessToken, {
-      to: delivery.to,
-      subject: delivery.subject,
-      bodyText: delivery.bodyText,
-    });
+    try {
+      await this.graph.sendMail(accessToken, {
+        to: delivery.to,
+        subject: delivery.subject,
+        bodyText: delivery.bodyText,
+      });
+    } catch (error) {
+      // A rate limit or a Microsoft blip must NOT close the reminder off; only
+      // a fault in the message itself is a real failure.
+      if (error instanceof GraphRequestError && isTransient(error.status)) {
+        throw new MailDeliveryDeferredError(error.retryAfterSeconds, error);
+      }
+      if (error instanceof ReauthRequiredError) throw new MailboxUnusableError(error);
+      throw error;
+    }
   }
 }

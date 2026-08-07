@@ -8,7 +8,11 @@ import { PrismaService } from "../../common/database/prisma.service.js";
 // eslint-disable-next-line @typescript-eslint/consistent-type-imports
 import { MailboxesService } from "../mailboxes/mailboxes.service.js";
 import type { SendingMailboxResolution } from "../mailboxes/mailboxes.service.js";
-import { MailboxUnusableError, REMINDER_MAIL_SENDER } from "../mailboxes/reminder-mail-sender.js";
+import {
+  MailboxUnusableError,
+  MailDeliveryDeferredError,
+  REMINDER_MAIL_SENDER,
+} from "../mailboxes/reminder-mail-sender.js";
 import type { ReminderMailSender } from "../mailboxes/reminder-mail-sender.js";
 import type { TenantTx } from "../../common/permissions/permissions.js";
 import { writeAuditLog } from "../../common/audit/audit-log.js";
@@ -31,7 +35,9 @@ export type HeldReason =
   /** The mailbox has no recorded owner, so no honest actor exists to refresh its token. */
   | "mailbox_owner_unknown"
   /** The invoice lost its contact (or its email) after the row was scheduled. */
-  | "no_recipient";
+  | "no_recipient"
+  /** Rate-limited or a provider blip — retried on the next sweep, not lost. */
+  | "provider_deferred";
 
 export interface SendRemindersResult {
   sent: number;
@@ -217,6 +223,21 @@ export class ReminderSenderService {
           this.logger.warn(
             { err: error, organisationId, scheduledActionId: job.actionId },
             "reminder held: mailbox needs reconnecting",
+          );
+          continue;
+        }
+        if (error instanceof MailDeliveryDeferredError) {
+          // ⚠️ A RATE LIMIT IS NOT A FAILURE, and treating it as one loses mail
+          // exactly when there is most of it. Back to `ready` for the next run.
+          await this.release(organisationId, job.actionId);
+          hold(counts, "provider_deferred");
+          this.logger.warn(
+            {
+              organisationId,
+              scheduledActionId: job.actionId,
+              retryAfterSeconds: error.retryAfterSeconds,
+            },
+            "reminder deferred: provider busy",
           );
           continue;
         }

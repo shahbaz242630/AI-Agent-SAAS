@@ -40,6 +40,8 @@ const DAY_MS = 86_400_000;
 const sentMail: Array<{ accessToken: string } & SendMailInput> = [];
 /** Armed to make the next send throw, so the failure path is exercised. */
 let sendShouldFail = false;
+/** Armed to make the provider answer 429 / 5xx — transient, not a failure. */
+let sendTransientStatus: number | null = null;
 
 const graphDouble: MicrosoftGraphProvider = {
   buildAuthorizeUrl: () => "https://login.microsoftonline.test/authorize",
@@ -47,7 +49,11 @@ const graphDouble: MicrosoftGraphProvider = {
   refreshTokens: () => Promise.reject(new Error("not used")),
   getProfile: () => Promise.resolve({ emailAddress: "sandbox@example.com", displayName: null }),
   sendMail: (accessToken: string, input: SendMailInput) => {
-    if (sendShouldFail) return Promise.reject(new GraphRequestError("send blew up", 500, null));
+    if (sendTransientStatus !== null) {
+      return Promise.reject(new GraphRequestError("too many requests", sendTransientStatus, 30));
+    }
+    // 400 — a fault in the message itself, which WILL fail again next time.
+    if (sendShouldFail) return Promise.reject(new GraphRequestError("rejected", 400, null));
     sentMail.push({ accessToken, ...input });
     return Promise.resolve();
   },
@@ -196,6 +202,7 @@ describe("Reminder sender (Slice 1.7)", () => {
     beforeEach(async () => {
       sentMail.length = 0;
       sendShouldFail = false;
+      sendTransientStatus = null;
       // Each test owns its mailboxes: the partial unique index allows only one
       // primary per organisation, and a leftover would decide the next test.
       await owner.emailAccount.deleteMany({ where: { organisationId: org.id } });
@@ -294,7 +301,7 @@ describe("Reminder sender (Slice 1.7)", () => {
     expect(await statusOf(actionId)).toBe("ready");
   });
 
-  it("marks the row failed when Microsoft rejects the send", async () => {
+  it("marks the row failed when the message itself is rejected (400)", async () => {
     await createMailbox();
     const { actionId } = await createDueReminder();
     sendShouldFail = true;
@@ -302,6 +309,34 @@ describe("Reminder sender (Slice 1.7)", () => {
     await send();
 
     expect(await statusOf(actionId)).toBe("failed");
+  });
+
+  /**
+   * ⚠️ THE SCALE BUG. Rate limiting only happens when there is a lot of mail —
+   * i.e. exactly when a real customer's book is big. The first version treated
+   * every provider error alike and marked the row `failed`, which is terminal,
+   * so a 429 would have binned that reminder permanently and silently.
+   */
+  describe("a transient provider problem defers the reminder, never bins it", () => {
+    for (const status of [429, 500, 503]) {
+      it(`status ${status} leaves the row ready to retry`, async () => {
+        await createMailbox();
+        const { actionId, recipient } = await createDueReminder();
+        sendTransientStatus = status;
+
+        const result = await send();
+
+        expect(result.heldReasons.provider_deferred).toBeGreaterThanOrEqual(1);
+        expect(await statusOf(actionId)).toBe("ready");
+        expect(mailTo(recipient)).toHaveLength(0);
+
+        // And it genuinely goes out once the provider recovers.
+        sendTransientStatus = null;
+        await send();
+        expect(await statusOf(actionId)).toBe("sent");
+        expect(mailTo(recipient)).toHaveLength(1);
+      });
+    }
   });
 
   /**
