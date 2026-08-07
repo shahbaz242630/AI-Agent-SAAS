@@ -16,10 +16,12 @@ import {
   createOwnerClient,
   createTestApp,
   seedTestDatabase,
+  signToken,
   TEST_INTERNAL_API_SECRET,
   TEST_TOKEN_ENCRYPTION_KEY,
   type FixtureOrg,
 } from "./support.js";
+import type { ReminderActivityDto } from "@eva/types";
 
 /**
  * The reminder sender (Slice 1.7): the half of the lifecycle slice 1.5 stopped
@@ -65,6 +67,7 @@ describe("Reminder sender (Slice 1.7)", () => {
   let owner: EvaPrismaClient;
   let org: FixtureOrg;
   let ownerUserId: string;
+  let ownerToken: string;
 
   async function createMailbox(overrides: Record<string, unknown> = {}) {
     return owner.emailAccount.create({
@@ -180,6 +183,14 @@ describe("Reminder sender (Slice 1.7)", () => {
     };
   }
 
+  async function activity(): Promise<ReminderActivityDto> {
+    const response = await request(app.getHttpServer())
+      .get(`/organisations/${org.id}/reminders/activity`)
+      .set("Authorization", `Bearer ${ownerToken}`)
+      .expect(200);
+    return response.body as ReminderActivityDto;
+  }
+
   function statusOf(actionId: string) {
     return owner.scheduledAction
       .findUniqueOrThrow({ where: { id: actionId } })
@@ -194,6 +205,10 @@ describe("Reminder sender (Slice 1.7)", () => {
     // The mailbox's `connected_by` — a real user, because the sender refuses to
     // invent an actor for a token refresh (see the mailbox_owner_unknown test).
     ownerUserId = org.members[0]!.id;
+    ownerToken = await signToken({
+      sub: org.members[0]!.authUserId,
+      email: org.members[0]!.email,
+    });
   });
 
   afterEachCleanup();
@@ -398,6 +413,72 @@ describe("Reminder sender (Slice 1.7)", () => {
     // internal handover and must never reach a customer's inbox.
     expect(mailTo(recipient)).toHaveLength(1);
     expect(await statusOf(escalation.id)).toBe("ready");
+  });
+
+  /**
+   * The activity screen (Slice 1.7) — the thing that makes Eva's work visible.
+   * Before this, every reminder had been recorded since slice 1.5 and no screen
+   * read a single row of it.
+   */
+  describe("chase activity", () => {
+    it("shows a sent reminder against the invoice a human would recognise", async () => {
+      await createMailbox();
+      const { actionId, invoiceId } = await createDueReminder();
+      await send();
+
+      const result = await activity();
+
+      expect(result.counts.sentLast7Days).toBeGreaterThanOrEqual(1);
+      const row = result.recent.find((entry) => entry.id === actionId);
+      expect(row).toBeDefined();
+      expect(row?.status).toBe("sent");
+      expect(row?.invoiceId).toBe(invoiceId);
+      expect(row?.invoiceNumber).toMatch(/^SND-/);
+      expect(row?.customerName).toMatch(/^Sender Customer/);
+    });
+
+    /**
+     * The reason is DERIVED from mailbox health at read time. A dead mailbox
+     * explains every waiting row at once, and the answer changes the moment
+     * somebody reconnects — which is exactly why it is not stored on the row.
+     */
+    it("says WHY reminders are waiting when no mailbox works", async () => {
+      const { actionId } = await createDueReminder();
+      await send();
+
+      const result = await activity();
+
+      expect(result.counts.waiting).toBeGreaterThanOrEqual(1);
+      expect(result.waitingReason).toBe("no_working_mailbox");
+      expect(result.recent.find((entry) => entry.id === actionId)?.status).toBe("ready");
+    });
+
+    it("stops blaming the mailbox once a working one exists", async () => {
+      const { actionId } = await createDueReminder();
+      await send();
+      expect((await activity()).waitingReason).toBe("no_working_mailbox");
+
+      // Reconnected, but the provider is now refusing — still waiting, but the
+      // mailbox is no longer the explanation.
+      await createMailbox();
+      sendTransientStatus = 429;
+      await send();
+
+      const result = await activity();
+      expect(await statusOf(actionId)).toBe("ready");
+      expect(result.waitingReason).toBe("unknown");
+    });
+
+    it("reports nothing waiting, and no reason, once everything has gone out", async () => {
+      await createMailbox();
+      await createDueReminder();
+      await send();
+
+      const result = await activity();
+
+      expect(result.counts.waiting).toBe(0);
+      expect(result.waitingReason).toBeNull();
+    });
   });
 
   /** BRD 14: the audit trail answers "which reminder, when, from where" and

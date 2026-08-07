@@ -1,5 +1,10 @@
 import { Body, Controller, Get, Param, ParseUUIDPipe, Patch } from "@nestjs/common";
-import type { ReminderSequenceDto, ReminderStepDto, ScheduledActionDto } from "@eva/types";
+import type {
+  ReminderActivityDto,
+  ReminderSequenceDto,
+  ReminderStepDto,
+  ScheduledActionDto,
+} from "@eva/types";
 import { updateReminderStepSchema, type UpdateReminderStepInput } from "@eva/validation";
 import { ZodValidationPipe } from "../../common/validation/zod-validation.pipe.js";
 import { CurrentAuthUser, type AuthUser } from "../authentication/current-auth-user.decorator.js";
@@ -30,6 +35,15 @@ export class RemindersController {
     @Body(new ZodValidationPipe(updateReminderStepSchema)) body: UpdateReminderStepInput,
   ): Promise<ReminderStepDto> {
     return this.remindersService.updateStep(authUser, organisationId, stepId, body);
+  }
+
+  /** What Eva has actually done (Slice 1.7) — the counters and the history. */
+  @Get("reminders/activity")
+  getActivity(
+    @CurrentAuthUser() authUser: AuthUser,
+    @Param("organisationId", ParseUUIDPipe) organisationId: string,
+  ): Promise<ReminderActivityDto> {
+    return this.remindersService.getActivity(authUser, organisationId);
   }
 
   @Get("customers/:customerId/invoices/:invoiceId/scheduled-actions")

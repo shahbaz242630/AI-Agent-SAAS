@@ -23,7 +23,7 @@
  * naming the wrong one is the standing §0d mistake.
  */
 
-/** The permission keys the invoice and import screens branch on. */
+/** The permission keys the invoice, import and chasing screens branch on. */
 export type WebPermissionKey =
   | "customers:read"
   | "customers:write"
@@ -32,7 +32,11 @@ export type WebPermissionKey =
   | "invoices:read"
   | "invoices:write"
   | "imports:read"
-  | "imports:write";
+  | "imports:write"
+  // Slice 1.7 — the chase activity screen. Read-only: nothing on that page
+  // writes, so there is deliberately no `reminders:write` here until a screen
+  // needs it.
+  | "reminders:read";
 
 /** The shape every page already fetches from `GET /organisations`. */
 export interface OrganisationAccess {
