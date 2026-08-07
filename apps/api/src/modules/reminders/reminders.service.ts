@@ -7,9 +7,11 @@ import { withTenant } from "@eva/database";
 import { CHASED_INVOICE_STATUSES } from "@eva/types";
 import type {
   ReminderActionType,
+  ReminderActivityDto,
   ReminderSequenceDto,
   ReminderStepDto,
   ReminderStepKey,
+  ReminderWaitingReason,
   ScheduledActionDto,
   ScheduledActionStatus,
 } from "@eva/types";
@@ -34,6 +36,13 @@ const DEFAULT_TIMEZONE = "Europe/London";
 export interface ReconcileResult {
   processed: number;
   failed: string[];
+  /**
+   * How long the sweep took. Returned, not just logged, so it lands in the
+   * Trigger.dev run history and the serial-sweep limit shows up on a dashboard
+   * we already have before it shows up as a customer's reminders stopping
+   * (slice 1.7).
+   */
+  durationMs: number;
 }
 
 @Injectable()
@@ -151,6 +160,7 @@ export class RemindersService {
     const rows = await this.prisma.db.$queryRaw<
       { list_active_organisations: string }[]
     >`SELECT * FROM list_active_organisations()`;
+    const startedAt = Date.now();
     const failed: string[] = [];
     let processed = 0;
     for (const row of rows) {
@@ -165,7 +175,14 @@ export class RemindersService {
         failed.push(row.list_active_organisations);
       }
     }
-    return { processed, failed };
+    const durationMs = Date.now() - startedAt;
+    // One line per run, always — a sweep that logs only when something happens
+    // is indistinguishable from a sweep that stopped running (slice 1.7).
+    this.logger.info(
+      { processed, failed: failed.length, durationMs },
+      "reminder reconcile sweep complete",
+    );
+    return { processed, failed, durationMs };
   }
 
   private async reconcileOrganisation(organisationId: string): Promise<void> {
@@ -227,6 +244,70 @@ export class RemindersService {
       for (const invoice of unscheduled) {
         await scheduleInvoiceReminders(tx, { organisationId, invoiceId: invoice.id, timezone });
       }
+    });
+  }
+
+  /**
+   * GET .../reminders/activity — reminders:read. The screen that answers
+   * "has Eva actually chased anybody?" (Slice 1.7).
+   *
+   * Everything here is DERIVED at read time. `waiting` is not a stored state:
+   * it is a row that is still `ready` on or after the day it was due, which is
+   * precisely a reminder the sender could not deliver. And the reason is read
+   * from the organisation's mailbox health right now, because a reason stamped
+   * on the row would be wrong the moment somebody reconnected a mailbox.
+   *
+   * Reads are never audited.
+   */
+  async getActivity(authUser: AuthUser, organisationId: string): Promise<ReminderActivityDto> {
+    const user = await this.usersService.resolveOrProvision(authUser);
+    return withTenant(this.prisma.db, { organisationId, userId: user.id }, async (tx) => {
+      await requirePermission(tx, organisationId, user.id, "reminders:read");
+
+      const timezone = await this.orgTimezone(tx, organisationId);
+      const today = todayInTimezone(timezone);
+      const weekAgo = new Date(today.getTime() - 7 * 86_400_000);
+
+      const [sentLast7Days, waiting, failedLast7Days, recent] = await Promise.all([
+        tx.scheduledAction.count({ where: { status: "sent", updatedAt: { gte: weekAgo } } }),
+        tx.scheduledAction.count({
+          where: { status: "ready", actionType: "email", scheduledDate: { lte: today } },
+        }),
+        tx.scheduledAction.count({ where: { status: "failed", updatedAt: { gte: weekAgo } } }),
+        tx.scheduledAction.findMany({
+          where: { status: { in: ["sent", "failed", "ready", "claimed"] } },
+          include: { reminderStep: true, invoice: { include: { customer: true } } },
+          orderBy: [{ updatedAt: "desc" }],
+          take: 50,
+        }),
+      ]);
+
+      // The reason is the ORGANISATION's mailbox health, not the row's — one
+      // dead-mailbox problem explains every waiting row at once.
+      let waitingReason: ReminderWaitingReason | null = null;
+      if (waiting > 0) {
+        const healthy = await tx.emailAccount.count({
+          where: { deletedAt: null, healthStatus: "active" },
+        });
+        waitingReason = healthy === 0 ? "no_working_mailbox" : "unknown";
+      }
+
+      return {
+        counts: { sentLast7Days, waiting, failedLast7Days },
+        waitingReason,
+        recent: recent.map((row) => ({
+          id: row.id,
+          invoiceId: row.invoiceId,
+          customerId: row.invoice.customerId,
+          invoiceNumber: row.invoice.invoiceNumber,
+          customerName: row.invoice.customer.name,
+          stageKey: row.reminderStep.key as ReminderStepKey,
+          actionType: row.actionType as ReminderActionType,
+          scheduledDate: row.scheduledDate.toISOString().slice(0, 10),
+          status: row.status as ScheduledActionStatus,
+          updatedAt: row.updatedAt.toISOString(),
+        })),
+      };
     });
   }
 

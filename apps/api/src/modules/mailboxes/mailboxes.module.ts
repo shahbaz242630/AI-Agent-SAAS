@@ -7,6 +7,7 @@ import { MicrosoftDiscoveryService } from "../integrations/microsoft-graph/micro
 import { MailboxesController } from "./mailboxes.controller.js";
 import { MailboxesService } from "./mailboxes.service.js";
 import { MicrosoftOAuthController } from "./microsoft-oauth.controller.js";
+import { GraphReminderMailSender, REMINDER_MAIL_SENDER } from "./reminder-mail-sender.js";
 
 @Module({
   imports: [UsersModule],
@@ -15,9 +16,19 @@ import { MicrosoftOAuthController } from "./microsoft-oauth.controller.js";
     MailboxesService,
     { provide: MICROSOFT_GRAPH_PROVIDER, useClass: GraphMailProvider },
     { provide: MICROSOFT_DISCOVERY, useClass: MicrosoftDiscoveryService },
+    { provide: REMINDER_MAIL_SENDER, useClass: GraphReminderMailSender },
   ],
-  // Exported for 1.7: the reminder sender injects this to reach
-  // ensureAccessToken (refresh-on-use) before each send.
-  exports: [MailboxesService],
+  /**
+   * Exported for 1.7's sender:
+   * - `MailboxesService` for `resolveSendingMailbox` (which mailbox chases this
+   *   client, and whether any of them still works).
+   * - `REMINDER_MAIL_SENDER` for the delivery itself.
+   *
+   * ⚠️ The GRAPH PROVIDER IS DELIBERATELY NOT EXPORTED. Slice 1.5's structural
+   * guard (plan §8 risk 7) requires sending to sit behind an adapter rather
+   * than as direct provider calls inside the reminders module, and exporting
+   * the provider is exactly how that rule would be quietly lost.
+   */
+  exports: [MailboxesService, REMINDER_MAIL_SENDER],
 })
 export class MailboxesModule {}

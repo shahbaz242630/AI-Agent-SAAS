@@ -2,6 +2,12 @@ packages:
   - "apps/*"
   - "packages/*"
   - "infrastructure/*"
+  # ⚠️ NOT A WORKSPACE PACKAGE. A local Remotion experiment the founder asked us
+  # to leave alone (2026-08-07); it is gitignored, but `apps/*` still made pnpm
+  # adopt it, so every install rewrote pnpm-lock.yaml with ~1,200 lines of video
+  # toolchain. Excluding it here is what actually stops that — the .gitignore
+  # rule only hides the folder, not the lockfile churn it caused.
+  - "!apps/studio"
 
 # Supply-chain gate (Slice 0.4): only install package versions published at
 # least 24h ago — blunts install-time malware in freshly compromised releases.

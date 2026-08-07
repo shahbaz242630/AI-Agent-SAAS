@@ -500,6 +500,50 @@ export interface ScheduledActionDto {
   idempotencyKey: string;
 }
 
+// --- Slice 1.7: what Eva actually did ---
+
+/**
+ * Why due reminders have not gone out, DERIVED at read time from the
+ * organisation's mailbox health — never stored on the row.
+ *
+ * A stamped answer would be right on the day it was written and wrong the
+ * moment somebody reconnected a mailbox, which is the same trap the client
+ * allocation resolver documents.
+ */
+export type ReminderWaitingReason = "no_working_mailbox" | "unknown";
+
+/** One line of chase history, joined to the invoice a reader recognises. */
+export interface ReminderActivityRowDto {
+  id: string;
+  invoiceId: string;
+  customerId: string;
+  invoiceNumber: string;
+  customerName: string;
+  stageKey: ReminderStepKey;
+  actionType: ReminderActionType;
+  /** Calendar date (YYYY-MM-DD) in the organisation timezone. */
+  scheduledDate: string;
+  status: ScheduledActionStatus;
+  /** When the row last changed state — when it SENT, for a sent row. */
+  updatedAt: string;
+}
+
+/**
+ * The chase activity screen (Slice 1.7). Answers the question no screen could
+ * answer before it: has Eva actually chased anybody?
+ */
+export interface ReminderActivityDto {
+  counts: {
+    sentLast7Days: number;
+    /** Due, still `ready` — should have gone out and has not. */
+    waiting: number;
+    failedLast7Days: number;
+  };
+  /** Null when nothing is waiting; otherwise why, as far as we can tell. */
+  waitingReason: ReminderWaitingReason | null;
+  recent: ReminderActivityRowDto[];
+}
+
 /** One human escalation as the API exposes it (plan §3). */
 export interface HumanEscalationDto {
   id: string;
