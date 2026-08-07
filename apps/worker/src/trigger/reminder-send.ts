@@ -18,6 +18,9 @@ export interface SendRemindersResult {
    */
   organisationsProcessed: number;
   durationMs: number;
+  /** Rows a previous run left stranded mid-send. Normally 0; anything else
+   *  means a process died and is worth seeing in the run history. */
+  recovered: number;
 }
 
 /**

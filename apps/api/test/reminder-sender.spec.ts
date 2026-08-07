@@ -9,7 +9,11 @@ import type {
   MicrosoftGraphProvider,
   SendMailInput,
 } from "../src/modules/integrations/microsoft-graph/microsoft-graph-provider.js";
-import { claimReadyAction } from "../src/modules/reminders/reminder-sender.service.js";
+import {
+  claimReadyAction,
+  releaseStaleClaims,
+  STALE_CLAIM_MS,
+} from "../src/modules/reminders/reminder-sender.service.js";
 import type { SendRemindersResult } from "../src/modules/reminders/reminder-sender.service.js";
 import type { TenantTx } from "../src/common/permissions/permissions.js";
 import {
@@ -410,6 +414,73 @@ describe("Reminder sender (Slice 1.7)", () => {
     // internal handover and must never reach a customer's inbox.
     expect(mailTo(recipient)).toHaveLength(1);
     expect(await statusOf(escalation.id)).toBe("ready");
+  });
+
+  /**
+   * The claim commits BEFORE the send, so two workers cannot both deliver. The
+   * documented cost is a row stranded in `claimed` when a process dies in
+   * between — which, unrecovered, makes that reminder terminal by accident:
+   * exactly what the hold-don't-fail design exists to prevent.
+   */
+  describe("recovering reminders stranded mid-send", () => {
+    /** Backdated with raw SQL — `updatedAt` is @updatedAt and cannot be set. */
+    async function strandClaim(actionId: string, ageMs: number) {
+      const when = new Date(Date.now() - ageMs);
+      await owner.$executeRaw`UPDATE scheduled_actions SET status = 'claimed', updated_at = ${when} WHERE id = ${actionId}::uuid`;
+    }
+
+    it("frees an abandoned claim and sends it on the same run", async () => {
+      await createMailbox();
+      const { actionId, recipient } = await createDueReminder();
+      await strandClaim(actionId, STALE_CLAIM_MS + 60_000);
+
+      const result = await send();
+
+      expect(result.recovered).toBeGreaterThanOrEqual(1);
+      expect(await statusOf(actionId)).toBe("sent");
+      expect(mailTo(recipient)).toHaveLength(1);
+    });
+
+    /**
+     * ⚠️ THE ONE THAT MATTERS. A claim younger than the threshold may still
+     * belong to a sweep that is running RIGHT NOW. Stealing it would release a
+     * reminder that is about to be delivered — and the customer would get two.
+     * This is why the threshold must stay far above `maxDuration`.
+     */
+    it("does NOT steal a fresh claim from a run that may still be working", async () => {
+      await createMailbox();
+      const { actionId, recipient } = await createDueReminder();
+      await strandClaim(actionId, 60_000); // one minute old — plausibly live
+
+      const result = await send();
+
+      expect(result.recovered).toBe(0);
+      expect(await statusOf(actionId)).toBe("claimed");
+      expect(mailTo(recipient)).toHaveLength(0);
+    });
+
+    it("releases exactly at the boundary, and not before it", async () => {
+      const { actionId } = await createDueReminder();
+      await strandClaim(actionId, STALE_CLAIM_MS - 60_000);
+
+      const justInside = await owner.$transaction((tx) =>
+        releaseStaleClaims(tx as unknown as TenantTx, new Date(Date.now() - STALE_CLAIM_MS)),
+      );
+      expect(justInside).toBe(0);
+
+      await strandClaim(actionId, STALE_CLAIM_MS + 60_000);
+      const justOutside = await owner.$transaction((tx) =>
+        releaseStaleClaims(tx as unknown as TenantTx, new Date(Date.now() - STALE_CLAIM_MS)),
+      );
+      expect(justOutside).toBe(1);
+      expect(await statusOf(actionId)).toBe("ready");
+    });
+
+    /** 30 minutes clears Trigger.dev's 300s maxDuration six times over. */
+    it("keeps the threshold far above a sweep's worst-case runtime", () => {
+      const MAX_SWEEP_DURATION_MS = 300_000;
+      expect(STALE_CLAIM_MS).toBeGreaterThan(MAX_SWEEP_DURATION_MS * 5);
+    });
   });
 
   /**

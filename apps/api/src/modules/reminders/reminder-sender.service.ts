@@ -60,6 +60,12 @@ export interface SendRemindersResult {
    */
   organisationsProcessed: number;
   durationMs: number;
+  /**
+   * Rows a previous run left stranded in `claimed` and this one freed. Should
+   * normally be 0 — anything else means a process died mid-send, so it is
+   * reported rather than quietly repaired.
+   */
+  recovered: number;
 }
 
 interface Counts {
@@ -67,10 +73,11 @@ interface Counts {
   failed: number;
   held: number;
   heldReasons: Partial<Record<HeldReason, number>>;
+  recovered: number;
 }
 
 function emptyCounts(): Counts {
-  return { sent: 0, failed: 0, held: 0, heldReasons: {} };
+  return { sent: 0, failed: 0, held: 0, heldReasons: {}, recovered: 0 };
 }
 
 function hold(counts: Counts, reason: HeldReason): void {
@@ -103,6 +110,41 @@ export async function claimReadyAction(tx: TenantTx, actionId: string): Promise<
     data: { status: "claimed" },
   });
   return result.count === 1;
+}
+
+/**
+ * How long a row may sit `claimed` before we accept the process that claimed it
+ * is never coming back.
+ *
+ * ⚠️ THIRTY MINUTES IS NOT ARBITRARY, AND SHORTER IS DANGEROUS. A claim is only
+ * stale if no LIVE sweep could still be holding it, and a sweep is bounded by
+ * Trigger.dev's `maxDuration` of 300 seconds (trigger.config.ts). Thirty
+ * minutes clears that by six times over, while still recovering inside the
+ * three-hour gap between sends. Set this below a sweep's worst-case runtime and
+ * the recovery starts STEALING rows from a run that is still working —
+ * releasing a reminder that is about to be sent, so it sends twice.
+ */
+export const STALE_CLAIM_MS = 30 * 60 * 1000;
+
+/**
+ * Returns abandoned claims to `ready`.
+ *
+ * The claim commits before the send so two workers cannot both deliver, and the
+ * documented cost of that ordering is a row stranded in `claimed` if the
+ * process dies in between. Nothing recovered those rows, which made the
+ * stranded reminder terminal by accident — the exact outcome the whole
+ * hold-don't-fail design exists to prevent, reached by a different road.
+ *
+ * Exported as a tx-level function so the staleness boundary can be asserted
+ * directly (the `claimReadyAction` lesson: a guard that is only reachable
+ * end-to-end is a guard no test actually proves).
+ */
+export async function releaseStaleClaims(tx: TenantTx, staleBefore: Date): Promise<number> {
+  const result = await tx.scheduledAction.updateMany({
+    where: { status: "claimed", updatedAt: { lt: staleBefore } },
+    data: { status: "ready" },
+  });
+  return result.count;
 }
 
 /**
@@ -174,6 +216,7 @@ export class ReminderSenderService {
       organisationsFailed: [],
       organisationsProcessed: 0,
       durationMs: 0,
+      recovered: 0,
     };
 
     for (const row of rows) {
@@ -183,6 +226,7 @@ export class ReminderSenderService {
         total.sent += counts.sent;
         total.failed += counts.failed;
         total.held += counts.held;
+        total.recovered += counts.recovered;
         for (const [reason, count] of Object.entries(counts.heldReasons)) {
           const key = reason as HeldReason;
           total.heldReasons[key] = (total.heldReasons[key] ?? 0) + count;
@@ -218,6 +262,7 @@ export class ReminderSenderService {
         failed: total.failed,
         held: total.held,
         heldReasons: total.heldReasons,
+        recovered: total.recovered,
         organisationsProcessed: total.organisationsProcessed,
         organisationsFailed: total.organisationsFailed.length,
         durationMs: total.durationMs,
@@ -229,6 +274,11 @@ export class ReminderSenderService {
 
   private async sendForOrganisation(organisationId: string): Promise<Counts> {
     const counts = emptyCounts();
+
+    // Phase 0 — recover anything a dead process left claimed, BEFORE reading.
+    // Same run, so a stranded reminder goes out now rather than waiting for the
+    // next sweep: the read below picks it up as `ready` again.
+    counts.recovered = await this.recoverStaleClaims(organisationId);
 
     // Phase 1 — read everything needed, resolve each mailbox, then CLOSE the
     // transaction. Nothing below this point may run with a transaction open:
@@ -383,6 +433,26 @@ export class ReminderSenderService {
       await rawTx.$executeRaw`SELECT set_config('app.current_org', ${organisationId}, true)`;
       return await claimReadyAction(rawTx as unknown as TenantTx, actionId);
     });
+  }
+
+  /**
+   * Frees rows a dead process left claimed. Logged at warn when it finds any:
+   * a stranded claim means something crashed mid-send, which is worth knowing
+   * about even though the reminder itself is now safe.
+   */
+  private async recoverStaleClaims(organisationId: string): Promise<number> {
+    const staleBefore = new Date(Date.now() - STALE_CLAIM_MS);
+    const recovered = await this.prisma.db.$transaction(async (rawTx) => {
+      await rawTx.$executeRaw`SELECT set_config('app.current_org', ${organisationId}, true)`;
+      return await releaseStaleClaims(rawTx as unknown as TenantTx, staleBefore);
+    });
+    if (recovered > 0) {
+      this.logger.warn(
+        { organisationId, recovered },
+        "released reminders stranded mid-send by a previous run",
+      );
+    }
+    return recovered;
   }
 
   /**
