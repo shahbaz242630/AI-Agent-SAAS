@@ -6,6 +6,8 @@ import { workerEnvSchema } from "../config/env.js";
 export interface ReconcileResult {
   processed: number;
   failed: string[];
+  /** How long the sweep took — plotted by Trigger.dev's run history (1.7). */
+  durationMs: number;
 }
 
 /**

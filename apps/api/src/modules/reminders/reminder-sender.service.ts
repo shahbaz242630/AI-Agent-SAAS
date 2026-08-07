@@ -47,6 +47,19 @@ export interface SendRemindersResult {
   heldReasons: Partial<Record<HeldReason, number>>;
   /** Organisations whose whole batch threw — the sweep continues past them. */
   organisationsFailed: string[];
+  /**
+   * How many organisations the sweep walked, and how long it took.
+   *
+   * ⚠️ THIS IS THE SCALE TRIPWIRE, and it is why they are RETURNED rather than
+   * only logged. The sweep is serial — one organisation, then one reminder, at
+   * a time — which is correct and simple at our size and will not hold forever.
+   * Because they are the task's return value, Trigger.dev's own run history
+   * plots them with no metrics stack to build: the day `durationMs` starts
+   * climbing towards the 300s `maxDuration`, we find out from a dashboard we
+   * already have, rather than from a customer whose reminders stopped.
+   */
+  organisationsProcessed: number;
+  durationMs: number;
 }
 
 interface Counts {
@@ -152,12 +165,15 @@ export class ReminderSenderService {
       { list_active_organisations: string }[]
     >`SELECT * FROM list_active_organisations()`;
 
+    const startedAt = Date.now();
     const total: SendRemindersResult = {
       sent: 0,
       failed: 0,
       held: 0,
       heldReasons: {},
       organisationsFailed: [],
+      organisationsProcessed: 0,
+      durationMs: 0,
     };
 
     for (const row of rows) {
@@ -175,6 +191,7 @@ export class ReminderSenderService {
         this.logger.error({ err: error, organisationId }, "reminder send failed for organisation");
         total.organisationsFailed.push(organisationId);
       }
+      total.organisationsProcessed += 1;
     }
 
     if (total.held > 0) {
@@ -185,6 +202,28 @@ export class ReminderSenderService {
         "due reminders held — they will retry once a mailbox works",
       );
     }
+
+    total.durationMs = Date.now() - startedAt;
+    /**
+     * ⚠️ EMITTED ON EVERY RUN, INCLUDING A COMPLETELY QUIET ONE.
+     *
+     * A sweep that logs only when something happens is indistinguishable from a
+     * sweep that never ran — and "the timer silently stopped" is the failure
+     * that would take longest to notice, because the symptom is nothing at all.
+     * One line per run means its absence is the alert.
+     */
+    this.logger.info(
+      {
+        sent: total.sent,
+        failed: total.failed,
+        held: total.held,
+        heldReasons: total.heldReasons,
+        organisationsProcessed: total.organisationsProcessed,
+        organisationsFailed: total.organisationsFailed.length,
+        durationMs: total.durationMs,
+      },
+      "reminder send sweep complete",
+    );
     return total;
   }
 

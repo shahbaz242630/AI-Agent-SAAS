@@ -9,6 +9,15 @@ export interface SendRemindersResult {
   held: number;
   heldReasons: Record<string, number>;
   organisationsFailed: string[];
+  /**
+   * ⚠️ THE SCALE TRIPWIRE. Returned from the task, so Trigger.dev's own run
+   * history plots it with no metrics stack to build. `maxDuration` is 300s
+   * (trigger.config.ts) and the sweep is serial, so a `durationMs` climbing
+   * towards it is the early warning that the send loop needs concurrency —
+   * visible on a dashboard we already have, well before a customer notices.
+   */
+  organisationsProcessed: number;
+  durationMs: number;
 }
 
 /**

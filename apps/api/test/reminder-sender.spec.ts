@@ -10,6 +10,7 @@ import type {
   SendMailInput,
 } from "../src/modules/integrations/microsoft-graph/microsoft-graph-provider.js";
 import { claimReadyAction } from "../src/modules/reminders/reminder-sender.service.js";
+import type { SendRemindersResult } from "../src/modules/reminders/reminder-sender.service.js";
 import type { TenantTx } from "../src/common/permissions/permissions.js";
 import {
   createOrgWithMembers,
@@ -174,13 +175,9 @@ describe("Reminder sender (Slice 1.7)", () => {
       .post("/internal/reminders/send")
       .set("x-internal-secret", TEST_INTERNAL_API_SECRET)
       .expect(200);
-    return response.body as {
-      sent: number;
-      failed: number;
-      held: number;
-      heldReasons: Record<string, number>;
-      organisationsFailed: string[];
-    };
+    // The real type, not a hand-written copy of it: a restated shape silently
+    // stops matching the moment the endpoint grows a field.
+    return response.body as SendRemindersResult;
   }
 
   async function activity(): Promise<ReminderActivityDto> {
@@ -413,6 +410,52 @@ describe("Reminder sender (Slice 1.7)", () => {
     // internal handover and must never reach a customer's inbox.
     expect(mailTo(recipient)).toHaveLength(1);
     expect(await statusOf(escalation.id)).toBe("ready");
+  });
+
+  /**
+   * ⚠️ THE SCALE TRIPWIRE. These ride back on the task's return value so
+   * Trigger.dev's run history plots them without a metrics stack. The sweep is
+   * serial and `maxDuration` is 300s, so a climbing `durationMs` is the early
+   * warning that it needs concurrency — before a customer's reminders stop.
+   */
+  describe("every run reports what it did", () => {
+    it("returns how many organisations were walked and how long it took", async () => {
+      await createMailbox();
+      await createDueReminder();
+
+      const result = await send();
+
+      expect(result.organisationsProcessed).toBeGreaterThanOrEqual(1);
+      expect(typeof result.durationMs).toBe("number");
+      expect(result.durationMs).toBeGreaterThanOrEqual(0);
+    });
+
+    /**
+     * A sweep that only reports when something happened is indistinguishable
+     * from a sweep that stopped running — and that is the failure that takes
+     * longest to notice, because the symptom is nothing at all.
+     */
+    it("still reports on a run with nothing of its own to do", async () => {
+      // No mailbox, no due reminder created by this test — and deliberately no
+      // assertion on `sent`, which is a whole-database figure (see mailTo).
+      // The point is that the run REPORTS, not that it sent nothing.
+      const result = await send();
+
+      expect(result.organisationsProcessed).toBeGreaterThanOrEqual(1);
+      expect(result.durationMs).toBeGreaterThanOrEqual(0);
+      expect(result.heldReasons).toBeDefined();
+    });
+
+    it("counts an organisation as processed even when its batch failed", async () => {
+      await createMailbox();
+      await createDueReminder();
+      sendShouldFail = true;
+
+      const result = await send();
+
+      // A per-invoice failure is isolated; the organisation was still walked.
+      expect(result.organisationsProcessed).toBeGreaterThanOrEqual(1);
+    });
   });
 
   /**

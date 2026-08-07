@@ -1,7 +1,35 @@
 # Local development environment (BRD 9.10: dev = local Docker Compose).
-# Usage: pnpm build && docker compose -f infrastructure/docker/docker-compose.yml up
+#
+# ⚠️ TWO WAYS TO RUN THIS, AND THEY ANSWER DIFFERENT QUESTIONS.
+#
+#   Postgres only — the everyday loop, app on the host:
+#     docker compose -f infrastructure/docker/docker-compose.yml up -d postgres
+#
+#   The whole stack in containers — the PARITY check, run before a release:
+#     docker compose --env-file .env -f infrastructure/docker/docker-compose.yml \
+#       --profile fullstack up --build
+#
+# The second one runs the SAME Dockerfiles Railway builds from, so "it worked on
+# my machine" stops being a different machine. It is a profile rather than the
+# default because a rebuild on every `up` would make the everyday loop slow, and
+# the everyday loop is the one that has to stay pleasant.
+#
+# ⚠️ `--env-file .env` IS NOT OPTIONAL and must be run FROM THE REPO ROOT.
+# Compose interpolates ${VAR} from the project directory, which defaults to this
+# file's directory — so without it every secret below resolves to empty and the
+# API fails its Zod boot check with a confusing "SUPABASE_URL required".
+# Failing fast like that is correct; being confused about why is avoidable.
+#
+# ⚠️ PORTS 3005/3006, NOT 3000/3001. The founder's other projects own 3000 and
+# 3001 on this machine, and the first symptom of the clash is someone else's 404
+# page. Kept deliberately distinct so both can run at once.
 services:
   postgres:
+    # ⚠️ VERSION PARITY IS NOT YET PROVEN. Cloud is Supabase-managed and the
+    # backup runbook uses postgres:17-alpine against it. Bumping this to 17 is
+    # probably right, but the data directory is NOT compatible across majors —
+    # it would destroy the local database — so it is a deliberate decision with
+    # a re-seed attached, not a quiet edit. Recorded rather than assumed.
     image: postgres:16-alpine
     environment:
       POSTGRES_USER: eva
@@ -19,20 +47,76 @@ services:
       retries: 10
 
   api:
+    profiles: ["fullstack"]
     build:
       context: ../..
       dockerfile: infrastructure/docker/Dockerfile.api
+    # ⚠️ ENUMERATED, NEVER `env_file: ../../.env`.
+    #
+    # The blanket form was tried and is genuinely dangerous: the root .env also
+    # holds CLOUD_APP_DATABASE_URL — the live production database, password and
+    # all — and `env_file` would hand it to a local dev container that has no
+    # business being able to reach production at all. One stray script inside
+    # that container, or one `console.log(process.env)`, and the gap between
+    # development and production is a hole rather than a gap.
+    #
+    # So each variable the API's Zod schema actually declares is passed by name.
+    # Adding one here is a deliberate act; nothing arrives by accident. Values
+    # still come from the founder's real .env via --env-file, so no secret is
+    # written into this committed file.
     environment:
       NODE_ENV: production
       PORT: 3001
       LOG_LEVEL: info
-      WEB_ORIGIN: http://localhost:3000
-      DATABASE_URL: postgresql://eva:eva@postgres:5432/eva
+      SUPABASE_URL: ${SUPABASE_URL:-}
+      SUPABASE_ANON_KEY: ${SUPABASE_ANON_KEY:-}
+      SENTRY_DSN_API: ${SENTRY_DSN_API:-}
+      INTERNAL_API_SECRET: ${INTERNAL_API_SECRET:-}
+      TOKEN_ENCRYPTION_KEY: ${TOKEN_ENCRYPTION_KEY:-}
+      OAUTH_STATE_SECRET: ${OAUTH_STATE_SECRET:-}
+      MICROSOFT_CLIENT_ID: ${MICROSOFT_CLIENT_ID:-}
+      MICROSOFT_CLIENT_SECRET: ${MICROSOFT_CLIENT_SECRET:-}
+      MICROSOFT_TENANT: ${MICROSOFT_TENANT:-common}
+      MICROSOFT_OAUTH_REDIRECT_URI: ${MICROSOFT_OAUTH_REDIRECT_URI:-http://localhost:3005/integrations/microsoft/callback}
+      # The BROWSER's address for the web app, not the container's — this is
+      # what CORS is compared against.
+      WEB_ORIGIN: http://localhost:3006
+      # ⚠️ APP_DATABASE_URL, not DATABASE_URL. The API runs as eva_app
+      # (NOBYPASSRLS) so row-level security actually applies; the old compose
+      # file set DATABASE_URL, which this app has never read, so the container
+      # would have failed its boot check the first time anyone ran it.
+      # `postgres` is the service name on the compose network, not localhost.
+      APP_DATABASE_URL: postgresql://eva_app:eva_app@postgres:5432/eva
     ports:
-      - "3001:3001"
+      - "3005:3001"
     depends_on:
       postgres:
         condition: service_healthy
+
+  web:
+    profiles: ["fullstack"]
+    build:
+      context: ../..
+      dockerfile: infrastructure/docker/Dockerfile.web
+      # ⚠️ BUILD ARGS, NOT ENVIRONMENT. NEXT_PUBLIC_* values are inlined into
+      # the browser bundle when Next builds, so passing them at runtime is too
+      # late — the bundle would already contain empty strings. This mirrors how
+      # Railway injects them (Dockerfile.web's own note).
+      args:
+        NEXT_PUBLIC_SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL:-}
+        NEXT_PUBLIC_SUPABASE_ANON_KEY: ${NEXT_PUBLIC_SUPABASE_ANON_KEY:-}
+        # The API as the BROWSER reaches it. Inside the compose network the API
+        # is `http://api:3001`, but this string is executed by the user's
+        # browser, which knows nothing about that network.
+        NEXT_PUBLIC_API_URL: http://localhost:3005
+        SENTRY_DSN_WEB: ${SENTRY_DSN_WEB:-}
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+    ports:
+      - "3006:3000"
+    depends_on:
+      - api
 
 volumes:
   eva-pgdata:

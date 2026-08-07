@@ -36,6 +36,13 @@ const DEFAULT_TIMEZONE = "Europe/London";
 export interface ReconcileResult {
   processed: number;
   failed: string[];
+  /**
+   * How long the sweep took. Returned, not just logged, so it lands in the
+   * Trigger.dev run history and the serial-sweep limit shows up on a dashboard
+   * we already have before it shows up as a customer's reminders stopping
+   * (slice 1.7).
+   */
+  durationMs: number;
 }
 
 @Injectable()
@@ -153,6 +160,7 @@ export class RemindersService {
     const rows = await this.prisma.db.$queryRaw<
       { list_active_organisations: string }[]
     >`SELECT * FROM list_active_organisations()`;
+    const startedAt = Date.now();
     const failed: string[] = [];
     let processed = 0;
     for (const row of rows) {
@@ -167,7 +175,14 @@ export class RemindersService {
         failed.push(row.list_active_organisations);
       }
     }
-    return { processed, failed };
+    const durationMs = Date.now() - startedAt;
+    // One line per run, always — a sweep that logs only when something happens
+    // is indistinguishable from a sweep that stopped running (slice 1.7).
+    this.logger.info(
+      { processed, failed: failed.length, durationMs },
+      "reminder reconcile sweep complete",
+    );
+    return { processed, failed, durationMs };
   }
 
   private async reconcileOrganisation(organisationId: string): Promise<void> {
