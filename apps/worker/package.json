@@ -21,7 +21,7 @@
     "@eva/testing": "workspace:*",
     "@types/node": "^22.15.0",
     "trigger.dev": "4.5.6",
-    "typescript": "^5.8.0",
+    "typescript": "^6.0.3",
     "vitest": "^3.1.0"
   }
 }
