@@ -33,9 +33,17 @@ export async function runReminderReconcile(): Promise<ReconcileResult> {
   return (await response.json()) as ReconcileResult;
 }
 
+/**
+ * 06:17 UTC daily — before UK business hours, deliberately off the :00/:30 herd.
+ *
+ * Exported as a named constant so slice 1.7's send schedule can be asserted to
+ * run AFTER it: reconcile is what turns due rows into `ready`, and the Task
+ * object does not expose its own cron at runtime.
+ */
+export const REMINDER_RECONCILE_CRON = "17 6 * * *";
+
 export const reminderReconcile = schedules.task({
   id: "reminder-reconcile",
-  // 06:17 UTC daily — before UK business hours, deliberately off the :00/:30 herd.
-  cron: "17 6 * * *",
+  cron: REMINDER_RECONCILE_CRON,
   run: runReminderReconcile,
 });
