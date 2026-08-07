@@ -13,14 +13,14 @@
   },
   "dependencies": {
     "@eva/configuration": "workspace:*",
-    "@sentry/node": "^10.67.0",
-    "@trigger.dev/sdk": "4.5.6",
+    "@sentry/node": "^10.69.0",
+    "@trigger.dev/sdk": "4.5.9",
     "zod": "^4.0.0"
   },
   "devDependencies": {
     "@eva/testing": "workspace:*",
     "@types/node": "^22.15.0",
-    "trigger.dev": "4.5.6",
+    "trigger.dev": "4.5.9",
     "typescript": "^6.0.3",
     "vitest": "^4.1.10"
   }
