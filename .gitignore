@@ -65,3 +65,16 @@ AGENTS.md
 # where throwaway SQL, dumps and one-off scripts land — including things that
 # query the cloud database. Nothing here is ever part of the product.
 scratchpad/
+
+# A local Remotion experiment (marketing video), created 2026-08-06. Founder
+# ruling 2026-08-07: "leave the studio alone partner it was just a test".
+#
+# ⚠️ IGNORED HERE **AND** EXCLUDED FROM pnpm-workspace.yaml, and it needs both.
+# `apps/*` made it a workspace package, so every `pnpm install` absorbed it into
+# pnpm-lock.yaml — about 1,200 lines of video toolchain, one `git add -A` away
+# from landing in the API's lockfile. Ignoring it alone would have hidden that
+# from `git status` while leaving the lockfile damage in place.
+#
+# To bring it back into the project: delete this rule AND the negation in
+# pnpm-workspace.yaml. The folder itself is untouched either way.
+apps/studio/
