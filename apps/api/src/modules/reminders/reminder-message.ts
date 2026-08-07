@@ -109,9 +109,12 @@ function paymentAcknowledgement(
   if (amountPaidMinorUnits <= 0n) return null;
   const balance = outstandingBalance(amountMinorUnits, amountPaidMinorUnits);
   if (balance <= 0n) return null;
+  // The outstanding figure is NOT repeated here: every stage already opens with
+  // the balance, and quoting the same sum twice in three lines reads like a
+  // machine arguing with itself.
   return (
-    `Thank you for the ${money(amountPaidMinorUnits, currency)} already paid — ` +
-    `${money(balance, currency)} of this invoice remains outstanding.`
+    `Thank you for the ${money(amountPaidMinorUnits, currency)} already paid ` +
+    `against this invoice — the amount above is what remains outstanding.`
   );
 }
 
