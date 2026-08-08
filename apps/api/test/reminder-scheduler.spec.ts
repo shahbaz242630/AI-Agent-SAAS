@@ -174,6 +174,81 @@ describe("computeInvoiceSchedule (plan §3/§7.4)", () => {
     });
   });
 
+  /**
+   * Slice 1.8b. `pre_due_3` exists to PREVENT a late payment, so once the money
+   * is already late it has no job — collapsing it onto today schedules a "your
+   * invoice is due soon" note for an invoice that is not.
+   *
+   * ⚠️ `due_date` IS DISABLED HERE ON PURPOSE, AND THE FIRST VERSION OF THIS
+   * TEST DID NOT DO THAT AND PROVED NOTHING. With the whole default sequence
+   * enabled, `due_date` is also missed and is the LATER one, so the pre-existing
+   * "only the latest missed email collapses" rule drops `pre_due_3` by itself —
+   * the test passed with the fix removed. Turning the due-date note off is what
+   * makes `pre_due_3` the latest missed email, which is the only situation this
+   * fix actually changes. Found by mutation, not by review.
+   */
+  it("catch-up collapse: a missed pre-due step is DROPPED once the due date has passed", () => {
+    const dueDate = day("2026-03-15");
+    const today = addDays(dueDate, 2);
+    const actions = computeInvoiceSchedule({
+      invoiceId: "inv-1",
+      dueDate,
+      // Without the due-date note, pre_due_3 is the latest missed email and
+      // would otherwise collapse onto today — two days after the money was due.
+      steps: defaultSteps({ due_date: { enabled: false } }),
+      today,
+    });
+
+    expect(actions.find((a) => a.reminderStepId === "pre_due_3")).toBeUndefined();
+    // The rest of the ladder is untouched — this drops one note, it does not
+    // stop Eva chasing.
+    expect(byStep(actions, "overdue_7").scheduledDate).toEqual(addDays(dueDate, 7));
+  });
+
+  /**
+   * ⚠️ THE HALF THAT IS EASY TO BREAK. The rule is conditioned on the DUE DATE
+   * having passed, not on the step being pre-due. A heads-up two days before the
+   * money is due is late but still useful, and dropping it would delete the
+   * stage the founder asked to keep first.
+   */
+  it("catch-up collapse: a missed pre-due step still fires while the due date is AHEAD", () => {
+    const dueDate = day("2026-03-15");
+    const today = addDays(dueDate, -1); // pre_due_3 (due-3) missed; due date tomorrow
+    const actions = computeInvoiceSchedule({
+      invoiceId: "inv-1",
+      dueDate,
+      steps: defaultSteps(),
+      today,
+    });
+
+    expect(byStep(actions, "pre_due_3")).toMatchObject({ scheduledDate: today, status: "ready" });
+    expect(byStep(actions, "due_date").scheduledDate).toEqual(dueDate);
+  });
+
+  /**
+   * A pre-due step that is the ONLY missed email must not resurrect itself via
+   * some other path once the invoice is late — the drop has to be real.
+   */
+  it("catch-up collapse: drops the pre-due step even when it is the only missed email", () => {
+    const dueDate = day("2026-03-15");
+    const today = addDays(dueDate, 1);
+    const actions = computeInvoiceSchedule({
+      invoiceId: "inv-1",
+      dueDate,
+      // Only the pre-due email is enabled; everything else is off.
+      steps: defaultSteps({
+        due_date: { enabled: false },
+        overdue_7: { enabled: false },
+        overdue_14: { enabled: false },
+        overdue_30: { enabled: false },
+        final_escalation: { enabled: false },
+      }),
+      today,
+    });
+
+    expect(actions).toHaveLength(0);
+  });
+
   it("nothing missed: every step keeps its raw date as pending", () => {
     const dueDate = day("2026-03-15");
     const actions = computeInvoiceSchedule({

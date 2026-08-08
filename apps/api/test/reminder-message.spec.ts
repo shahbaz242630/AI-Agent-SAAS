@@ -160,6 +160,60 @@ describe("reminder message (Slice 1.7)", () => {
     });
   });
 
+  /**
+   * Slice 1.8b. A reminder is scheduled in advance and sent later, and three
+   * things can move it: the catch-up collapse, the 3-day spacing pass deferring
+   * it forward, and a due date edited after the fact. Only `pre_due_3` and
+   * `due_date` make a claim about the future, so only those two can be made
+   * FALSE by arriving late — and `due_date` is the serious one, because
+   * "is due today" about a week-old debt is not a tone problem, it is a lie
+   * that costs the sender credibility with their own client.
+   */
+  describe("a reminder that arrives after the due date never claims otherwise", () => {
+    it("never tells a customer an overdue invoice is due today", () => {
+      const message = buildReminderMessage(input({ stepKey: "due_date", daysOverdue: 7 }));
+      expect(message.subject).not.toContain("due today");
+      expect(message.bodyText).not.toContain("due today");
+    });
+
+    it("never sends the pre-due courtesy note once the invoice is late", () => {
+      const message = buildReminderMessage(input({ stepKey: "pre_due_3", daysOverdue: 3 }));
+      expect(message.bodyText).not.toContain("nothing to do");
+      expect(message.subject).not.toContain("is due on");
+    });
+
+    it("uses the gentlest chase register instead, counting from the real date", () => {
+      for (const stepKey of ["pre_due_3", "due_date"] as const) {
+        const message = buildReminderMessage(input({ stepKey, daysOverdue: 5 }));
+        expect(message.subject).toContain("5 days overdue");
+        // Still the FIRST chase — assumes good faith, invites a reply. A late
+        // `due_date` must not arrive sounding like the final notice.
+        expect(message.bodyText).toContain("reply");
+        expect(message.bodyText).not.toContain("last automatic reminder");
+      }
+    });
+
+    /**
+     * ⚠️ THE OTHER HALF, AND THE EASIER ONE TO BREAK. Widening the guard to
+     * "always chase" would delete the pre-due nudge entirely — the stage the
+     * founder specifically asked to keep first.
+     */
+    it("still sends the real pre-due and due-date copy when they are on time", () => {
+      const preDue = buildReminderMessage(input({ stepKey: "pre_due_3", daysOverdue: -3 }));
+      expect(preDue.bodyText).toContain("nothing to do");
+
+      const onDue = buildReminderMessage(input({ stepKey: "due_date", daysOverdue: 0 }));
+      expect(onDue.subject).toContain("due today");
+    });
+
+    it("counts a single day in the singular", () => {
+      const message = buildReminderMessage(input({ stepKey: "overdue_7", daysOverdue: 1 }));
+      expect(message.subject).toContain("1 day overdue");
+      expect(message.subject).not.toContain("1 days");
+      expect(message.bodyText).not.toContain("1 days");
+    });
+  });
+
   describe("the tone ladder climbs, and the last rung is honest", () => {
     it("the pre-due note tells the customer there is nothing to do", () => {
       const message = buildReminderMessage(input({ stepKey: "pre_due_3", daysOverdue: -3 }));
