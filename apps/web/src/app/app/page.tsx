@@ -1,97 +1,115 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import type { ReminderActivityDto } from "@eva/types";
 import { ApiError, apiFetch } from "@/lib/api";
+import { attentionItems, chaseSummary, owedRows, type CurrencyTotal } from "@/lib/dashboard";
+import { can } from "@/lib/permissions";
 import { createClient } from "@/lib/supabase/server";
 import { signOut } from "./actions";
+import { OwedPanel } from "./owed-panel";
 
-// Response shapes mirror the API contracts (apps/api users/organisations).
-interface AppUser {
-  id: string;
-  email: string;
-  fullName: string | null;
-}
+/**
+ * Home (Slice 1.9).
+ *
+ * ⚠️ THIS REPLACED AN ACCOUNT PAGE. It used to show a name, an email and a list
+ * of organisations with their role keys — everything except the number the
+ * business actually cares about. The job of this screen is to answer "what am I
+ * owed, is Eva chasing it, and does anything need me" without a click.
+ *
+ * ⚠️ NO SINGLE "YOU ARE OWED" FIGURE, EVER. Minor units are not comparable
+ * across currencies, so one big number is a confident lie for any business
+ * trading in more than one. Totals are per currency; `lib/dashboard.ts` carries
+ * the reasoning and the tests.
+ *
+ * ⚠️ OVERDUE IS A COUNT, NOT AN AMOUNT, AND THAT IS DELIBERATE. The API's
+ * `chasedByCurrency` is computed from the organisation id alone and **ignores
+ * the request's filters**, so a `?status=overdue` call returns whole-book money
+ * that would be wrong under an "overdue" heading. `totalCount` IS filtered, so
+ * the honest thing available today is how MANY are overdue. Showing an amount
+ * needs an overdue-by-currency total from the API — worth adding, not worth
+ * faking.
+ */
 
 interface OrganisationSummary {
   id: string;
   name: string;
-  roleKey: string;
+  permissions: string[];
+}
+
+interface Book {
+  totalCount: number;
+  chasedByCurrency: CurrencyTotal[];
 }
 
 export default async function AppHomePage() {
   const supabase = await createClient();
-
-  // Verify identity from the JWT claims (proxy also guards this route), then
-  // take the raw access token to forward to the Eva API.
   const { data: claimsData } = await supabase.auth.getClaims();
-  if (!claimsData?.claims) {
-    redirect("/sign-in");
-  }
+  if (!claimsData?.claims) redirect("/sign-in");
   const { data: sessionData } = await supabase.auth.getSession();
   const accessToken = sessionData.session?.access_token;
-  if (!accessToken) {
-    redirect("/sign-in");
-  }
+  if (!accessToken) redirect("/sign-in");
 
-  let me: AppUser;
   let organisations: OrganisationSummary[];
   try {
-    const [meResponse, organisationsResponse] = await Promise.all([
-      apiFetch("/users/me", accessToken),
-      apiFetch("/organisations", accessToken),
-    ]);
-    me = (await meResponse.json()) as AppUser;
-    organisations = (await organisationsResponse.json()) as OrganisationSummary[];
+    organisations = (await (
+      await apiFetch("/organisations", accessToken)
+    ).json()) as OrganisationSummary[];
   } catch (error) {
-    if (error instanceof ApiError && error.status === 401) {
-      redirect("/sign-in");
-    }
+    if (error instanceof ApiError && error.status === 401) redirect("/sign-in");
     return (
-      <main className="flex flex-1 flex-col items-center justify-center gap-4 p-8 text-center">
-        <h1 className="text-2xl font-bold text-primary">Something went wrong</h1>
-        <p className="max-w-md text-muted-foreground">
-          {error instanceof ApiError
-            ? error.message
-            : "We couldn't load your account. Please try again in a moment."}
-        </p>
-        <form action={signOut}>
-          <button type="submit" className="text-sm font-medium text-primary hover:underline">
-            Sign out
-          </button>
-        </form>
-      </main>
+      <Shell>
+        <section className="flex w-full max-w-4xl flex-col gap-3">
+          <h1 className="text-2xl font-bold text-primary">Something went wrong</h1>
+          <p className="text-sm text-muted-foreground">
+            {error instanceof ApiError
+              ? error.message
+              : "We couldn't load your account. Please try again in a moment."}
+          </p>
+        </section>
+      </Shell>
     );
   }
 
-  // A brand-new account has nothing to look at here, so send it straight into
-  // setup — that is the founder's journey: sign up, name the business, connect
-  // the mailbox, move on. Only when there is NO organisation at all. Once one
-  // exists this page has something real to show, and dragging someone back into
-  // a flow they chose to leave would be a trap rather than a guide.
-  if (organisations.length === 0) {
-    redirect("/app/onboarding");
-  }
+  const organisation = organisations[0];
+  // A brand-new account has nothing to look at, so it goes straight into setup —
+  // and `showsAppChrome` hides the nav there, because every link would be a dead
+  // end for someone with no organisation yet.
+  if (!organisation) redirect("/app/onboarding");
 
-  // Whether setup is actually finished. Best-effort: not every role can read
-  // mailbox status, and a nudge is not worth failing the home page over.
-  let mailboxConnected: boolean | null = null;
-  try {
-    const response = await apiFetch(
-      `/organisations/${organisations[0]!.id}/mailboxes`,
-      accessToken,
-    );
-    const body = (await response.json()) as { mailboxes: unknown[] };
-    mailboxConnected = body.mailboxes.length > 0;
-  } catch {
-    // Also swallows the 402 of an organisation that has not got Invoice
-    // Chasing — it has no mailbox to finish setting up, so the nudge below
-    // would be wrong rather than merely missing.
-    mailboxConnected = null;
-  }
+  /**
+   * Everything below is best-effort and INDEPENDENT. A role that cannot read
+   * reminders, or an organisation without Invoice Chasing, must still get a home
+   * screen — so each fetch swallows its own failure and the panel it feeds is
+   * simply not rendered. A dashboard that 500s because one number is
+   * unavailable is worse than a dashboard missing one number.
+   */
+  const [book, overdueCount, activity, mailboxConnected] = await Promise.all([
+    fetchBook(organisation.id, accessToken),
+    fetchOverdueCount(organisation.id, accessToken),
+    fetchActivity(organisation.id, accessToken),
+    fetchMailboxConnected(organisation.id, accessToken),
+  ]);
+
+  const rows = owedRows(book?.chasedByCurrency ?? []);
+  const attention = activity
+    ? attentionItems({
+        mailboxConnected,
+        counts: activity.counts,
+        waitingReason: activity.waitingReason,
+      })
+    : attentionItems({
+        mailboxConnected,
+        counts: { sentLast7Days: 0, waiting: 0, failedLast7Days: 0 },
+        waitingReason: null,
+      });
 
   return (
-    <main className="flex flex-1 flex-col items-center gap-8 p-8">
-      <header className="flex w-full max-w-2xl items-center justify-between">
-        <span className="text-xl font-bold text-primary">Eva</span>
+    <Shell>
+      <header className="flex w-full max-w-4xl items-center justify-between gap-4">
+        <div className="flex flex-col gap-1">
+          <h1 className="text-2xl font-bold text-primary">{organisation.name}</h1>
+          <p className="text-sm text-muted-foreground">What you are owed, and what Eva is doing.</p>
+        </div>
         <form action={signOut}>
           <button
             type="submit"
@@ -102,98 +120,142 @@ export default async function AppHomePage() {
         </form>
       </header>
 
-      <section className="flex w-full max-w-2xl flex-col gap-2">
-        <h1 className="text-2xl font-bold">Welcome{me.fullName ? `, ${me.fullName}` : ""}</h1>
-        <p className="text-muted-foreground">Signed in as {me.email}</p>
-      </section>
-
-      {mailboxConnected === false && (
-        <section className="flex w-full max-w-2xl flex-col gap-3 rounded-[var(--radius-card)] bg-muted px-6 py-4">
-          <div className="flex flex-col gap-1">
-            <h2 className="text-base font-semibold">Finish setting up</h2>
-            <p className="text-sm text-muted-foreground">
-              Eva can&apos;t chase anything until it can send from your mailbox.
-            </p>
-          </div>
-          <div>
-            <Link
-              href="/app/onboarding"
-              className="rounded-[var(--radius-card)] bg-primary px-4 py-2 text-sm font-medium text-primary-foreground"
+      {attention.length > 0 && (
+        <section className="flex w-full max-w-4xl flex-col gap-3">
+          <h2 className="text-base font-semibold">Needs you</h2>
+          {attention.map((item) => (
+            <div
+              key={item.kind}
+              className="flex flex-col gap-1 rounded-[var(--radius-card)] bg-muted px-6 py-4"
             >
-              Connect your mailbox
-            </Link>
-          </div>
+              <span className="text-sm font-semibold">{item.headline}</span>
+              <p className="text-sm text-muted-foreground">{item.detail}</p>
+              {item.href && (
+                <Link href={item.href} className="text-sm font-medium text-primary hover:underline">
+                  {item.linkLabel}
+                </Link>
+              )}
+            </div>
+          ))}
         </section>
       )}
 
-      {/*
-        The book, first and largest — it is the screen the job is actually done
-        from (`DATA-MODEL-REVIEW` §4), and everything below this is setup a
-        customer touches once. It becomes the landing page itself once the
-        upload and inline row entry land; a prominent link is the honest
-        halfway step rather than a nav change made before the screen is
-        finished.
-      */}
-      <section className="flex w-full max-w-2xl flex-col gap-3 rounded-[var(--radius-card)] bg-muted px-6 py-5">
-        <h2 className="text-lg font-semibold">What you are owed</h2>
-        <p className="text-sm text-muted-foreground">
-          Every client&apos;s invoices on one screen, oldest first, with what Eva is chasing and
-          what it cannot.
-        </p>
-        <div className="flex flex-wrap gap-2">
-          <Link
-            href="/app/invoices"
-            className="rounded-[var(--radius-card)] bg-primary px-4 py-2 text-sm font-medium text-primary-foreground"
-          >
-            Open your invoices
-          </Link>
-          <Link
-            href="/app/invoices?status=overdue"
-            className="rounded-[var(--radius-card)] bg-background px-4 py-2 text-sm font-medium hover:opacity-80"
-          >
-            What is overdue
-          </Link>
-          <Link
-            href="/app/clients"
-            className="rounded-[var(--radius-card)] bg-background px-4 py-2 text-sm font-medium hover:opacity-80"
-          >
-            Clients
-          </Link>
+      <section className="flex w-full max-w-4xl flex-col gap-3">
+        <div className="flex flex-wrap items-baseline justify-between gap-2">
+          <h2 className="text-base font-semibold">What you are owed</h2>
+          {overdueCount !== null && overdueCount > 0 && (
+            <Link
+              href="/app/invoices?status=overdue"
+              className="text-sm font-medium text-danger hover:underline"
+            >
+              {overdueCount === 1 ? "1 invoice is overdue" : `${overdueCount} invoices are overdue`}
+            </Link>
+          )}
         </div>
+
+        {book === null ? (
+          <p className="text-sm text-muted-foreground">
+            We couldn&apos;t load your invoices just now. Nothing is lost — try again in a moment.
+          </p>
+        ) : (
+          <OwedPanel rows={rows} />
+        )}
       </section>
 
-      <section className="flex w-full max-w-2xl flex-col gap-4">
-        <div className="flex items-center justify-between">
-          <h2 className="text-lg font-semibold">Your organisations</h2>
-          <div className="flex gap-2">
+      {activity && can(organisation, "reminders:read") && (
+        <section className="flex w-full max-w-4xl flex-col gap-3">
+          <div className="flex flex-wrap items-baseline justify-between gap-2">
+            <h2 className="text-base font-semibold">Eva this week</h2>
             <Link
-              href="/app/organisations/new"
-              className="rounded-[var(--radius-card)] bg-primary px-4 py-2 text-sm font-medium text-primary-foreground"
+              href="/app/reminders"
+              className="text-sm font-medium text-primary hover:underline"
             >
-              New organisation
-            </Link>
-            <Link
-              href="/app/settings/mailbox"
-              className="rounded-[var(--radius-card)] bg-muted px-4 py-2 text-sm font-medium hover:opacity-80"
-            >
-              Mailbox settings
+              See everything Eva sent
             </Link>
           </div>
-        </div>
-        {/* No empty state: an account with no organisation was redirected into
-            setup above and never reaches this list. */}
-        <ul className="flex flex-col gap-2">
-          {organisations.map((organisation) => (
-            <li
-              key={organisation.id}
-              className="flex items-center justify-between rounded-[var(--radius-card)] bg-muted px-6 py-4 text-sm"
-            >
-              <span className="font-medium">{organisation.name}</span>
-              <span className="text-muted-foreground">{organisation.roleKey}</span>
-            </li>
-          ))}
-        </ul>
-      </section>
-    </main>
+          <p className="text-sm text-muted-foreground">{chaseSummary(activity.counts)}</p>
+          <div className="grid grid-cols-3 gap-3">
+            <Counter label="Sent" value={activity.counts.sentLast7Days} />
+            <Counter label="Waiting" value={activity.counts.waiting} />
+            <Counter label="Didn't send" value={activity.counts.failedLast7Days} />
+          </div>
+        </section>
+      )}
+    </Shell>
   );
+}
+
+function Counter({ label, value }: { label: string; value: number }) {
+  return (
+    <div className="flex flex-col gap-1 rounded-[var(--radius-card)] bg-muted px-5 py-4">
+      <span className="text-xl font-bold tabular-nums">{value}</span>
+      <span className="text-xs text-muted-foreground">{label}</span>
+    </div>
+  );
+}
+
+function Shell({ children }: { children: React.ReactNode }) {
+  return <main className="flex flex-1 flex-col items-center gap-8 p-8">{children}</main>;
+}
+
+/** The book, for its per-currency totals. Unfiltered on purpose (see the header). */
+async function fetchBook(organisationId: string, accessToken: string): Promise<Book | null> {
+  try {
+    // limit=1 because only the totals are wanted; the rows are the book screen's job.
+    return (await (
+      await apiFetch(`/organisations/${organisationId}/invoices?limit=1`, accessToken)
+    ).json()) as Book;
+  } catch {
+    return null;
+  }
+}
+
+/** How many invoices are overdue. A COUNT — `totalCount` respects the filter. */
+async function fetchOverdueCount(
+  organisationId: string,
+  accessToken: string,
+): Promise<number | null> {
+  try {
+    const book = (await (
+      await apiFetch(
+        `/organisations/${organisationId}/invoices?status=overdue&limit=1`,
+        accessToken,
+      )
+    ).json()) as Book;
+    return book.totalCount;
+  } catch {
+    return null;
+  }
+}
+
+async function fetchActivity(
+  organisationId: string,
+  accessToken: string,
+): Promise<ReminderActivityDto | null> {
+  try {
+    return (await (
+      await apiFetch(`/organisations/${organisationId}/reminders/activity`, accessToken)
+    ).json()) as ReminderActivityDto;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * `null` means we could not tell — no permission, or no Invoice Chasing. That is
+ * NOT the same as "no mailbox", and `attentionItems` only nags on an explicit
+ * `false`.
+ */
+async function fetchMailboxConnected(
+  organisationId: string,
+  accessToken: string,
+): Promise<boolean | null> {
+  try {
+    const body = (await (
+      await apiFetch(`/organisations/${organisationId}/mailboxes`, accessToken)
+    ).json()) as { mailboxes: unknown[] };
+    return body.mailboxes.length > 0;
+  } catch {
+    return null;
+  }
 }
