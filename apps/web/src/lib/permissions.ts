@@ -33,10 +33,12 @@ export type WebPermissionKey =
   | "invoices:write"
   | "imports:read"
   | "imports:write"
-  // Slice 1.7 — the chase activity screen. Read-only: nothing on that page
-  // writes, so there is deliberately no `reminders:write` here until a screen
-  // needs it.
-  | "reminders:read";
+  // Slice 1.7 — the chase activity screen (read-only).
+  | "reminders:read"
+  // Slice 1.8 — the reminder timing screen is the write the line above said
+  // would come. The API has accepted `reminders:write` since slice 1.5; until
+  // 1.8 no screen called it.
+  | "reminders:write";
 
 /** The shape every page already fetches from `GET /organisations`. */
 export interface OrganisationAccess {
@@ -107,7 +109,8 @@ export type WriteAction =
   | "upload-import"
   | "confirm-import"
   | "cancel-import"
-  | "change-settings";
+  | "change-settings"
+  | "change-reminder-timing";
 
 /**
  * ⚠️ `Record<WriteAction, string>` IS THE EXHAUSTIVENESS GUARANTEE. Adding a
@@ -127,4 +130,9 @@ const REFUSED: Record<WriteAction, string> = {
   "confirm-import": "Your role can't import invoices.",
   "cancel-import": "Your role can't discard an upload.",
   "change-settings": "Your role can't change invoice settings.",
+  // Deliberately NOT folded into `change-settings`: "invoice settings" is the
+  // currency default and changes nothing that exists, whereas this reschedules
+  // every invoice already being chased. Telling someone the wrong one is the
+  // standing §0d mistake — name the thing they were actually refused.
+  "change-reminder-timing": "Your role can't change when Eva chases.",
 };

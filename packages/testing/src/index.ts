@@ -27,7 +27,20 @@ export function defineTestConfig(overrides: ViteUserConfig = {}): ViteUserConfig
      */
     ...overrides,
     test: {
-      include: ["test/**/*.spec.ts", "src/**/*.spec.ts"],
+      /**
+       * ⚠️ `.spec.tsx` IS COLLECTED SO COMPONENTS CAN BE RENDERED IN A TEST.
+       *
+       * Added in slice 1.8. Until then every web test was a unit test of a
+       * `lib` function and NOTHING rendered a component — while three defects
+       * in slice 1.6c and a fourth in 1.7 (a colour token that does not exist,
+       * made for the third time) lived purely in the rendering layer, where
+       * they typechecked, linted and passed the whole gate.
+       *
+       * No dependency was added for this: `renderToStaticMarkup` from
+       * `react-dom/server` needs no DOM, so a component with no hooks can be
+       * rendered to a string in the plain `node` environment above.
+       */
+      include: ["test/**/*.spec.ts", "test/**/*.spec.tsx", "src/**/*.spec.ts", "src/**/*.spec.tsx"],
       /**
        * ⚠️ BUILD OUTPUT IS NOT A TEST SUITE, and from Vitest 4 you have to say so.
        *
