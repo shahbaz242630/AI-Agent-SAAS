@@ -201,10 +201,21 @@ function Counter({ label, sublabel, value }: { label: string; sublabel: string; 
   );
 }
 
+/**
+ * ⚠️ ONLY TOKENS THAT EXIST IN `packages/design-system/tokens.css`.
+ *
+ * `bad` shipped as `bg-destructive/10 text-destructive` and there is no
+ * `destructive` token — the palette calls it `danger` — so Tailwind emitted
+ * nothing and "Didn't send", the one status on this screen that should shout,
+ * rendered as plain unstyled text. **This is the THIRD time this exact mistake
+ * has been made** (`invoice-controls.tsx`, `book-rows.tsx`), and each time it
+ * typechecked, linted and passed the whole gate. A test now asserts every tone
+ * against the token file, because a warning comment has already failed twice.
+ */
 const TONE_CLASSES: Record<string, string> = {
   good: "bg-success/10 text-success",
   warn: "bg-warning/10 text-warning",
-  bad: "bg-destructive/10 text-destructive",
+  bad: "bg-danger/10 text-danger",
   mute: "bg-muted text-muted-foreground",
 };
 
