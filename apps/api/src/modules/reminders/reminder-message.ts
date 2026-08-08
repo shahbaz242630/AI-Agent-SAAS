@@ -156,8 +156,40 @@ export function buildReminderMessage(input: ReminderMessageInput): ReminderMessa
   const paid = paymentAcknowledgement(amountMinorUnits, amountPaidMinorUnits, currency);
   const signOff = `Many thanks,\n${organisationName}`;
   const days = Math.max(daysOverdue, 0);
+  // "1 days overdue" is the kind of detail that tells a reader a machine wrote
+  // this and nobody checked. Rare before slice 1.8b; common after it, because
+  // the guard below routes freshly-overdue invoices through the chase stages.
+  const dayCount = `${days} ${days === 1 ? "day" : "days"}`;
 
-  switch (stepKey) {
+  /**
+   * ⚠️ THE STEP SAYS WHEN THE EMAIL WAS MEANT TO GO; `daysOverdue` SAYS WHERE
+   * THE INVOICE ACTUALLY IS. WHEN THEY DISAGREE, REALITY WINS.
+   *
+   * `pre_due_3` and `due_date` are the only two stages whose wording makes a
+   * claim about the future — "is due on the 26th", "is due today". Every
+   * overdue stage already counts from the real date and is correct whenever it
+   * fires. So those two, and only those two, can be sent on a day that makes
+   * them false, and `due_date` is the worse of the pair: it tells a customer's
+   * client an invoice is due today when it went past due a week ago.
+   *
+   * Three ways a row reaches that state, which is why this is a SEND-TIME guard
+   * and not a scheduling fix — scheduling can only prevent the paths we thought
+   * of, and this is the last point at which the truth is known:
+   *   1. the catch-up collapse moves a missed step to today (1.5, §7.5);
+   *   2. the 3-day spacing pass defers a collapsed step FORWARD, which is how a
+   *      pre-due note ended up 3 days PAST the due date in the 2026-08-08 send;
+   *   3. a due date edited after the row was scheduled, or a sweep that runs
+   *      late because sending was held.
+   *
+   * Routed to `overdue_7` rather than given new prose: it is the gentlest chase
+   * we have, it assumes good faith out loud, and the founder's ruling was
+   * "rest of reminders as you already designed" — inventing a seventh register
+   * here would be answering a question nobody asked.
+   */
+  const arrivesLate = daysOverdue > 0 && (stepKey === "pre_due_3" || stepKey === "due_date");
+  const effectiveStepKey: EmailReminderStepKey = arrivesLate ? "overdue_7" : stepKey;
+
+  switch (effectiveStepKey) {
     // Before the due date. This one exists to prevent a late payment rather
     // than chase one, so it must not read as a chase at all — most invoices
     // are paid late because someone forgot, not because they are avoiding it.
@@ -190,10 +222,10 @@ export function buildReminderMessage(input: ReminderMessageInput): ReminderMessa
     // most common reason a chase sequence runs to the end achieving nothing.
     case "overdue_7":
       return {
-        subject: `Invoice ${invoiceReference} — ${days} days overdue`,
+        subject: `Invoice ${invoiceReference} — ${dayCount} overdue`,
         bodyText: body(
           hello,
-          `Invoice ${invoiceReference} for ${amount} was due on ${due}, so it is now ${days} days overdue.`,
+          `Invoice ${invoiceReference} for ${amount} was due on ${due}, so it is now ${dayCount} overdue.`,
           paid,
           `I know how easily these slip through — could you let me know when we can expect payment? ` +
             `If there is a problem with the invoice, just reply and we will sort it out.`,
@@ -206,11 +238,11 @@ export function buildReminderMessage(input: ReminderMessageInput): ReminderMessa
     // the reminders can safely be ignored.
     case "overdue_14":
       return {
-        subject: `Invoice ${invoiceReference} is now ${days} days overdue`,
+        subject: `Invoice ${invoiceReference} is now ${dayCount} overdue`,
         bodyText: body(
           hello,
           `Invoice ${invoiceReference} for ${amount} was due on ${due} and is still unpaid, ` +
-            `now ${days} days past the due date.`,
+            `now ${dayCount} past the due date.`,
           paid,
           `Could you arrange payment, or reply with a date we can expect it? ` +
             `If something is holding it up, I would rather know than keep chasing.`,
@@ -223,10 +255,10 @@ export function buildReminderMessage(input: ReminderMessageInput): ReminderMessa
     // happens next, and saying so is more credible than inventing a penalty.
     case "overdue_30":
       return {
-        subject: `Invoice ${invoiceReference} — ${days} days overdue, final reminder`,
+        subject: `Invoice ${invoiceReference} — ${dayCount} overdue, final reminder`,
         bodyText: body(
           hello,
-          `Invoice ${invoiceReference} for ${amount} was due on ${due} and is now ${days} days overdue.`,
+          `Invoice ${invoiceReference} for ${amount} was due on ${due} and is now ${dayCount} overdue.`,
           paid,
           `This is the last automatic reminder I will send. Please arrange payment, or reply with a ` +
             `date, so we can settle this between us.`,

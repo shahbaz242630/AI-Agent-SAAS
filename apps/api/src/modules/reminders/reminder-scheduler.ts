@@ -60,7 +60,11 @@ function deriveForDate(
  * (pure UTC-day arithmetic), EXCEPT missed steps (rawDate < today): the
  * missed EMAIL steps collapse to only the latest missed email step,
  * scheduled for today — a 40-day-overdue invoice gets the 30-day reminder
- * today, never a same-day 7+14+30 burst. A missed `internal_escalation`
+ * today, never a same-day 7+14+30 burst. Since 1.8b, a missed PRE-DUE step
+ * (negative offset) is dropped rather than collapsed **once the due date has
+ * also passed**, because a "due soon" note has no job on a late invoice;
+ * while the due date is still ahead it collapses as before. A missed
+ * `internal_escalation`
  * step ALSO survives, scheduled for today alongside it (the human handover
  * still fires even when every email stage was missed); if no email step was
  * missed, only the escalation collapses to today. Steps landing exactly
@@ -84,9 +88,30 @@ export function computeInvoiceSchedule(input: {
 
   const survivors = raw.filter((r) => r.rawMs >= todayMs);
   const missed = raw.filter((r) => r.rawMs < todayMs);
+
+  /**
+   * ⚠️ A PRE-DUE NUDGE IS DROPPED ONCE THE DUE DATE ITSELF HAS PASSED (1.8b).
+   *
+   * `pre_due_3` exists to prevent a late payment, not to chase one. Collapsing
+   * it onto today when the invoice is ALREADY overdue schedules a "your invoice
+   * is due soon" note for an invoice that is late — which is how the 2026-08-08
+   * send produced a courtesy note dated 3 days AFTER the due date.
+   *
+   * ⚠️ CONDITIONED ON THE DUE DATE, NOT ON THE STEP BEING PRE-DUE. If the due
+   * date is still ahead, a missed `pre_due_3` SHOULD collapse to today — a
+   * heads-up two days before the money is due is late but still useful, and
+   * dropping it would be a regression. The distinction is the whole fix.
+   *
+   * The send-time guard in `reminder-message.ts` is the belt to this braces: it
+   * catches the same row when the spacing pass defers it across the due date,
+   * which scheduling alone cannot prevent.
+   */
+  const dueDatePassed = dueDate.getTime() < todayMs;
+  const missedEmails = missed.filter(
+    (r) => r.step.actionType === "email" && !(dueDatePassed && r.step.offsetDays < 0),
+  );
   // Latest missed EMAIL step collapses to today (a same-offset tie keeps
   // both — deterministic; the 3-day spacing pass separates them).
-  const missedEmails = missed.filter((r) => r.step.actionType === "email");
   if (missedEmails.length > 0) {
     const latestMissedMs = Math.max(...missedEmails.map((r) => r.rawMs));
     for (const r of missedEmails) {
