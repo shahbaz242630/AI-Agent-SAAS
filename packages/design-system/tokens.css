@@ -1,24 +1,119 @@
 /**
  * Eva design tokens — Tailwind v4 theme (BRD 9.1).
  * Imported by apps/web globals.css; reused by the desktop client in Phase 6.
- * Colour palette: calm, trustworthy fintech-adjacent tones (en-GB product).
+ *
+ * Palette: warm paper and charcoal, from the 2026-08-09 design handoff. It
+ * replaces a cool blue-and-slate scheme — the page is now warm off-white, the
+ * chrome is near-black with a warm cast, and amber is the only bright colour.
+ *
+ * ⚠️ EVERY NAME THAT EXISTED BEFORE STILL EXISTS. Only the VALUES changed.
+ * `design-tokens.spec.ts` fails on any `bg-`/`text-`/`border-` class naming a
+ * colour the palette does not define, so renaming a token would break screens
+ * this slice has not redesigned yet — silently, because Tailwind emits nothing
+ * for an unknown colour rather than complaining.
+ *
+ * ⚠️ A COLOUR USED ON A SCREEN MUST BE A TOKEN HERE. That is not a style
+ * preference: it is the only thing standing between us and a fourth
+ * `bg-destructive`, which typechecked, linted and passed the whole gate three
+ * times while rendering nothing at all.
  */
 @theme {
-  --color-background: #ffffff;
+  /* Page and ink */
+  --color-background: #f7f5f1;
   --color-foreground: #0f172a;
 
-  --color-primary: #1e40af;
+  /* Cards sit ON the page background, so they need their own white. */
+  --color-surface: #ffffff;
+  --color-border: #e6e2da;
+  /* Dividers inside a card, lighter than the card's own edge. */
+  --color-hairline: #efece5;
+  --color-row-hover: #fbfaf7;
+
+  /* Warm charcoal: sidebar, primary buttons, dark panels. Was #1e40af blue. */
+  --color-primary: #211e19;
   --color-primary-foreground: #ffffff;
 
-  --color-muted: #f1f5f9;
-  --color-muted-foreground: #475569;
+  /* Amber is the ONLY bright colour: brand dot, active icons, step discs. */
+  --color-accent: #e8a33d;
+  --color-accent-foreground: #211e19;
 
+  /* `muted` is a surface, `muted-foreground` is body text — as before. */
+  --color-muted: #f4f2ec;
+  --color-muted-foreground: #6b6656;
+  /* Third-level text: dates, counts, the things you read last. */
+  --color-faint: #8a8578;
+  /* Nav labels and form labels — darker than body, not as dark as ink. */
+  --color-label: #4a4639;
+
+  /* Links are warm brown, not blue — blue would be the only cool thing left. */
+  --color-link: #92400e;
+  --color-link-hover: #713f12;
+
+  /* Status. The strong value is text; the tint is what it sits on. */
   --color-success: #15803d;
-  --color-warning: #b45309;
-  --color-danger: #b91c1c;
+  --color-success-tint: #e6f4ea;
+  --color-success-surface: #f0f7f1;
+  --color-success-border: #cfe4d4;
 
-  --radius-card: 0.75rem;
+  --color-warning: #b45309;
+  --color-warning-strong: #92400e;
+  --color-warning-tint: #fbf4e6;
+  --color-warning-border: #ecdbb7;
+
+  /* ⚠️ THE PALETTE CALLS THIS `danger`. There is no `destructive`. */
+  --color-danger: #b91c1c;
+  --color-danger-tint: #fbecec;
+  --color-danger-surface: #fdf3f2;
+  --color-danger-border: #eccfca;
+
+  /*
+   * Sidebar colours are their own scale because they live on #211e19, where
+   * `muted-foreground` would be unreadable. Named for the surface they belong
+   * to so nobody reaches for them on a white card.
+   */
+  --color-sidebar: #211e19;
+  --color-sidebar-foreground: #ffffff;
+  --color-sidebar-muted: #a9a294;
+  --color-sidebar-faint: #8d867a;
+  --color-sidebar-fainter: #7a7264;
+  --color-sidebar-avatar: #453f35;
+  --color-sidebar-chip-border: #4a443a;
+  --color-sidebar-body: #d8d2c6;
+  /*
+   * ⚠️ THE TRANSLUCENT WHITES ARE TOKENS TOO, AND THEY HAVE TO BE. Written
+   * inline as `bg-white/10` they are real Tailwind classes that render
+   * correctly — and `design-tokens.spec.ts` rejects them, because `white` is
+   * not in this palette. That guard exists to stop a colour nobody defined
+   * reaching a screen, and it cannot tell a deliberate `white/10` from a
+   * mistaken one. Naming them keeps the sidebar's depth in the palette where
+   * the next surface built on charcoal can find it.
+   */
+  --color-sidebar-panel: rgba(255, 255, 255, 0.06);
+  --color-sidebar-active: rgba(255, 255, 255, 0.1);
+  --color-sidebar-hover: rgba(255, 255, 255, 0.05);
+  --color-sidebar-border: rgba(255, 255, 255, 0.1);
+  /* A module that is switched on and running. */
+  --color-module-live: #4ade80;
+
+  /* Controls */
+  --color-input-border: #d8d3c8;
+  --color-chip-hover: #f4f1ea;
+  --color-neutral-tint: #f4f2ec;
+  --color-neutral-border: #ded9cc;
+
+  /*
+   * Radii. Cards are softer than controls on purpose: a 14px card next to a
+   * 10px button reads as a surface holding a control, not two similar boxes.
+   */
+  --radius-card: 0.875rem;
+  --radius-panel: 1.125rem;
+  --radius-control: 0.625rem;
+  --radius-pill: 99px;
+
+  /* Shadow under the one primary button on a screen. */
+  --shadow-primary: 0 8px 16px -8px rgba(33, 30, 25, 0.4);
 
   --font-sans:
     ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --font-display: var(--font-sans);
 }

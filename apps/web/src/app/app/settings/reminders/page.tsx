@@ -164,7 +164,7 @@ function Header({ name }: { name: string }) {
 
 function Shell({ children }: { children: React.ReactNode }) {
   return (
-    <main className="flex flex-1 flex-col items-center gap-6 p-8">
+    <main className="flex w-full max-w-[1080px] flex-1 flex-col gap-[26px] px-10 pt-8 pb-9">
       {children}
       <div className="flex gap-4">
         <Link

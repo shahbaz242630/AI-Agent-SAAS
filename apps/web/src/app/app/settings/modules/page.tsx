@@ -90,7 +90,7 @@ export default async function ModulesPage() {
   const canManage = organisation?.roleKey === "owner";
 
   return (
-    <main className="flex flex-1 flex-col items-center gap-6 p-8">
+    <main className="flex w-full max-w-[1080px] flex-1 flex-col gap-[26px] px-10 pt-8 pb-9">
       <section className="flex w-full max-w-2xl flex-col gap-2">
         <h1 className="text-2xl font-bold text-primary">Your products</h1>
         <p className="text-sm text-muted-foreground">

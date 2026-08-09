@@ -5,7 +5,6 @@ import { ApiError, apiFetch } from "@/lib/api";
 import { attentionItems, chaseSummary, owedRows, type CurrencyTotal } from "@/lib/dashboard";
 import { can } from "@/lib/permissions";
 import { createClient } from "@/lib/supabase/server";
-import { signOut } from "./actions";
 import { OwedPanel } from "./owed-panel";
 
 /**
@@ -106,19 +105,12 @@ export default async function AppHomePage() {
 
   return (
     <Shell>
-      <header className="flex w-full max-w-4xl items-center justify-between gap-4">
-        <div className="flex flex-col gap-1">
-          <h1 className="text-2xl font-bold text-primary">{organisation.name}</h1>
-          <p className="text-sm text-muted-foreground">What you are owed, and what Eva is doing.</p>
-        </div>
-        <form action={signOut}>
-          <button
-            type="submit"
-            className="rounded-[var(--radius-card)] bg-muted px-4 py-2 text-sm font-medium hover:opacity-80"
-          >
-            Sign out
-          </button>
-        </form>
+      {/* Signing out moved to the sidebar's user card with the 2026-08-09
+          design. Two sign-out buttons on one screen is one too many, and the
+          one beside your own name and email is the one that reads as yours. */}
+      <header className="flex w-full max-w-4xl flex-col gap-1">
+        <h1 className="text-2xl font-bold text-primary">{organisation.name}</h1>
+        <p className="text-sm text-muted-foreground">What you are owed, and what Eva is doing.</p>
       </header>
 
       {attention.length > 0 && (
@@ -196,7 +188,11 @@ function Counter({ label, value }: { label: string; value: number }) {
 }
 
 function Shell({ children }: { children: React.ReactNode }) {
-  return <main className="flex flex-1 flex-col items-center gap-8 p-8">{children}</main>;
+  return (
+    <main className="flex w-full max-w-[1080px] flex-1 flex-col gap-[26px] px-10 pt-8 pb-9">
+      {children}
+    </main>
+  );
 }
 
 /** The book, for its per-currency totals. Unfiltered on purpose (see the header). */

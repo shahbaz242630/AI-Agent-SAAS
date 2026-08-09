@@ -1,12 +1,20 @@
 @import "tailwindcss";
 @import "@eva/design-system/tokens.css";
 
+/**
+ * The loaded webfonts, bound to the token names.
+ *
+ * `@theme inline` because these reference `--font-*-family` variables that
+ * next/font defines on <html> at runtime — an ordinary @theme would freeze the
+ * value at build time and the fonts would never apply.
+ */
 @theme inline {
-  --font-sans: var(--font-geist-sans), var(--font-sans);
-  --font-mono: var(--font-geist-mono);
+  --font-sans: var(--font-body-family), ui-sans-serif, system-ui, sans-serif;
+  --font-display: var(--font-display-family), var(--font-sans);
 }
 
 body {
   background: var(--color-background);
   color: var(--color-foreground);
+  font-family: var(--font-sans);
 }
