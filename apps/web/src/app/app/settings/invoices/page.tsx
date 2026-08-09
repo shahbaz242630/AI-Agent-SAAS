@@ -5,6 +5,7 @@ import { FALLBACK_CURRENCY } from "@/lib/currencies";
 import { can } from "@/lib/permissions";
 import { createClient } from "@/lib/supabase/server";
 import { CurrencyControls } from "./currency-controls";
+import { SettingsTabs } from "../settings-tabs";
 
 /**
  * Invoice settings (slice 1.6c, task 13).
@@ -57,13 +58,15 @@ export default async function InvoiceSettingsPage() {
   return (
     <Shell>
       <section className="flex w-full max-w-2xl flex-col gap-2">
-        <h1 className="text-2xl font-bold text-primary">Invoice settings</h1>
+        <h1 className="font-display text-[29px] leading-tight font-semibold">Invoice settings</h1>
         <p className="text-sm text-muted-foreground">
           {`What a new invoice starts as for ${organisation.name}.`}
         </p>
       </section>
 
-      <section className="flex w-full max-w-2xl flex-col gap-4 rounded-[var(--radius-card)] bg-muted px-6 py-5">
+      <SettingsTabs current="invoices" />
+
+      <section className="flex w-full max-w-2xl flex-col gap-4 rounded-[var(--radius-card)] border border-border bg-surface px-6 py-5">
         <div className="flex flex-col gap-1">
           <h2 className="text-base font-semibold">Currency</h2>
           <p className="text-sm text-muted-foreground">

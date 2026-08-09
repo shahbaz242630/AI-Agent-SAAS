@@ -40,12 +40,13 @@ import { amountInputValue, dateInputValue, formatDueDate, formatMoney } from "@/
  */
 
 const SMALL_BUTTON =
-  "rounded-[var(--radius-card)] bg-muted px-2.5 py-1 text-xs font-medium hover:opacity-80 disabled:opacity-60";
+  "rounded-[var(--radius-control)] border border-input-border bg-surface px-2.5 py-1 text-xs font-semibold hover:bg-chip-hover disabled:opacity-60";
 const PRIMARY_BUTTON =
-  "rounded-[var(--radius-card)] bg-primary px-4 py-2 text-sm font-medium text-primary-foreground disabled:opacity-60";
+  "rounded-[var(--radius-control)] bg-primary px-4 py-2 text-[13px] font-semibold text-primary-foreground shadow-[var(--shadow-primary)] disabled:opacity-60";
 const DANGER_BUTTON =
-  "rounded-[var(--radius-card)] bg-danger px-4 py-2 text-sm font-medium text-primary-foreground disabled:opacity-60";
-const FIELD = "rounded-[var(--radius-card)] border border-muted-foreground/20 px-3 py-2 text-sm";
+  "rounded-[var(--radius-control)] bg-danger px-4 py-2 text-[13px] font-semibold text-primary-foreground disabled:opacity-60";
+const FIELD =
+  "rounded-[var(--radius-control)] border border-input-border bg-surface px-3 py-2 text-sm";
 
 export interface BookRow {
   id: string;
@@ -150,7 +151,7 @@ export function BookRows({
              the key on the thing the map returns, or it reconciles the wrong
              row when one is added above another. */
           <Fragment key={row.id}>
-            <tr className="border-b border-muted/50 align-top">
+            <tr className="border-b border-hairline align-top hover:bg-row-hover">
               <td className="px-3 py-3">
                 <Link
                   href={`/app/clients/${row.customer.id}/invoices`}
@@ -256,7 +257,7 @@ export function BookRows({
             </tr>
 
             {isOpen && open && (
-              <tr className="border-b border-muted/50">
+              <tr className="border-b border-hairline">
                 <td colSpan={8} className="px-3 pb-4">
                   {open.panel.kind === "lifecycle" ? (
                     <LifecyclePanel
@@ -308,7 +309,7 @@ function LifecyclePanel({
   onDismiss: () => void;
 }) {
   return (
-    <div className="flex flex-col gap-2 rounded-[var(--radius-card)] bg-muted px-5 py-4">
+    <div className="flex flex-col gap-2 rounded-[var(--radius-card)] border border-border bg-muted px-5 py-4">
       <p className="text-sm">
         {invoiceActionConsequence(action, {
           invoiceNumber: row.invoiceNumber,
@@ -359,7 +360,7 @@ function PaymentPanel({
   return (
     <form
       action={action}
-      className="flex flex-col gap-3 rounded-[var(--radius-card)] bg-muted px-5 py-4"
+      className="flex flex-col gap-3 rounded-[var(--radius-card)] border border-border bg-muted px-5 py-4"
     >
       <input type="hidden" name="organisationId" value={organisationId} />
       <input type="hidden" name="customerId" value={row.customer.id} />
@@ -425,17 +426,17 @@ function PaymentPanel({
  * class produces no CSS and no error anywhere.
  */
 const TONE_CLASSES: Record<InvoiceStatusTone, string> = {
-  urgent: "bg-danger/10 text-danger",
-  attention: "bg-warning/10 text-warning",
-  positive: "bg-success/10 text-success",
-  neutral: "bg-muted text-foreground",
-  muted: "bg-muted text-muted-foreground",
+  urgent: "bg-danger-tint text-danger",
+  attention: "bg-warning-tint text-warning-strong",
+  positive: "bg-success-tint text-success",
+  neutral: "border border-input-border bg-surface text-foreground",
+  muted: "bg-neutral-tint text-muted-foreground",
 };
 
 function StatusBadge({ status }: { status: string }) {
   return (
     <span
-      className={`inline-block rounded-[var(--radius-card)] px-2 py-1 text-xs font-medium ${TONE_CLASSES[invoiceStatusTone(status)]}`}
+      className={`inline-block rounded-[var(--radius-pill)] px-2.5 py-[3px] text-[11.5px] font-semibold ${TONE_CLASSES[invoiceStatusTone(status)]}`}
     >
       {invoiceStatusLabel(status)}
     </span>

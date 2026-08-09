@@ -27,11 +27,11 @@ const INITIAL_STATE: ClientActionState = {};
 const BUTTON_CLASS =
   "rounded-[var(--radius-card)] bg-primary px-4 py-2 text-sm font-medium text-primary-foreground disabled:opacity-60";
 const SMALL_BUTTON_CLASS =
-  "rounded-[var(--radius-card)] bg-muted px-3 py-1.5 text-xs font-medium hover:opacity-80 disabled:opacity-60";
+  "rounded-[var(--radius-control)] border border-input-border bg-surface px-3 py-1.5 text-xs font-semibold hover:bg-chip-hover disabled:opacity-60";
 const DANGER_BUTTON_CLASS =
   "rounded-[var(--radius-card)] bg-danger px-3 py-1.5 text-xs font-medium text-primary-foreground disabled:opacity-60";
 const FIELD_CLASS =
-  "w-full rounded-[var(--radius-card)] border border-muted-foreground/30 bg-background px-3 py-2 text-sm outline-none focus:border-primary";
+  "w-full rounded-[var(--radius-control)] border border-input-border bg-surface px-3 py-2 text-sm outline-none focus:border-primary";
 
 interface ClientRow {
   id: string;
@@ -106,7 +106,7 @@ export function AddClientForm({
   return (
     <form
       action={action}
-      className="flex w-full max-w-4xl flex-col gap-3 rounded-[var(--radius-card)] bg-muted px-6 py-4"
+      className="flex w-full flex-col gap-3 rounded-[var(--radius-card)] border border-border bg-surface px-6 py-4"
     >
       <input type="hidden" name="organisationId" value={organisationId} />
       <input type="hidden" name="emailAccountId" value={emailAccountId ?? ""} />
@@ -230,7 +230,7 @@ export function ClientTable({
             mailbox every client is chased from it either way, and a chooser
             offering a single option is noise. */}
         {mailboxes.length > 1 && (
-          <div className="flex flex-wrap items-end gap-2 rounded-[var(--radius-card)] bg-muted px-4 py-3">
+          <div className="flex flex-wrap items-end gap-2 rounded-[var(--radius-card)] border border-border bg-muted px-4 py-3">
             <label className="flex flex-col gap-1 text-sm">
               Chase the selected clients from
               <select name="emailAccountId" className={FIELD_CLASS} defaultValue="">
@@ -268,10 +268,10 @@ export function ClientTable({
 
         <Feedback state={assignState} />
 
-        <div className="overflow-x-auto rounded-[var(--radius-card)] bg-muted">
+        <div className="overflow-x-auto rounded-[var(--radius-card)] border border-border bg-surface">
           <table className="w-full min-w-[36rem] text-left text-sm">
             <thead>
-              <tr className="border-b border-muted-foreground/20">
+              <tr className="border-b border-hairline text-[11.5px] font-semibold tracking-[0.04em] text-faint uppercase">
                 {mailboxes.length > 1 && (
                   <th scope="col" className="px-4 py-3">
                     <input
@@ -306,7 +306,10 @@ export function ClientTable({
               {clients.map((client) => {
                 const allocation = chasedBy.get(client.id);
                 return (
-                  <tr key={client.id} className="border-b border-muted-foreground/10 align-top">
+                  <tr
+                    key={client.id}
+                    className="border-b border-hairline align-top hover:bg-row-hover"
+                  >
                     {mailboxes.length > 1 && (
                       <td className="px-4 py-3">
                         <input
@@ -411,7 +414,7 @@ function EditClientForm({
   const [confirming, setConfirming] = useState(false);
 
   return (
-    <div className="flex flex-col gap-3 rounded-[var(--radius-card)] bg-muted px-6 py-4">
+    <div className="flex flex-col gap-3 rounded-[var(--radius-card)] border border-border bg-surface px-6 py-4">
       <form action={updateAction} className="flex flex-col gap-3">
         <input type="hidden" name="organisationId" value={organisationId} />
         <input type="hidden" name="customerId" value={client.id} />

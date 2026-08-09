@@ -1,19 +1,15 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import type { ReminderActivityDto } from "@eva/types";
+import { Card, CounterCard, EmptyState, PageHeader, StatusPill } from "@/components/ui";
 import { ApiError, apiFetch } from "@/lib/api";
 import { can } from "@/lib/permissions";
-import {
-  explainWaiting,
-  stageLabel,
-  statusLabel,
-  statusTone,
-  summarise,
-} from "@/lib/reminder-activity";
+import { explainWaiting, stageLabel, statusLabel, statusTone } from "@/lib/reminder-activity";
 import { createClient } from "@/lib/supabase/server";
+import { dayMonth } from "../week-panel";
 
 /**
- * Chase activity (Slice 1.7).
+ * Chase activity (Slice 1.7; redressed 2026-08-09).
  *
  * ⚠️ THIS SCREEN EXISTS BECAUSE EVA'S WORK WAS INVISIBLE. Every scheduled and
  * sent reminder has been recorded since slice 1.5 and no screen read a single
@@ -48,19 +44,21 @@ export default async function RemindersPage() {
   if (!organisation) {
     return (
       <Shell>
-        <p className="w-full max-w-3xl text-sm text-muted-foreground">
-          Create an organisation first.
-        </p>
+        <p className="text-sm text-muted-foreground">Create an organisation first.</p>
       </Shell>
     );
   }
+
+  const header = (
+    <PageHeader title="Chasing" subtitle={`What Eva has done for ${organisation.name}.`} />
+  );
 
   // The API's own answer about this caller, never a role name (task 8).
   if (!can(organisation, "reminders:read")) {
     return (
       <Shell>
-        <Header name={organisation.name} />
-        <p className="w-full max-w-3xl text-sm text-muted-foreground">
+        {header}
+        <p className="text-sm text-muted-foreground">
           Your role cannot see chasing activity. Ask an owner or administrator.
         </p>
       </Shell>
@@ -90,11 +88,9 @@ export default async function RemindersPage() {
   if (!activity) {
     return (
       <Shell>
-        <Header name={organisation.name} />
-        <p className="w-full max-w-3xl rounded-[var(--radius-card)] bg-muted px-6 py-5 text-sm">
-          {loadError}
-        </p>
-        <p className="w-full max-w-3xl text-sm text-muted-foreground">
+        {header}
+        <Card className="px-6 py-5 text-sm">{loadError}</Card>
+        <p className="text-sm text-muted-foreground">
           Reminders that were already scheduled are unaffected — this page only reads them.
         </p>
       </Shell>
@@ -105,145 +101,100 @@ export default async function RemindersPage() {
 
   return (
     <Shell>
-      <Header name={organisation.name} />
+      {header}
 
-      <section className="flex w-full max-w-3xl flex-col gap-2">
-        <p className="text-sm text-muted-foreground">{summarise(activity.counts)}</p>
-      </section>
-
-      <section className="grid w-full max-w-3xl grid-cols-1 gap-4 sm:grid-cols-3">
-        <Counter label="Sent" sublabel="last 7 days" value={activity.counts.sentLast7Days} />
-        <Counter label="Waiting" sublabel="due, not yet sent" value={activity.counts.waiting} />
-        <Counter
+      <div className="flex flex-wrap gap-3">
+        <CounterCard value={activity.counts.sentLast7Days} label="Sent" sublabel="last 7 days" />
+        <CounterCard
+          value={activity.counts.waiting}
+          label="Waiting"
+          sublabel="due, not yet sent"
+          tone="warn"
+        />
+        <CounterCard
+          value={activity.counts.failedLast7Days}
           label="Didn't send"
           sublabel="last 7 days"
-          value={activity.counts.failedLast7Days}
+          tone="bad"
         />
-      </section>
+      </div>
 
-      {waiting ? (
-        <section className="flex w-full max-w-3xl flex-col gap-2 rounded-[var(--radius-card)] bg-muted px-6 py-5">
-          <h2 className="text-base font-semibold">{waiting.headline}</h2>
-          <p className="text-sm text-muted-foreground">{waiting.detail}</p>
-          {waiting.fixHref ? (
+      {waiting && (
+        <div className="flex flex-col gap-1.5 rounded-[var(--radius-card)] border border-warning-border bg-warning-tint px-6 py-4">
+          <h2 className="text-[13.5px] font-bold text-warning-strong">{waiting.headline}</h2>
+          <p className="text-[13px] text-muted-foreground">{waiting.detail}</p>
+          {waiting.fixHref && (
             <Link
               href={waiting.fixHref}
-              className="text-sm font-medium text-primary hover:underline"
+              className="text-[13px] font-semibold text-warning-strong hover:underline"
             >
-              {waiting.fixLabel}
+              {waiting.fixLabel} →
             </Link>
-          ) : null}
-        </section>
-      ) : null}
+          )}
+        </div>
+      )}
 
-      <section className="flex w-full max-w-3xl flex-col gap-3">
-        <h2 className="text-base font-semibold">Recent activity</h2>
+      <section className="flex flex-col gap-2.5">
+        <h2 className="text-sm font-bold">Recent activity</h2>
         {activity.recent.length === 0 ? (
-          <p className="text-sm text-muted-foreground">
-            Nothing to show yet. Reminders appear here once an invoice is overdue enough to chase.
-          </p>
+          <EmptyState
+            headline="Nothing to show yet."
+            detail="Reminders appear here once an invoice is overdue enough to chase. Nothing is wrong — Eva simply has not needed to write to anybody."
+          />
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-sm">
-              <thead className="text-muted-foreground">
-                <tr>
-                  <th className="py-2 pr-4 font-medium">Date</th>
-                  <th className="py-2 pr-4 font-medium">Client</th>
-                  <th className="py-2 pr-4 font-medium">Invoice</th>
-                  <th className="py-2 pr-4 font-medium">Stage</th>
-                  <th className="py-2 font-medium">Status</th>
+          <Card className="overflow-x-auto px-6 py-2">
+            <table className="w-full min-w-[640px] border-collapse text-left">
+              <thead>
+                <tr className="text-[11.5px] font-semibold tracking-[0.04em] text-faint uppercase">
+                  <th className="py-2.5 font-semibold">Date</th>
+                  <th className="py-2.5 font-semibold">Client</th>
+                  <th className="py-2.5 font-semibold">Invoice</th>
+                  <th className="py-2.5 font-semibold">Stage</th>
+                  <th className="py-2.5 font-semibold">Status</th>
                 </tr>
               </thead>
               <tbody>
                 {activity.recent.map((row) => (
-                  <tr key={row.id} className="border-t border-muted">
-                    <td className="py-2 pr-4 tabular-nums">{row.scheduledDate}</td>
-                    <td className="py-2 pr-4">{row.customerName}</td>
-                    <td className="py-2 pr-4">
+                  <tr key={row.id} className="border-t border-hairline text-[13px]">
+                    {/* Already a calendar day in the ORG's timezone — sliced,
+                        never re-derived. See `dayMonth`. */}
+                    <td className="py-3 text-muted-foreground">{dayMonth(row.scheduledDate)}</td>
+                    <td className="py-3 font-semibold">{row.customerName}</td>
+                    <td className="py-3">
                       <Link
                         href={`/app/clients/${row.customerId}/invoices`}
-                        className="hover:underline"
+                        className="text-link hover:underline"
                       >
                         {row.invoiceNumber}
                       </Link>
                     </td>
-                    <td className="py-2 pr-4">{stageLabel(row.stageKey)}</td>
-                    <td className="py-2">
-                      <StatusPill status={row.status} />
+                    <td className="py-3 text-muted-foreground">{stageLabel(row.stageKey)}</td>
+                    <td className="py-3">
+                      <StatusPill tone={statusTone(row.status)}>
+                        {statusLabel(row.status)}
+                      </StatusPill>
                     </td>
                   </tr>
                 ))}
               </tbody>
             </table>
-          </div>
+          </Card>
         )}
       </section>
     </Shell>
   );
 }
 
-function Header({ name }: { name: string }) {
-  return (
-    <section className="flex w-full max-w-3xl flex-col gap-2">
-      <h1 className="text-2xl font-bold text-primary">Chasing activity</h1>
-      <p className="text-sm text-muted-foreground">{`What Eva has done for ${name}.`}</p>
-    </section>
-  );
-}
-
-function Counter({ label, sublabel, value }: { label: string; sublabel: string; value: number }) {
-  return (
-    <div className="flex flex-col gap-1 rounded-[var(--radius-card)] bg-muted px-5 py-4">
-      <span className="text-2xl font-bold tabular-nums">{value}</span>
-      <span className="text-sm font-medium">{label}</span>
-      <span className="text-xs text-muted-foreground">{sublabel}</span>
-    </div>
-  );
-}
-
 /**
- * ⚠️ ONLY TOKENS THAT EXIST IN `packages/design-system/tokens.css`.
- *
- * `bad` shipped as `bg-destructive/10 text-destructive` and there is no
- * `destructive` token — the palette calls it `danger` — so Tailwind emitted
- * nothing and "Didn't send", the one status on this screen that should shout,
- * rendered as plain unstyled text. **This is the THIRD time this exact mistake
- * has been made** (`invoice-controls.tsx`, `book-rows.tsx`), and each time it
- * typechecked, linted and passed the whole gate. A test now asserts every tone
- * against the token file, because a warning comment has already failed twice.
+ * ⚠️ THE OLD PER-SCREEN FOOTER LINKS ARE GONE. They predated the shell and one
+ * of them still called `/app` "Your account", which it stopped being in slice
+ * 1.9. The sidebar is the way around the product now; a second, staler set of
+ * links below the fold was only ever a way to get somewhere wrong.
  */
-const TONE_CLASSES: Record<string, string> = {
-  good: "bg-success/10 text-success",
-  warn: "bg-warning/10 text-warning",
-  bad: "bg-danger/10 text-danger",
-  mute: "bg-muted text-muted-foreground",
-};
-
-function StatusPill({ status }: { status: string }) {
-  return (
-    <span
-      className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${TONE_CLASSES[statusTone(status)]}`}
-    >
-      {statusLabel(status)}
-    </span>
-  );
-}
-
 function Shell({ children }: { children: React.ReactNode }) {
   return (
     <main className="flex w-full max-w-[1080px] flex-1 flex-col gap-[26px] px-10 pt-8 pb-9">
       {children}
-      <div className="flex gap-4">
-        <Link
-          href="/app/invoices"
-          className="text-sm font-medium text-muted-foreground hover:underline"
-        >
-          Invoices
-        </Link>
-        <Link href="/app" className="text-sm font-medium text-muted-foreground hover:underline">
-          Your account
-        </Link>
-      </div>
     </main>
   );
 }

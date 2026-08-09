@@ -7,6 +7,7 @@ import { mailboxErrorMessage, needsConsentHelp } from "@/lib/mailbox-errors";
 import { disconnectMessage } from "@/lib/mailbox-messages";
 import { createClient } from "@/lib/supabase/server";
 import { ConnectMailboxForm, MailboxActions } from "./mailbox-controls";
+import { SettingsTabs } from "../settings-tabs";
 
 // Response shapes mirror the API contracts (apps/api modules/mailboxes).
 interface OrganisationSummary {
@@ -98,11 +99,13 @@ export default async function MailboxSettingsPage({
   return (
     <main className="flex w-full max-w-[1080px] flex-1 flex-col gap-[26px] px-10 pt-8 pb-9">
       <section className="flex w-full max-w-2xl flex-col gap-2">
-        <h1 className="text-2xl font-bold text-primary">Mailbox settings</h1>
+        <h1 className="font-display text-[29px] leading-tight font-semibold">Mailbox settings</h1>
         <p className="text-sm text-muted-foreground">
           Connect the Microsoft 365 mailbox Eva sends reminders from.
         </p>
       </section>
+
+      <SettingsTabs current="mailbox" />
 
       {/* ONE message, three endings. `test_email` only ever arrives alongside
           `connected=1`, so a separate box for the failure printed "Mailbox
@@ -113,7 +116,7 @@ export default async function MailboxSettingsPage({
       {flashConnected && (
         <p
           role="status"
-          className={`w-full max-w-2xl rounded-[var(--radius-card)] bg-muted px-6 py-3 text-sm ${
+          className={`w-full max-w-2xl rounded-[var(--radius-card)] border border-border bg-surface px-6 py-3 text-sm ${
             testEmailFailed ? "text-muted-foreground" : "text-success"
           }`}
         >
@@ -134,7 +137,7 @@ export default async function MailboxSettingsPage({
       {params.disconnected === "1" && (
         <p
           role="status"
-          className="w-full max-w-2xl rounded-[var(--radius-card)] bg-muted px-6 py-3 text-sm"
+          className="w-full max-w-2xl rounded-[var(--radius-card)] border border-border bg-surface px-6 py-3 text-sm"
         >
           {disconnectMessage(
             Number(params.moved ?? 0),
@@ -151,7 +154,7 @@ export default async function MailboxSettingsPage({
       {params.replace === "degraded" && (
         <p
           role="alert"
-          className="w-full max-w-2xl rounded-[var(--radius-card)] bg-muted px-6 py-3 text-sm text-danger"
+          className="w-full max-w-2xl rounded-[var(--radius-card)] border border-border bg-surface px-6 py-3 text-sm text-danger"
         >
           The mailbox you asked to replace had already been disconnected, so this address was added
           as a new one instead. Any clients filed under the old address are now chased from your
@@ -161,7 +164,7 @@ export default async function MailboxSettingsPage({
       {flashError && (
         <p
           role="alert"
-          className="w-full max-w-2xl rounded-[var(--radius-card)] bg-muted px-6 py-3 text-sm text-danger"
+          className="w-full max-w-2xl rounded-[var(--radius-card)] border border-border bg-surface px-6 py-3 text-sm text-danger"
         >
           {flashError}
         </p>
@@ -188,7 +191,7 @@ export default async function MailboxSettingsPage({
           owner or administrator.
         </p>
       ) : notEntitled ? (
-        <section className="flex w-full max-w-2xl flex-col gap-3 rounded-[var(--radius-card)] bg-muted px-6 py-4">
+        <section className="flex w-full max-w-2xl flex-col gap-3 rounded-[var(--radius-card)] border border-border bg-surface px-6 py-4">
           {/*
             One interpolated string, deliberately — NOT `{organisation.name}`
             followed by JSX text. Next 16's build drops the space between an
@@ -212,7 +215,7 @@ export default async function MailboxSettingsPage({
           </div>
         </section>
       ) : status ? (
-        <section className="flex w-full max-w-2xl flex-col gap-4 rounded-[var(--radius-card)] bg-muted px-6 py-4">
+        <section className="flex w-full max-w-2xl flex-col gap-4 rounded-[var(--radius-card)] border border-border bg-surface px-6 py-4">
           {status.mailboxes.length === 0 ? (
             <p className="text-sm text-muted-foreground">No mailbox connected yet.</p>
           ) : (

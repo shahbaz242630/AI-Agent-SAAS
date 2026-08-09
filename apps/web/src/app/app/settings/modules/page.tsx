@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { ApiError, apiFetch } from "@/lib/api";
 import { createClient } from "@/lib/supabase/server";
 import { ModuleControls } from "./module-controls";
+import { SettingsTabs } from "../settings-tabs";
 
 /**
  * The products an organisation holds (Slice 1.6a).
@@ -92,12 +93,14 @@ export default async function ModulesPage() {
   return (
     <main className="flex w-full max-w-[1080px] flex-1 flex-col gap-[26px] px-10 pt-8 pb-9">
       <section className="flex w-full max-w-2xl flex-col gap-2">
-        <h1 className="text-2xl font-bold text-primary">Your products</h1>
+        <h1 className="font-display text-[29px] leading-tight font-semibold">Your products</h1>
         <p className="text-sm text-muted-foreground">
           Switch a product off and Eva stops using it straight away — including anything it would
           have done in the background.
         </p>
       </section>
+
+      <SettingsTabs current="modules" />
 
       {!organisation ? (
         <p className="w-full max-w-2xl text-sm text-muted-foreground">
@@ -118,7 +121,7 @@ export default async function ModulesPage() {
             return (
               <article
                 key={module.moduleKey}
-                className="flex flex-col gap-3 rounded-[var(--radius-card)] bg-muted px-6 py-5"
+                className="flex flex-col gap-3 rounded-[var(--radius-card)] border border-border bg-surface px-6 py-5"
               >
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <h2 className="text-base font-semibold">{product?.name ?? module.moduleKey}</h2>

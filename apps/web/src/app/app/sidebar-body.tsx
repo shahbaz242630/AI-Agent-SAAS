@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { NAV_ITEMS, isActiveSection } from "@/lib/navigation";
-import { NAV_ICONS, SignOutIcon } from "./nav-icons";
+import { NAV_ICONS } from "./nav-icons";
 
 /**
  * The sidebar's markup, with the current path as an ARGUMENT (2026-08-09).
