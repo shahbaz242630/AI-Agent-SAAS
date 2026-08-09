@@ -255,7 +255,7 @@ export default async function CustomerInvoicesPage({
 
 function Shell({ children, customerId }: { children: React.ReactNode; customerId: string | null }) {
   return (
-    <main className="flex flex-1 flex-col items-center gap-6 p-8">
+    <main className="flex w-full max-w-[1080px] flex-1 flex-col gap-[26px] px-10 pt-8 pb-9">
       {children}
       <Link
         href="/app/clients"
