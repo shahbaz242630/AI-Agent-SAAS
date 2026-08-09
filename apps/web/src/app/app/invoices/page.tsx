@@ -3,8 +3,8 @@ import { redirect } from "next/navigation";
 import { ApiError, apiFetch } from "@/lib/api";
 import {
   bookFilterLine,
+  bookMoneyPanel,
   bookTotalLine,
-  defaultBookCurrency,
   otherCurrenciesLine,
 } from "@/lib/invoice-book";
 import { defaultInvoiceCurrency } from "@/lib/currencies";
@@ -41,10 +41,19 @@ interface OrganisationSummary {
   defaultCurrency?: string;
 }
 
+interface CurrencyTotal {
+  currency: string;
+  invoiceCount: number;
+  outstandingMinorUnits: number;
+}
+
 interface Book {
   rows: BookRow[];
   totalCount: number;
-  chasedByCurrency: { currency: string; invoiceCount: number; outstandingMinorUnits: number }[];
+  /** Every currency the org is chasing — the PICKER, and never filtered. */
+  chasedByCurrency: CurrencyTotal[];
+  /** What the current filters selected — the MONEY on screen. */
+  matchedByCurrency: CurrencyTotal[];
 }
 
 /** The quick filters, in the order a credit controller works through them. */
@@ -152,10 +161,15 @@ export default async function InvoiceBookPage({
    * Which currency's money is on screen. Chosen by INVOICE COUNT, never by
    * amount — see `defaultBookCurrency`; comparing minor units across currencies
    * opened this page on three Kuwaiti invoices and hid a sterling book.
+   *
+   * ⚠️ TWO LISTS, TWO JOBS, AND SWAPPING THEM BREAKS SOMETHING EITHER WAY.
+   * The PICKER is built from the unfiltered `chasedByCurrency`, because its
+   * whole purpose is telling someone looking at GBP that there is money in AED
+   * — filtering it would collapse it to the currency already chosen. The MONEY
+   * is `matchedByCurrency`, because it sits above a table the tabs filter, and
+   * a whole-book figure over an "Overdue" list reads as two numbers disagreeing.
    */
-  const currencies = book.chasedByCurrency;
-  const selectedCurrency = defaultBookCurrency(currencies, currency);
-  const selected = currencies.find((row) => row.currency === selectedCurrency);
+  const { currencies, selectedCurrency, money: selected } = bookMoneyPanel(book, currency);
 
   const linkTo = (changes: Record<string, string | undefined>): string => {
     const next = new URLSearchParams();
@@ -218,7 +232,8 @@ export default async function InvoiceBookPage({
       )}
 
       {/* The money, one currency at a time — with the others named beside it so
-          choosing GBP cannot hide the AED (founder's ruling 2026-08-04). */}
+          choosing GBP cannot hide the AED (founder's ruling 2026-08-04). It
+          counts what the TABS below have selected, and says which that is. */}
       <section className="flex w-full max-w-6xl flex-col gap-2 rounded-[var(--radius-card)] bg-muted px-6 py-4">
         <div className="flex flex-wrap items-baseline gap-3">
           <p className="text-sm font-medium">
@@ -229,6 +244,7 @@ export default async function InvoiceBookPage({
                 selectedCurrency,
               ),
               invoiceCount: selected?.invoiceCount ?? 0,
+              view: status,
             })}
           </p>
           {currencies.length > 1 && (

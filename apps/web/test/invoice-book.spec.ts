@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   ageingBucketLabel,
   bookFilterLine,
+  bookMoneyPanel,
   bookTotalLine,
   chaseTimingLine,
   defaultBookCurrency,
@@ -73,6 +74,66 @@ describe("which currency the book opens on", () => {
   });
 });
 
+describe("which list feeds the picker and which feeds the figure", () => {
+  /** A filtered book: the whole book is 250,000 in GBP, the filter caught 220,000. */
+  const book = {
+    chasedByCurrency: [
+      { currency: "AED", invoiceCount: 1, outstandingMinorUnits: 100_000 },
+      { currency: "GBP", invoiceCount: 7, outstandingMinorUnits: 250_000 },
+    ],
+    matchedByCurrency: [{ currency: "GBP", invoiceCount: 5, outstandingMinorUnits: 220_000 }],
+  };
+
+  /**
+   * ⚠️ THE TWO LISTS ARE THE SAME SHAPE AND SWAPPING THEM TYPECHECKS. That is
+   * the entire reason this is a function with a test rather than two lines in
+   * an async server component nothing can render.
+   */
+  it("takes the figure from the FILTERED list, not the whole book", () => {
+    const panel = bookMoneyPanel(book);
+    expect(panel.money?.outstandingMinorUnits).toBe(220_000);
+    expect(panel.money?.invoiceCount).toBe(5);
+  });
+
+  /**
+   * ⚠️ THE PICKER MUST KEEP NAMING CURRENCIES THE FILTER EXCLUDED. Here the
+   * filter matched no dirhams at all — and AED must still be offered, or a
+   * customer looking at sterling is silently told their AED book is gone.
+   */
+  it("keeps every chased currency in the picker, even ones the filter missed", () => {
+    const panel = bookMoneyPanel(book);
+    expect(panel.currencies.map((row) => row.currency)).toEqual(["AED", "GBP"]);
+  });
+
+  /**
+   * The default currency is ranked by invoice COUNT over the whole book — using
+   * the filtered list would move the page between currencies as the tabs are
+   * clicked, which is a screen that will not sit still.
+   */
+  it("picks the default currency from the whole book, not the filtered slice", () => {
+    expect(bookMoneyPanel(book).selectedCurrency).toBe("GBP");
+    expect(bookMoneyPanel(book, "aed").selectedCurrency).toBe("AED");
+  });
+
+  /**
+   * Selecting a currency the filter matched nothing in is a real state — "no
+   * overdue dirhams" — and must read as a zero, never as a crash or as the
+   * whole book's dirham figure leaking through.
+   */
+  it("returns nothing when the filter matched none of the chosen currency", () => {
+    const panel = bookMoneyPanel(book, "AED");
+    expect(panel.money).toBeUndefined();
+    expect(
+      bookTotalLine({
+        currency: panel.selectedCurrency,
+        formattedOutstanding: "AED 0.00",
+        invoiceCount: panel.money?.invoiceCount ?? 0,
+        view: "overdue",
+      }),
+    ).toBe("Nothing overdue in AED.");
+  });
+});
+
 describe("the money at the top of the book", () => {
   it("names the currency and agrees with itself on number", () => {
     expect(
@@ -91,6 +152,64 @@ describe("the money at the top of the book", () => {
     });
     expect(line).toMatch(/nothing outstanding in AED/i);
     expect(line).not.toContain("0 invoices");
+  });
+
+  /**
+   * ⚠️ THE MONEY FOLLOWS THE FILTER, SO THE SENTENCE MUST NAME THE FILTER.
+   * This panel sits directly above a table the view tabs filter. Showing
+   * whole-book money over an "Overdue" list put "£2,600.00 outstanding across
+   * 3 invoices" above "1 invoice" — two numbers that looked like they
+   * disagreed, one of them answering a question nobody had asked.
+   */
+  it("names the view it is counting, so the figure cannot be misread", () => {
+    const money = { currency: "GBP", formattedOutstanding: "£2,200.00", invoiceCount: 2 };
+    expect(bookTotalLine({ ...money, view: "overdue" })).toBe(
+      "£2,200.00 overdue across 2 invoices.",
+    );
+    expect(bookTotalLine({ ...money, view: "due_today" })).toContain("due today");
+    expect(bookTotalLine({ ...money, view: "due_soon" })).toContain("due soon");
+  });
+
+  /**
+   * ⚠️ A DRAFT IS NOT OUTSTANDING. Nobody has been sent it, so no money in it
+   * is owed — and calling it outstanding overstates the book in the direction
+   * that flatters us, in the one figure a business reads first.
+   */
+  it("never calls draft money outstanding", () => {
+    const line = bookTotalLine({
+      currency: "GBP",
+      formattedOutstanding: "£880.00",
+      invoiceCount: 1,
+      view: "draft",
+    });
+    expect(line).toContain("in drafts");
+    expect(line).not.toContain("outstanding");
+  });
+
+  it("keeps the plain wording when no view is chosen", () => {
+    const money = { currency: "GBP", formattedOutstanding: "£2,500.00", invoiceCount: 7 };
+    expect(bookTotalLine(money)).toContain("outstanding across");
+    expect(bookTotalLine({ ...money, view: undefined })).toContain("outstanding across");
+  });
+
+  /**
+   * The status comes off a URL anybody can edit. A mistyped query string must
+   * not take the screen down — it falls back to the plain wording.
+   */
+  it("falls back rather than throwing on a view it does not know", () => {
+    const line = bookTotalLine({
+      currency: "GBP",
+      formattedOutstanding: "£2,500.00",
+      invoiceCount: 7,
+      view: "not-a-real-view",
+    });
+    expect(line).toContain("outstanding across 7 invoices");
+  });
+
+  it("says nothing matched in the view's own words, not the book's", () => {
+    const empty = { currency: "GBP", formattedOutstanding: "£0.00", invoiceCount: 0 };
+    expect(bookTotalLine({ ...empty, view: "overdue" })).toBe("Nothing overdue in GBP.");
+    expect(bookTotalLine({ ...empty, view: "draft" })).toBe("No drafts in GBP.");
   });
 
   /**
