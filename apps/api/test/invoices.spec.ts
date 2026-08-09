@@ -1522,12 +1522,18 @@ describe("Invoices: the organisation-wide book", () => {
     });
 
     /**
-     * ⚠️ THE CLAMP, AND WHY THE TOTAL IS NOT `SUM(amount) - SUM(paid)`.
-     * Overpayment is allowed, so an invoice paid 2,500 over would quietly eat
-     * 2,500 off ANOTHER invoice's balance and understate what is owed. The
-     * clamp has to happen per row.
+     * ⚠️ THIS DOES NOT PROVE THE CLAMP, AND IT USED TO SAY IT DID. Found by
+     * mutation on 2026-08-09: deleting `GREATEST(..., 0)` left this test green.
+     * BK-AED-OVER is the only overpaid row and its status is `paid`, so the
+     * chased filter excludes it before the arithmetic is ever reached — the
+     * clamp cannot change this number, whatever it does.
+     *
+     * What it actually proves is worth keeping: a settled invoice is not money
+     * anybody is collecting, so it is absent from the chased total entirely.
+     * The clamp is proved where an overpaid row really does reach the sum, in
+     * "clamps an overpayment under a filter too" below.
      */
-    it("clamps each invoice at zero, so an overpayment cannot mask other debt", async () => {
+    it("leaves a settled invoice out of the chased money altogether", async () => {
       const response = await book().expect(200);
       const aed = response.body.chasedByCurrency.find(
         (c: { currency: string }) => c.currency === "AED",
@@ -1568,6 +1574,153 @@ describe("Invoices: the organisation-wide book", () => {
       expect(gbp.outstandingMinorUnits).not.toBe(250_000 + 99_000 + 88_000);
       // And the count is of chased invoices, not of the rows on screen.
       expect(gbp.invoiceCount).toBeLessThan(numbers.length);
+    });
+  });
+
+  /**
+   * The money the FILTERS selected, which is a different question from what the
+   * organisation is chasing overall — and the reason the home screen could
+   * previously only say how many invoices were overdue, never how much.
+   */
+  describe("the money the filters actually selected", () => {
+    interface Total {
+      currency: string;
+      invoiceCount: number;
+      outstandingMinorUnits: number;
+    }
+    const find = (rows: Total[], code: string) => rows.find((row) => row.currency === code);
+
+    it("totals only what is overdue, not the whole book", async () => {
+      const response = await book("?status=overdue&limit=200").expect(200);
+      // BK-OD10/20/40/99 in full plus BK-PART's 40,000 BALANCE. NOT BK-CURRENT
+      // or BK-TODAY (not late), and not the cancelled or draft rows (nobody is
+      // collecting those) — 250,000 would be the whole book.
+      expect(find(response.body.matchedByCurrency, "GBP")).toMatchObject({
+        invoiceCount: 5,
+        outstandingMinorUnits: 220_000,
+      });
+      expect(find(response.body.matchedByCurrency, "AED")).toMatchObject({
+        invoiceCount: 1,
+        outstandingMinorUnits: 100_000,
+      });
+    });
+
+    /**
+     * ⚠️ THE POINT OF THE WHOLE CHANGE, IN ONE ASSERTION. If these two ever
+     * report the same GBP figure under an overdue filter, the filtered total
+     * has silently gone back to being the unfiltered one.
+     */
+    it("differs from the unfiltered total, which stays whole-book", async () => {
+      const response = await book("?status=overdue&limit=200").expect(200);
+      expect(find(response.body.matchedByCurrency, "GBP")!.outstandingMinorUnits).toBe(220_000);
+      expect(find(response.body.chasedByCurrency, "GBP")!.outstandingMinorUnits).toBe(250_000);
+    });
+
+    /**
+     * ⚠️ THE CURRENCY PICKER IS BUILT FROM `chasedByCurrency`, AND FILTERING IT
+     * WOULD HIDE MONEY. Looking at GBP must still tell a customer there is AED
+     * on the book — collapsing the list to the currency already chosen is the
+     * exact failure the picker exists to prevent.
+     */
+    it("narrows by currency without narrowing the list of currencies", async () => {
+      const response = await book("?currency=GBP&limit=200").expect(200);
+      expect(response.body.matchedByCurrency.map((r: { currency: string }) => r.currency)).toEqual([
+        "GBP",
+      ]);
+      expect(response.body.chasedByCurrency.map((r: { currency: string }) => r.currency)).toEqual([
+        "AED",
+        "GBP",
+      ]);
+    });
+
+    it("clamps an overpayment under a filter too", async () => {
+      // BK-AED-OVER is paid 2,500 over. Asking for paid invoices must report
+      // zero, never a negative that eats another invoice's balance.
+      const response = await book("?status=paid&currency=AED&limit=200").expect(200);
+      expect(find(response.body.matchedByCurrency, "AED")).toMatchObject({
+        invoiceCount: 1,
+        outstandingMinorUnits: 0,
+      });
+    });
+
+    it("totals a state nobody is collecting when that is what was asked for", async () => {
+      // Drafts are deliberately absent from `chasedByCurrency` — but a caller
+      // that asks for drafts is owed the answer to the question it asked.
+      const response = await book("?status=draft&limit=200").expect(200);
+      expect(find(response.body.matchedByCurrency, "GBP")).toMatchObject({
+        invoiceCount: 1,
+        outstandingMinorUnits: 88_000,
+      });
+      expect(find(response.body.chasedByCurrency, "GBP")!.outstandingMinorUnits).toBe(250_000);
+    });
+
+    it("is empty when nothing matches, rather than falling back to the book", async () => {
+      const response = await book("?search=nothing-matches-this").expect(200);
+      expect(response.body.matchedByCurrency).toEqual([]);
+      expect(response.body.totalCount).toBe(0);
+      // The book itself is still there — an empty RESULT is not an empty book.
+      expect(response.body.chasedByCurrency.length).toBeGreaterThan(0);
+    });
+
+    /**
+     * ⚠️ THE DRIFT GUARD, AND THE REASON IT EXISTS.
+     *
+     * The rows and `totalCount` are filtered by Prisma; the money is filtered
+     * by hand-written SQL, because the balance is clamped PER ROW and Prisma's
+     * aggregate cannot express `GREATEST(amount - paid, 0)`. So the same
+     * question is written twice, in two languages, and nothing about the type
+     * system makes them agree — a filter added to one and forgotten in the
+     * other would ship a screen whose money and whose count describe different
+     * sets of invoices, which is precisely the bug this slice set out to fix.
+     *
+     * Counting is what makes it mechanical: a COUNT has no units, so summing it
+     * across currencies is the one cross-currency arithmetic that is honest.
+     *
+     * ⚠️ `%` AND `_` ARE LIKE WILDCARDS AND ARE NOT ESCAPED BY EITHER SIDE.
+     * They are in this list on purpose: a customer typing an underscore is the
+     * cheapest way to find out that the two forms disagree about what a search
+     * term means.
+     */
+    it("agrees with totalCount for every filter, so the two forms cannot drift", async () => {
+      const queries = [
+        "",
+        "?status=overdue",
+        "?status=due_today",
+        "?status=due_soon",
+        "?status=draft",
+        "?status=cancelled",
+        "?status=paid",
+        "?status=active",
+        "?currency=aed",
+        "?currency=GBP",
+        `?customerId=${customerA}`,
+        `?customerId=${customerB}`,
+        "?search=BK-OD",
+        "?search=beta",
+        `?search=${encodeURIComponent("BK_OD10")}`,
+        `?search=${encodeURIComponent("100%")}`,
+        "?status=overdue&currency=GBP",
+        "?status=overdue&currency=AED",
+        `?status=overdue&customerId=${customerB}&search=BK`,
+        `?currency=GBP&customerId=${customerA}&search=bk-`,
+      ];
+
+      for (const query of queries) {
+        const response = await book(`${query}${query ? "&" : "?"}limit=200`).expect(200);
+        const counted = response.body.matchedByCurrency.reduce(
+          (sum: number, row: { invoiceCount: number }) => sum + row.invoiceCount,
+          0,
+        );
+        expect(
+          counted,
+          `matchedByCurrency and totalCount disagree for '${query || "(no filter)"}'`,
+        ).toBe(response.body.totalCount);
+        // And the page itself agrees, so neither has drifted from the rows.
+        expect(
+          response.body.rows.length,
+          `rows and totalCount disagree for '${query || "(no filter)"}'`,
+        ).toBe(response.body.totalCount);
+      }
     });
   });
 
@@ -1768,9 +1921,11 @@ describe("Invoices: the organisation-wide book", () => {
       .get(`/organisations/${other.id}/invoices`)
       .set("Authorization", `Bearer ${otherToken}`)
       .expect(200);
-    // A different organisation's book is empty, not this one's.
+    // A different organisation's book is empty, not this one's. Both totals,
+    // because the filtered one is hand-written SQL and asserts its own tenant.
     expect(response.body.rows).toHaveLength(0);
     expect(response.body.chasedByCurrency).toHaveLength(0);
+    expect(response.body.matchedByCurrency).toHaveLength(0);
   });
 });
 

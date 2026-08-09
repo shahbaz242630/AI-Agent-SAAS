@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   attentionItems,
   chaseSummary,
+  overdueLine,
   owedHeadline,
   owedRows,
   type CurrencyTotal,
@@ -50,6 +51,58 @@ describe("dashboard", () => {
       const rows = owedRows([GBP, KWD, AED]);
       expect(rows).toHaveLength(3);
       expect(new Set(rows.map((r) => r.currency)).size).toBe(3);
+    });
+  });
+
+  describe("how much of each currency is overdue", () => {
+    /**
+     * ⚠️ MATCHED BY CURRENCY CODE, NEVER BY POSITION — and the fixture is built
+     * to catch a positional join. The two lists come from two API calls with
+     * different filters, so the overdue one is SHORTER whenever a currency has
+     * nothing late: here sterling sorts first and has nothing overdue, while
+     * the only overdue row is Kuwaiti. Zipping by index would print 1,250.499
+     * dinars of late money under the GBP heading — the cross-currency lie this
+     * module exists to prevent, arriving by an array index instead of a sum.
+     */
+    it("puts each currency's overdue money on its own row", () => {
+      const rows = owedRows(
+        [GBP, KWD],
+        [{ ...KWD, invoiceCount: 2, outstandingMinorUnits: 1_250_499 }],
+      );
+      const gbp = rows.find((r) => r.currency === "GBP")!;
+      const kwd = rows.find((r) => r.currency === "KWD")!;
+      expect(gbp.overdueMinorUnits).toBe(0);
+      expect(gbp.overdueCount).toBe(0);
+      expect(kwd.overdueMinorUnits).toBe(1_250_499);
+      expect(kwd.overdueCount).toBe(2);
+    });
+
+    it("treats a missing overdue list as nothing being late", () => {
+      const rows = owedRows([GBP, KWD]);
+      expect(rows.every((r) => r.overdueMinorUnits === 0 && r.overdueCount === 0)).toBe(true);
+    });
+
+    /**
+     * A currency that is entirely overdue is a real state, and the two figures
+     * being equal must not make either of them disappear.
+     */
+    it("keeps the overdue figure when all of a currency is late", () => {
+      const rows = owedRows([GBP], [GBP]);
+      expect(rows[0]!.outstandingMinorUnits).toBe(150_000);
+      expect(rows[0]!.overdueMinorUnits).toBe(150_000);
+    });
+
+    it("says nothing when nothing is late, rather than a zero", () => {
+      expect(overdueLine({ formattedOverdue: "£0.00", invoiceCount: 0 })).toBeNull();
+    });
+
+    it("counts late invoices in words, singular and plural", () => {
+      expect(overdueLine({ formattedOverdue: "£500.00", invoiceCount: 1 })).toBe(
+        "£500.00 overdue across 1 invoice",
+      );
+      expect(overdueLine({ formattedOverdue: "£500.00", invoiceCount: 4 })).toBe(
+        "£500.00 overdue across 4 invoices",
+      );
     });
   });
 

@@ -1,4 +1,4 @@
-import { owedHeadline, type CurrencyTotal } from "@/lib/dashboard";
+import { overdueLine, owedHeadline, type OwedRow } from "@/lib/dashboard";
 import { formatMoney } from "@/lib/money";
 
 /**
@@ -13,26 +13,36 @@ import { formatMoney } from "@/lib/money";
  * formatting is the thing worth covering: a Kuwaiti amount shown to two decimals
  * is wrong by a factor of ten, and GCC is the next market.
  */
-export function OwedPanel({ rows }: { rows: CurrencyTotal[] }) {
+export function OwedPanel({ rows }: { rows: OwedRow[] }) {
   return (
     <div className="flex w-full flex-col gap-3">
       <p className="text-sm text-muted-foreground">{owedHeadline(rows)}</p>
       {rows.length > 0 && (
         <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          {rows.map((row) => (
-            <li
-              key={row.currency}
-              className="flex flex-col gap-1 rounded-[var(--radius-card)] bg-muted px-5 py-4"
-            >
-              <span className="text-2xl font-bold tabular-nums">
-                {formatMoney(row.outstandingMinorUnits, row.currency)}
-              </span>
-              <span className="text-xs text-muted-foreground">
-                {row.invoiceCount === 1 ? "1 invoice" : `${row.invoiceCount} invoices`} in{" "}
-                {row.currency}
-              </span>
-            </li>
-          ))}
+          {rows.map((row) => {
+            /* ⚠️ FORMATTED IN THE ROW'S OWN CURRENCY, never the card's headline
+               currency — they are the same code here, and that is exactly the
+               kind of thing a later refactor breaks silently. */
+            const late = overdueLine({
+              formattedOverdue: formatMoney(row.overdueMinorUnits, row.currency),
+              invoiceCount: row.overdueCount,
+            });
+            return (
+              <li
+                key={row.currency}
+                className="flex flex-col gap-1 rounded-[var(--radius-card)] bg-muted px-5 py-4"
+              >
+                <span className="text-2xl font-bold tabular-nums">
+                  {formatMoney(row.outstandingMinorUnits, row.currency)}
+                </span>
+                <span className="text-xs text-muted-foreground">
+                  {row.invoiceCount === 1 ? "1 invoice" : `${row.invoiceCount} invoices`} in{" "}
+                  {row.currency}
+                </span>
+                {late && <span className="text-xs font-medium text-danger">{late}</span>}
+              </li>
+            );
+          })}
         </ul>
       )}
     </div>

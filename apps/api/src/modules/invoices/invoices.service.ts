@@ -189,11 +189,38 @@ export interface InvoiceBook {
    * not money anybody is collecting, and putting it in a total is how "what am
    * I owed" becomes wrong.
    */
-  chasedByCurrency: {
-    currency: string;
-    invoiceCount: number;
-    outstandingMinorUnits: number;
-  }[];
+  chasedByCurrency: CurrencyTotal[];
+  /**
+   * The money the REQUEST'S FILTERS actually selected, per currency.
+   *
+   * ⚠️ THIS IS THE ONLY TOTAL THAT MAY BE PRINTED UNDER A FILTERED HEADING, and
+   * the distinction is the whole reason it exists. `chasedByCurrency` is
+   * computed from the organisation id alone, so `?status=overdue` returned
+   * WHOLE-BOOK money — put that under "overdue" and the screen states, in
+   * money, something untrue. The home screen could therefore only ever say how
+   * MANY invoices were overdue, and the book screen showed a total that
+   * disagreed with the list printed directly beneath it.
+   *
+   * ⚠️ IT IS NOT A REPLACEMENT FOR `chasedByCurrency` AND MUST NOT BECOME ONE.
+   * The book screen's currency picker is built from the unfiltered list, which
+   * is what lets a customer looking at GBP still be told there is money in AED.
+   * Filtering that list would collapse the picker to the currency already
+   * chosen and hide the rest of the book — the exact failure the picker was
+   * built to prevent.
+   *
+   * ⚠️ UNLIKE `chasedByCurrency` THIS TOTALS WHATEVER WAS ASKED FOR, including
+   * states nobody is collecting: `?status=cancelled` returns cancelled money.
+   * That is honest under the heading the caller chose and wrong under any
+   * other, so it is never "what you are owed" unless the filter says so.
+   */
+  matchedByCurrency: CurrencyTotal[];
+}
+
+/** One currency's slice of a book — never added to another's (trap 3b). */
+export interface CurrencyTotal {
+  currency: string;
+  invoiceCount: number;
+  outstandingMinorUnits: number;
 }
 
 const DEFAULT_TIMEZONE = "Europe/London";
@@ -207,6 +234,112 @@ const DEFAULT_TIMEZONE = "Europe/London";
  * hand-written `?limit=100000` from mattering.
  */
 const MAX_BOOK_PAGE = 200;
+
+/** A `Date` at UTC midnight as the calendar day it represents. */
+function isoDay(value: Date): string {
+  return value.toISOString().slice(0, 10);
+}
+
+/**
+ * A computed status's due-date range, in SQL.
+ *
+ * `due_date` is a DATE column and a JS `Date` reaches the driver as a
+ * timestamp, so the comparison would depend on the SERVER's timezone —
+ * an off-by-one on the boundary day that nobody would notice until a month end.
+ * Passing the calendar day and casting it removes the question.
+ *
+ * ⚠️ NO TEST PROVES THIS, AND THAT IS STATED RATHER THAN IMPLIED. Passing the
+ * `Date` straight through was tried on 2026-08-09 and all 114 tests stayed
+ * green, because our local Postgres and Supabase both run `TimeZone = UTC`,
+ * where the two forms agree. It is kept because it is correct on a server that
+ * does not, and because it says what it means — but it is a belt, not a
+ * measurement, and a future reader should not mistake it for one.
+ */
+function dueDateCondition(range: Exclude<BookDueDateRange, null>): Prisma.Sql {
+  if ("lt" in range) return Prisma.sql`i.due_date < ${isoDay(range.lt)}::date`;
+  if ("equals" in range) return Prisma.sql`i.due_date = ${isoDay(range.equals)}::date`;
+  return Prisma.sql`i.due_date > ${isoDay(range.gt)}::date AND i.due_date <= ${isoDay(
+    range.lte,
+  )}::date`;
+}
+
+type BookDueDateRange = ReturnType<typeof computedStatusDueDateRange>;
+
+/**
+ * The book's filters, written BOTH ways: as Prisma's `where` for the rows and
+ * the count, and as SQL for the per-currency money.
+ *
+ * ⚠️ THE SAME QUESTION IN TWO LANGUAGES, AND ONLY A TEST KEEPS THEM HONEST.
+ * The money cannot go through Prisma's aggregate because the balance is clamped
+ * per row (see `moneyByCurrency`), so the filter has to be expressed twice.
+ * They are built here, side by side, from one set of inputs so a change to one
+ * is impossible to make without seeing the other — and `invoices.spec.ts`
+ * asserts that the per-currency counts add up to `totalCount` across every
+ * filter, which is the only way a drift between them gets caught mechanically
+ * rather than by a customer reading two different numbers on one screen.
+ *
+ * ⚠️ A COMPUTED STATUS CANNOT BE FILTERED AS A STATUS. `overdue` is derived per
+ * request from the due date and the ORG's timezone — deliberately not a column
+ * (plan §7.1) — so it becomes a due-date range, which is the same question in a
+ * form the database can answer. That also keeps paging honest: filtering after
+ * paging would ask for ten rows and show three.
+ */
+function bookFilters(
+  filters: { status?: string; currency?: string; customerId?: string; search?: string },
+  today: Date,
+): { where: Prisma.InvoiceWhereInput; sql: Prisma.Sql } {
+  const dueDateFilter = computedStatusDueDateRange(filters.status, today);
+
+  const where: Prisma.InvoiceWhereInput = {
+    deletedAt: null,
+    ...(filters.customerId !== undefined ? { customerId: filters.customerId } : {}),
+    ...(filters.currency !== undefined ? { currency: filters.currency.toUpperCase() } : {}),
+    ...(dueDateFilter !== null
+      ? // A computed status always means the invoice is being CHASED — the
+        // derivation never applies to anything else.
+        { status: { in: [...CHASED_INVOICE_STATUSES] }, dueDate: dueDateFilter }
+      : filters.status !== undefined
+        ? { status: filters.status }
+        : {}),
+    ...(filters.search
+      ? {
+          OR: [
+            { invoiceNumber: { contains: filters.search, mode: "insensitive" as const } },
+            { customer: { name: { contains: filters.search, mode: "insensitive" as const } } },
+          ],
+        }
+      : {}),
+  };
+
+  const conditions: Prisma.Sql[] = [Prisma.sql`i.deleted_at IS NULL`];
+  if (filters.customerId !== undefined) {
+    conditions.push(Prisma.sql`i.customer_id = ${filters.customerId}::uuid`);
+  }
+  if (filters.currency !== undefined) {
+    conditions.push(Prisma.sql`i.currency = ${filters.currency.toUpperCase()}`);
+  }
+  if (dueDateFilter !== null) {
+    conditions.push(
+      Prisma.sql`i.status IN (${Prisma.join([...CHASED_INVOICE_STATUSES])})`,
+      dueDateCondition(dueDateFilter),
+    );
+  } else if (filters.status !== undefined) {
+    conditions.push(Prisma.sql`i.status = ${filters.status}`);
+  }
+  if (filters.search) {
+    // `contains` + `mode: insensitive` is ILIKE with the term between wildcards.
+    // Any `%` the customer types stays a wildcard in BOTH forms, which is what
+    // makes them agree — the spec searches for one on purpose.
+    const pattern = `%${filters.search}%`;
+    conditions.push(
+      Prisma.sql`(i.invoice_number ILIKE ${pattern} OR EXISTS (
+        SELECT 1 FROM customers c WHERE c.id = i.customer_id AND c.name ILIKE ${pattern}
+      ))`,
+    );
+  }
+
+  return { where, sql: Prisma.join(conditions, " AND ") };
+}
 
 @Injectable()
 export class InvoicesService {
@@ -295,37 +428,8 @@ export class InvoicesService {
         }
       }
 
-      /**
-       * ⚠️ A COMPUTED STATUS CANNOT BE FILTERED IN SQL. `overdue` is derived per
-       * request from the due date and the ORG's timezone — it is deliberately
-       * not a column (plan §7.1). So the filter is applied as a due-date range
-       * instead, which is the same question asked in a way the database can
-       * answer, and keeps paging honest: filtering after paging would return a
-       * page of ten and show three.
-       */
       const today = todayInTimezone(timezone);
-      const dueDateFilter = computedStatusDueDateRange(filters.status, today);
-
-      const where = {
-        deletedAt: null,
-        ...(filters.customerId !== undefined ? { customerId: filters.customerId } : {}),
-        ...(filters.currency !== undefined ? { currency: filters.currency.toUpperCase() } : {}),
-        ...(dueDateFilter !== null
-          ? // A computed status always means the invoice is being CHASED — the
-            // derivation never applies to anything else.
-            { status: { in: [...CHASED_INVOICE_STATUSES] }, dueDate: dueDateFilter }
-          : filters.status !== undefined
-            ? { status: filters.status }
-            : {}),
-        ...(filters.search
-          ? {
-              OR: [
-                { invoiceNumber: { contains: filters.search, mode: "insensitive" as const } },
-                { customer: { name: { contains: filters.search, mode: "insensitive" as const } } },
-              ],
-            }
-          : {}),
-      };
+      const { where, sql } = bookFilters(filters, today);
 
       const take = Math.min(Math.max(filters.limit ?? 50, 1), MAX_BOOK_PAGE);
       const skip = Math.max(filters.offset ?? 0, 0);
@@ -352,6 +456,11 @@ export class InvoicesService {
         rows.map((row) => row.id),
       );
 
+      const [chasedByCurrency, matchedByCurrency] = await Promise.all([
+        this.chasedByCurrency(tx, organisationId),
+        this.moneyByCurrency(tx, organisationId, sql),
+      ]);
+
       return {
         rows: rows.map((row) => {
           const dates = chaseDates.get(row.id);
@@ -372,7 +481,8 @@ export class InvoicesService {
           };
         }),
         totalCount,
-        chasedByCurrency: await this.chasedByCurrency(tx, organisationId),
+        chasedByCurrency,
+        matchedByCurrency,
       };
     });
   }
@@ -431,22 +541,46 @@ export class InvoicesService {
    * clamp has to happen per row, which is what `GREATEST(..., 0)` does — the
    * same rule as `outstandingBalance` in `@eva/types`.
    */
-  private async chasedByCurrency(
+  private async chasedByCurrency(tx: TenantTx, organisationId: string): Promise<CurrencyTotal[]> {
+    return this.moneyByCurrency(
+      tx,
+      organisationId,
+      Prisma.sql`i.deleted_at IS NULL AND i.status IN (${Prisma.join([
+        ...CHASED_INVOICE_STATUSES,
+      ])})`,
+    );
+  }
+
+  /**
+   * The clamped balance per currency, over whatever `conditions` select.
+   *
+   * ⚠️ RAW SQL BECAUSE THE BALANCE IS CLAMPED, and that is not a style choice —
+   * it is why Prisma's own aggregate cannot be used here. `SUM(amount) -
+   * SUM(paid)` is a DIFFERENT number: overpayment is allowed, so an invoice
+   * paid 25 over would quietly eat 25 off another invoice's balance and
+   * understate the total. The clamp has to happen per row, which is what
+   * `GREATEST(..., 0)` does — the same rule as `outstandingBalance` in
+   * `@eva/types`.
+   *
+   * `organisation_id` is asserted here as well as by RLS: this is hand-written
+   * SQL, and a tenant boundary should not rest on one mechanism.
+   */
+  private async moneyByCurrency(
     tx: TenantTx,
     organisationId: string,
-  ): Promise<InvoiceBook["chasedByCurrency"]> {
+    conditions: Prisma.Sql,
+  ): Promise<CurrencyTotal[]> {
     const rows = await tx.$queryRaw<
       { currency: string; invoice_count: bigint; outstanding: bigint | null }[]
     >`
-      SELECT currency,
+      SELECT i.currency,
              COUNT(*) AS invoice_count,
-             SUM(GREATEST(amount_minor_units - amount_paid_minor_units, 0)) AS outstanding
-        FROM invoices
-       WHERE organisation_id = ${organisationId}::uuid
-         AND deleted_at IS NULL
-         AND status IN ('active', 'partially_paid')
-       GROUP BY currency
-       ORDER BY currency
+             SUM(GREATEST(i.amount_minor_units - i.amount_paid_minor_units, 0)) AS outstanding
+        FROM invoices i
+       WHERE i.organisation_id = ${organisationId}::uuid
+         AND ${conditions}
+       GROUP BY i.currency
+       ORDER BY i.currency
     `;
     return rows.map((row) => ({
       currency: row.currency,
