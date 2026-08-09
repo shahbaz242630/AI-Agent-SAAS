@@ -104,6 +104,18 @@ export function owedHeadline(rows: readonly CurrencyTotal[]): string {
 /** Something the customer has to do, or Eva stays stuck. */
 export interface AttentionItem {
   kind: "no_mailbox" | "reminders_failed" | "reminders_waiting";
+  /**
+   * How loud the card is.
+   *
+   * ⚠️ `bad` MEANS SOMETHING IS STOPPED; `warn` MEANS SOMETHING IS PENDING.
+   * The distinction is the difference between "go and do something" and "Eva
+   * is on it" — and getting it wrong in the generous direction is worse, since
+   * a red card that turns out to mean "waiting, all fine" teaches a customer
+   * to ignore red. A missing mailbox and a failed send are both STOPPED: Eva
+   * will not retry either without a human. A waiting reminder retries itself
+   * on the next run and is genuinely only amber.
+   */
+  tone: "bad" | "warn";
   headline: string;
   detail: string;
   href: string | null;
@@ -131,6 +143,8 @@ export function attentionItems(input: {
   if (input.mailboxConnected === false) {
     items.push({
       kind: "no_mailbox",
+      // Stopped, not pending: nothing will send until a human reconnects.
+      tone: "bad",
       headline: "No mailbox is connected",
       detail:
         "Eva has nowhere to send from, so nothing will go out. Nothing is lost — connect a mailbox and anything waiting sends on the next run.",
@@ -143,6 +157,8 @@ export function attentionItems(input: {
     const n = input.counts.failedLast7Days;
     items.push({
       kind: "reminders_failed",
+      // Eva will not retry these on her own, so they need a person.
+      tone: "bad",
       headline: n === 1 ? "1 reminder didn't send" : `${n} reminders didn't send`,
       detail:
         "Eva could not deliver these and will not retry them automatically. Worth a look at what went wrong.",
@@ -160,6 +176,8 @@ export function attentionItems(input: {
     const n = input.counts.waiting;
     items.push({
       kind: "reminders_waiting",
+      // Genuinely only amber — these retry themselves on the next run.
+      tone: "warn",
       headline: n === 1 ? "1 reminder is waiting" : `${n} reminders are waiting`,
       detail:
         "These are due and have not gone out yet. Nothing is lost — Eva tries again on the next run.",

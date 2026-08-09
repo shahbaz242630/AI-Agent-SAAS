@@ -146,6 +146,26 @@ describe("dashboard", () => {
      * else, so listing waiting reminders above it sends someone to investigate a
      * symptom instead of the cause.
      */
+    /**
+     * ⚠️ RED MEANS STOPPED; AMBER MEANS PENDING. Getting this wrong in the
+     * generous direction is the worse failure: a red card that turns out to
+     * mean "waiting, all fine" teaches a customer to ignore red, and then the
+     * one that means "Eva has stopped sending" is ignored too.
+     */
+    it("colours a stopped thing red and a pending thing amber", () => {
+      const items = attentionItems({
+        mailboxConnected: false,
+        counts: { sentLast7Days: 0, waiting: 4, failedLast7Days: 2 },
+        waitingReason: "unknown",
+      });
+      const tone = (kind: string) => items.find((i) => i.kind === kind)?.tone;
+      // Neither of these retries without a human.
+      expect(tone("no_mailbox")).toBe("bad");
+      expect(tone("reminders_failed")).toBe("bad");
+      // This one retries itself on the next run.
+      expect(tone("reminders_waiting")).toBe("warn");
+    });
+
     it("puts a disconnected mailbox above everything else", () => {
       const items = attentionItems({
         mailboxConnected: false,

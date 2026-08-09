@@ -1,14 +1,17 @@
-import Link from "next/link";
 import { redirect } from "next/navigation";
 import type { ReminderActivityDto } from "@eva/types";
+import { AlertCard, EmptyState, GhostLink, PrimaryLink, SectionHeading } from "@/components/ui";
 import { ApiError, apiFetch } from "@/lib/api";
-import { attentionItems, chaseSummary, owedRows, type CurrencyTotal } from "@/lib/dashboard";
+import { attentionItems, owedRows, type CurrencyTotal } from "@/lib/dashboard";
+import { firstNameFrom } from "@/lib/identity";
 import { can } from "@/lib/permissions";
 import { createClient } from "@/lib/supabase/server";
+import { greeting, todayLabel } from "@/lib/today";
 import { OwedPanel } from "./owed-panel";
+import { WeekPanel } from "./week-panel";
 
 /**
- * Home (Slice 1.9).
+ * Home (Slice 1.9; redressed 2026-08-09).
  *
  * ⚠️ THIS REPLACED AN ACCOUNT PAGE. It used to show a name, an email and a list
  * of organisations with their role keys — everything except the number the
@@ -24,14 +27,19 @@ import { OwedPanel } from "./owed-panel";
  * The second is computed from the organisation id alone and ignores the
  * request's filters, so a `?status=overdue` call returns WHOLE-BOOK money —
  * printing that beside the word "overdue" would state something untrue in the
- * one figure a business reads first. Until the API grew a filtered total this
- * screen could only honestly say how MANY invoices were late.
+ * one figure a business reads first.
+ *
+ * ⚠️ THE GREETING AND THE DATE USE THE ORGANISATION'S TIMEZONE. This renders on
+ * a server in `us-west2`; its own clock would greet a Manchester customer with
+ * "Afternoon" at midnight and print yesterday's date above a book of overdue
+ * invoices. See `lib/today.ts`.
  */
 
 interface OrganisationSummary {
   id: string;
   name: string;
   permissions: string[];
+  timezone?: string | undefined;
 }
 
 interface Book {
@@ -47,6 +55,7 @@ export default async function AppHomePage() {
   const { data: sessionData } = await supabase.auth.getSession();
   const accessToken = sessionData.session?.access_token;
   if (!accessToken) redirect("/sign-in");
+  const email = typeof claimsData.claims.email === "string" ? claimsData.claims.email : "";
 
   let organisations: OrganisationSummary[];
   try {
@@ -56,24 +65,25 @@ export default async function AppHomePage() {
   } catch (error) {
     if (error instanceof ApiError && error.status === 401) redirect("/sign-in");
     return (
-      <Shell>
-        <section className="flex w-full max-w-4xl flex-col gap-3">
-          <h1 className="text-2xl font-bold text-primary">Something went wrong</h1>
-          <p className="text-sm text-muted-foreground">
-            {error instanceof ApiError
-              ? error.message
-              : "We couldn't load your account. Please try again in a moment."}
-          </p>
-        </section>
-      </Shell>
+      <main className="flex w-full max-w-[1080px] flex-1 flex-col gap-[26px] px-10 pt-8 pb-9">
+        <h1 className="font-display text-[29px] font-semibold">Something went wrong</h1>
+        <p className="text-sm text-muted-foreground">
+          {error instanceof ApiError
+            ? error.message
+            : "We couldn't load your account. Please try again in a moment."}
+        </p>
+      </main>
     );
   }
 
   const organisation = organisations[0];
   // A brand-new account has nothing to look at, so it goes straight into setup —
-  // and `showsAppChrome` hides the nav there, because every link would be a dead
-  // end for someone with no organisation yet.
+  // and `showsAppChrome` hides the shell there, because every link would be a
+  // dead end for someone with no organisation yet.
   if (!organisation) redirect("/app/onboarding");
+
+  // `?? "Europe/London"` covers a web build newer than the API it is talking to.
+  const timezone = organisation.timezone ?? "Europe/London";
 
   /**
    * Everything below is best-effort and INDEPENDENT. A role that cannot read
@@ -91,106 +101,92 @@ export default async function AppHomePage() {
 
   const overdueCount = overdue?.totalCount ?? null;
   const rows = owedRows(book?.chasedByCurrency ?? [], overdue?.matchedByCurrency ?? []);
-  const attention = activity
-    ? attentionItems({
-        mailboxConnected,
-        counts: activity.counts,
-        waitingReason: activity.waitingReason,
-      })
-    : attentionItems({
-        mailboxConnected,
-        counts: { sentLast7Days: 0, waiting: 0, failedLast7Days: 0 },
-        waitingReason: null,
-      });
+  const attention = attentionItems({
+    mailboxConnected,
+    counts: activity?.counts ?? { sentLast7Days: 0, waiting: 0, failedLast7Days: 0 },
+    waitingReason: activity?.waitingReason ?? null,
+  });
+  // An empty book is the first-run state, not an error — and it is the very
+  // first thing a new customer sees, so it gets somewhere to go rather than a
+  // blank panel.
+  const bookIsEmpty = book !== null && rows.length === 0 && book.totalCount === 0;
 
   return (
-    <Shell>
-      {/* Signing out moved to the sidebar's user card with the 2026-08-09
-          design. Two sign-out buttons on one screen is one too many, and the
-          one beside your own name and email is the one that reads as yours. */}
-      <header className="flex w-full max-w-4xl flex-col gap-1">
-        <h1 className="text-2xl font-bold text-primary">{organisation.name}</h1>
-        <p className="text-sm text-muted-foreground">What you are owed, and what Eva is doing.</p>
+    <main className="flex w-full max-w-[1080px] flex-1 flex-col gap-[26px] px-10 pt-8 pb-9">
+      <header className="flex flex-wrap items-end justify-between gap-4">
+        <div className="flex flex-col gap-1">
+          <h1 className="font-display text-[29px] leading-tight font-semibold">
+            {greeting(timezone)}, {firstNameFrom(email)}.
+          </h1>
+          <p className="text-sm text-muted-foreground">
+            What {organisation.name} is owed, and what Eva is doing.
+          </p>
+        </div>
+        <p className="pb-1 text-[13px] text-faint">{todayLabel(timezone)}</p>
       </header>
 
       {attention.length > 0 && (
-        <section className="flex w-full max-w-4xl flex-col gap-3">
-          <h2 className="text-base font-semibold">Needs you</h2>
-          {attention.map((item) => (
-            <div
-              key={item.kind}
-              className="flex flex-col gap-1 rounded-[var(--radius-card)] bg-muted px-6 py-4"
-            >
-              <span className="text-sm font-semibold">{item.headline}</span>
-              <p className="text-sm text-muted-foreground">{item.detail}</p>
-              {item.href && (
-                <Link href={item.href} className="text-sm font-medium text-primary hover:underline">
-                  {item.linkLabel}
-                </Link>
-              )}
-            </div>
-          ))}
+        <section className="flex flex-col gap-2.5">
+          <SectionHeading title="Needs you" />
+          <div className="flex flex-wrap gap-3">
+            {attention.map((item) => (
+              <AlertCard
+                key={item.kind}
+                tone={item.tone}
+                headline={item.headline}
+                detail={item.detail}
+                {...(item.href && item.linkLabel
+                  ? { action: { href: item.href, label: item.linkLabel } }
+                  : {})}
+              />
+            ))}
+          </div>
         </section>
       )}
 
-      <section className="flex w-full max-w-4xl flex-col gap-3">
-        <div className="flex flex-wrap items-baseline justify-between gap-2">
-          <h2 className="text-base font-semibold">What you are owed</h2>
-          {overdueCount !== null && overdueCount > 0 && (
-            <Link
-              href="/app/invoices?status=overdue"
-              className="text-sm font-medium text-danger hover:underline"
-            >
-              {overdueCount === 1 ? "1 invoice is overdue" : `${overdueCount} invoices are overdue`}
-            </Link>
-          )}
-        </div>
+      <section className="flex flex-col gap-2.5">
+        <SectionHeading
+          title="What you are owed"
+          {...(overdueCount !== null && overdueCount > 0
+            ? {
+                action: {
+                  href: "/app/invoices?status=overdue",
+                  label:
+                    overdueCount === 1
+                      ? "1 invoice is overdue"
+                      : `${overdueCount} invoices are overdue`,
+                  tone: "danger" as const,
+                },
+              }
+            : {})}
+        />
 
         {book === null ? (
           <p className="text-sm text-muted-foreground">
             We couldn&apos;t load your invoices just now. Nothing is lost — try again in a moment.
           </p>
+        ) : bookIsEmpty ? (
+          <EmptyState
+            headline="Your book is empty."
+            detail="Add an invoice or upload a spreadsheet, and Eva starts chasing whatever is left on it — on the schedule you set."
+          >
+            <PrimaryLink href="/app/invoices">Add your first invoice</PrimaryLink>
+            <GhostLink href="/app/invoices/import">Upload a spreadsheet</GhostLink>
+          </EmptyState>
         ) : (
           <OwedPanel rows={rows} />
         )}
       </section>
 
       {activity && can(organisation, "reminders:read") && (
-        <section className="flex w-full max-w-4xl flex-col gap-3">
-          <div className="flex flex-wrap items-baseline justify-between gap-2">
-            <h2 className="text-base font-semibold">Eva this week</h2>
-            <Link
-              href="/app/reminders"
-              className="text-sm font-medium text-primary hover:underline"
-            >
-              See everything Eva sent
-            </Link>
-          </div>
-          <p className="text-sm text-muted-foreground">{chaseSummary(activity.counts)}</p>
-          <div className="grid grid-cols-3 gap-3">
-            <Counter label="Sent" value={activity.counts.sentLast7Days} />
-            <Counter label="Waiting" value={activity.counts.waiting} />
-            <Counter label="Didn't send" value={activity.counts.failedLast7Days} />
-          </div>
+        <section className="flex flex-col gap-2.5">
+          <SectionHeading
+            title="Eva this week"
+            action={{ href: "/app/reminders", label: "See everything Eva sent" }}
+          />
+          <WeekPanel activity={activity} />
         </section>
       )}
-    </Shell>
-  );
-}
-
-function Counter({ label, value }: { label: string; value: number }) {
-  return (
-    <div className="flex flex-col gap-1 rounded-[var(--radius-card)] bg-muted px-5 py-4">
-      <span className="text-xl font-bold tabular-nums">{value}</span>
-      <span className="text-xs text-muted-foreground">{label}</span>
-    </div>
-  );
-}
-
-function Shell({ children }: { children: React.ReactNode }) {
-  return (
-    <main className="flex w-full max-w-[1080px] flex-1 flex-col gap-[26px] px-10 pt-8 pb-9">
-      {children}
     </main>
   );
 }
@@ -217,7 +213,6 @@ async function fetchBook(organisationId: string, accessToken: string): Promise<B
  */
 async function fetchOverdue(organisationId: string, accessToken: string): Promise<Book | null> {
   try {
-    // limit=1 because only the totals are wanted; the rows are the book's job.
     return (await (
       await apiFetch(
         `/organisations/${organisationId}/invoices?status=overdue&limit=1`,

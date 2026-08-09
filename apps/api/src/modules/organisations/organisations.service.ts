@@ -61,6 +61,23 @@ export interface OrganisationSummary {
    * second round trip to know which option to pre-select.
    */
   defaultCurrency: string;
+  /**
+   * The organisation's own timezone (BRD 18.1; `Europe/London` by default).
+   *
+   * ⚠️ PUBLISHED BECAUSE THE ALTERNATIVE IS A SCREEN GUESSING WHAT DAY IT IS.
+   * The home screen shows today's date and greets by time of day, and both are
+   * claims about the CUSTOMER's clock — not the server's. Our API runs in
+   * `us-west2`, eight hours behind London, so a server-local greeting would say
+   * "Good afternoon" at midnight in Manchester and, worse, print yesterday's
+   * date beside a book of overdue invoices.
+   *
+   * Same precedent as `defaultCurrency` above: every screen that needs it
+   * already fetches this summary, and a header must not wait on a second round
+   * trip to know what day it is. The org timezone is the one already used to
+   * derive display statuses and ageing buckets, so the whole product agrees
+   * about when "today" is.
+   */
+  timezone: string;
 }
 
 export interface MemberSummary {
@@ -144,6 +161,9 @@ export class OrganisationsService {
                * being right, only on it being present.
                */
               defaultCurrency: settings?.defaultCurrency ?? "GBP",
+              // Same fail-soft rule as the currency, and the same default the
+              // rest of the API uses when a settings row is missing.
+              timezone: settings?.timezone ?? "Europe/London",
             };
           },
         ),
@@ -211,6 +231,7 @@ export class OrganisationsService {
         // column's own default stays the single answer to "what does a new
         // organisation start on".
         defaultCurrency: settings.defaultCurrency,
+        timezone: settings.timezone,
       };
     });
   }
@@ -271,6 +292,7 @@ export class OrganisationsService {
         roleKey: membership.role.key,
         permissions: await effectivePermissions(tx, organisationId, membership.role.key),
         defaultCurrency: settings.defaultCurrency,
+        timezone: settings.timezone,
       };
     });
   }
