@@ -60,24 +60,93 @@ export function defaultBookCurrency(
   return ranked[0]?.currency ?? "GBP";
 }
 
+/** One currency's slice of the book, as the API returns it. */
+export interface CurrencyTotal {
+  currency: string;
+  invoiceCount: number;
+  outstandingMinorUnits: number;
+}
+
 /**
- * What the organisation is owed, in the currency being shown.
+ * Which list feeds the picker and which feeds the figure.
+ *
+ * ⚠️ THIS EXISTS TO MAKE THE MOST BREAKABLE DECISION ON THE SCREEN TESTABLE.
+ * The API returns two per-currency lists and they are trivially swappable —
+ * both are arrays of the same shape, so putting the wrong one in either place
+ * typechecks, lints and looks right. Left inline in `page.tsx` the choice could
+ * not be covered at all, because that page is an async server component doing
+ * auth and fetches. Here it is four lines of pure logic with a test.
+ *
+ * - The PICKER is the UNFILTERED list. Its whole job is telling someone looking
+ *   at GBP that there is money in AED; building it from the filtered list would
+ *   collapse it to the currency already chosen and hide the rest of the book.
+ * - The FIGURE is the FILTERED list, because it sits above a table the view
+ *   tabs filter, and whole-book money over an "Overdue" list reads as two
+ *   numbers disagreeing.
+ */
+export function bookMoneyPanel(
+  book: { chasedByCurrency: CurrencyTotal[]; matchedByCurrency: CurrencyTotal[] },
+  requestedCurrency?: string,
+): {
+  currencies: CurrencyTotal[];
+  selectedCurrency: string;
+  money: CurrencyTotal | undefined;
+} {
+  const selectedCurrency = defaultBookCurrency(book.chasedByCurrency, requestedCurrency);
+  return {
+    currencies: book.chasedByCurrency,
+    selectedCurrency,
+    money: book.matchedByCurrency.find((row) => row.currency === selectedCurrency),
+  };
+}
+
+/**
+ * What the money at the top of the book is COUNTING, in the reader's words.
+ *
+ * ⚠️ THE MONEY FOLLOWS THE FILTER, SO THE SENTENCE MUST NAME THE FILTER.
+ * Before this existed the panel showed whole-book money above a table filtered
+ * to Overdue: "£2,600.00 outstanding across 3 invoices" sat directly above
+ * "1 invoice", and the two numbers appeared to disagree. Whichever figure a
+ * reader trusted, one of them was answering a question they had not asked.
+ *
+ * ⚠️ "OUTSTANDING" IS ONLY TRUE OF THE UNFILTERED VIEW, which is why each view
+ * gets its own word. A draft has not been sent to anybody, so no money in it is
+ * outstanding — calling it that would misreport the one figure a business reads
+ * first, in the direction that flatters us.
+ */
+const TOTAL_LINE: Readonly<Record<string, { some: string; none: string }>> = {
+  overdue: { some: "overdue across", none: "Nothing overdue in" },
+  due_today: { some: "due today, across", none: "Nothing due today in" },
+  due_soon: { some: "due soon, across", none: "Nothing due soon in" },
+  draft: { some: "in drafts, across", none: "No drafts in" },
+};
+
+const TOTAL_LINE_DEFAULT = { some: "outstanding across", none: "Nothing outstanding in" };
+
+/**
+ * What is on screen, in the currency being shown.
  *
  * ⚠️ ONE CURRENCY AT A TIME, ALWAYS (trap 3b; founder's choice 2026-08-04).
  * A UK business with buyers in Singapore and the UAE holds GBP, SGD and AED in
  * one book, and adding them gives a confident wrong number. The picker beside
  * this line names the others so choosing GBP cannot hide the AED.
+ *
+ * An unknown `view` falls back to the plain wording rather than throwing: the
+ * status comes off a URL anybody can edit, and a screen that 500s because a
+ * query string was mistyped is worse than one that says "outstanding".
  */
 export function bookTotalLine(input: {
   currency: string;
   formattedOutstanding: string;
   invoiceCount: number;
+  view?: string | undefined;
 }): string {
+  const words = (input.view ? TOTAL_LINE[input.view] : undefined) ?? TOTAL_LINE_DEFAULT;
   if (input.invoiceCount === 0) {
-    return `Nothing outstanding in ${input.currency}.`;
+    return `${words.none} ${input.currency}.`;
   }
   const invoices = input.invoiceCount === 1 ? "1 invoice" : `${input.invoiceCount} invoices`;
-  return `${input.formattedOutstanding} outstanding across ${invoices}.`;
+  return `${input.formattedOutstanding} ${words.some} ${invoices}.`;
 }
 
 /**
