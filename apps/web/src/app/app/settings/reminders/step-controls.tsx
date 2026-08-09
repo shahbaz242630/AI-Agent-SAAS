@@ -25,7 +25,8 @@ import { updateReminderStep, type ReminderStepActionState } from "./actions";
  * conversion is `toOffsetDays` in `lib/reminder-sequence`, tested there.
  */
 
-const FIELD = "rounded-[var(--radius-card)] border border-muted-foreground/20 px-3 py-2 text-sm";
+const FIELD =
+  "rounded-[var(--radius-control)] border border-input-border bg-surface px-3 py-2 text-sm";
 
 export function StepControls({
   organisationId,
@@ -56,7 +57,7 @@ export function StepControls({
   const handover = isHandover(step.actionType);
 
   return (
-    <li className="flex flex-col gap-3 rounded-[var(--radius-card)] bg-muted px-5 py-4">
+    <li className="flex flex-col gap-3 rounded-[var(--radius-card)] border border-border bg-surface px-5 py-4">
       <div className="flex flex-col gap-1">
         <span className="text-base font-semibold">{stageLabel(step.key)}</span>
         <p className="text-sm text-muted-foreground">{stepPurpose(step.key)}</p>
@@ -122,7 +123,7 @@ export function StepControls({
           <button
             type="submit"
             disabled={pending}
-            className="rounded-[var(--radius-card)] bg-primary px-4 py-2 text-sm font-medium text-primary-foreground disabled:opacity-60"
+            className="rounded-[var(--radius-control)] bg-primary px-4 py-2 text-[13px] font-semibold text-primary-foreground shadow-[var(--shadow-primary)] disabled:opacity-60"
           >
             {pending ? "Saving…" : "Save this stage"}
           </button>

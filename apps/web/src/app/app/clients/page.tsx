@@ -159,7 +159,7 @@ export default async function ClientsPage({
   if (notEntitled) {
     return (
       <Shell>
-        <section className="flex w-full max-w-4xl flex-col gap-3 rounded-[var(--radius-card)] bg-muted px-6 py-4">
+        <section className="flex w-full flex-col gap-3 rounded-[var(--radius-card)] border border-warning-border bg-warning-tint px-6 py-4">
           {/* One interpolated string, never `{name}` beside wrapping JSX text —
               Next 16's build drops the space between them (handoff §0c), and
               `{" "}` does not survive Prettier. */}
@@ -169,7 +169,7 @@ export default async function ClientsPage({
           <div>
             <Link
               href="/app/settings/modules"
-              className="rounded-[var(--radius-card)] bg-primary px-4 py-2 text-sm font-medium text-primary-foreground"
+              className="rounded-[var(--radius-control)] bg-primary px-4 py-2 text-[13px] font-semibold text-primary-foreground shadow-[var(--shadow-primary)] hover:opacity-90"
             >
               See your products
             </Link>
@@ -190,8 +190,8 @@ export default async function ClientsPage({
 
   return (
     <Shell>
-      <section className="flex w-full max-w-4xl flex-col gap-2">
-        <h1 className="text-2xl font-bold text-primary">
+      <section className="flex w-full flex-col gap-2">
+        <h1 className="font-display text-[29px] leading-tight font-semibold">
           {focused ? "Clients chased from this mailbox" : "Clients"}
         </h1>
         <p className="text-sm text-muted-foreground">
@@ -212,14 +212,14 @@ export default async function ClientsPage({
           just without the parts that are about mailboxes. Saying so beats
           silently omitting a column they can see colleagues using. */}
       {!mailboxAccess && (
-        <p className="w-full max-w-4xl rounded-[var(--radius-card)] bg-muted px-6 py-3 text-sm text-muted-foreground">
+        <p className="w-full rounded-[var(--radius-card)] border border-border bg-surface px-6 py-3 text-sm text-muted-foreground">
           Your role can see clients but not mailbox settings, so which mailbox chases whom is
           hidden. Ask an owner or administrator if you need it.
         </p>
       )}
 
       {mailboxAccess && mailboxes.length === 0 && (
-        <section className="flex w-full max-w-4xl flex-col gap-3 rounded-[var(--radius-card)] bg-muted px-6 py-4">
+        <section className="flex w-full flex-col gap-3 rounded-[var(--radius-card)] border border-warning-border bg-warning-tint px-6 py-4">
           <p className="text-sm">
             No mailbox is connected yet, so nothing can be chased. You can still add clients now and
             connect a mailbox afterwards.
@@ -227,7 +227,7 @@ export default async function ClientsPage({
           <div>
             <Link
               href="/app/settings/mailbox"
-              className="rounded-[var(--radius-card)] bg-primary px-4 py-2 text-sm font-medium text-primary-foreground"
+              className="rounded-[var(--radius-control)] bg-primary px-4 py-2 text-[13px] font-semibold text-primary-foreground shadow-[var(--shadow-primary)] hover:opacity-90"
             >
               Connect a mailbox
             </Link>
@@ -259,9 +259,6 @@ function Shell({ children }: { children: React.ReactNode }) {
   return (
     <main className="flex w-full max-w-[1080px] flex-1 flex-col gap-[26px] px-10 pt-8 pb-9">
       {children}
-      <Link href="/app" className="text-sm font-medium text-muted-foreground hover:underline">
-        Back to your organisations
-      </Link>
     </main>
   );
 }

@@ -1,4 +1,3 @@
-import Link from "next/link";
 import { redirect } from "next/navigation";
 import type { ReminderSequenceDto } from "@eva/types";
 import { ApiError, apiFetch } from "@/lib/api";
@@ -7,6 +6,7 @@ import { MIN_DAYS_BETWEEN_REMINDERS } from "@/lib/reminder-sequence";
 import { createClient } from "@/lib/supabase/server";
 import { ReminderStepList } from "./reminder-step-list";
 import { StepControls } from "./step-controls";
+import { SettingsTabs } from "../settings-tabs";
 
 /**
  * When Eva chases (Slice 1.8; founder ruling 2026-08-08 — "first reminder 3
@@ -88,7 +88,7 @@ export default async function ReminderSettingsPage() {
     return (
       <Shell>
         <Header name={organisation.name} />
-        <p className="w-full max-w-2xl rounded-[var(--radius-card)] bg-muted px-6 py-5 text-sm">
+        <p className="w-full max-w-2xl rounded-[var(--radius-card)] border border-border bg-surface px-6 py-5 text-sm">
           {loadError}
         </p>
         <p className="w-full max-w-2xl text-sm text-muted-foreground">
@@ -106,7 +106,7 @@ export default async function ReminderSettingsPage() {
     <Shell>
       <Header name={organisation.name} />
 
-      <section className="flex w-full max-w-2xl flex-col gap-3 rounded-[var(--radius-card)] bg-muted px-6 py-5">
+      <section className="flex w-full max-w-2xl flex-col gap-3 rounded-[var(--radius-card)] border border-border bg-surface px-6 py-5">
         <h2 className="text-base font-semibold">How this works</h2>
         <p className="text-sm">
           Every reminder is timed from the invoice&rsquo;s own due date, so each invoice is chased
@@ -155,10 +155,13 @@ export default async function ReminderSettingsPage() {
 
 function Header({ name }: { name: string }) {
   return (
-    <section className="flex w-full max-w-2xl flex-col gap-2">
-      <h1 className="text-2xl font-bold text-primary">When Eva chases</h1>
-      <p className="text-sm text-muted-foreground">{`The reminder schedule ${name} uses on every invoice.`}</p>
-    </section>
+    <>
+      <section className="flex w-full max-w-2xl flex-col gap-2">
+        <h1 className="font-display text-[29px] leading-tight font-semibold">When Eva chases</h1>
+        <p className="text-sm text-muted-foreground">{`The reminder schedule ${name} uses on every invoice.`}</p>
+      </section>
+      <SettingsTabs current="reminders" />
+    </>
   );
 }
 
@@ -166,17 +169,6 @@ function Shell({ children }: { children: React.ReactNode }) {
   return (
     <main className="flex w-full max-w-[1080px] flex-1 flex-col gap-[26px] px-10 pt-8 pb-9">
       {children}
-      <div className="flex gap-4">
-        <Link
-          href="/app/reminders"
-          className="text-sm font-medium text-muted-foreground hover:underline"
-        >
-          Chasing activity
-        </Link>
-        <Link href="/app" className="text-sm font-medium text-muted-foreground hover:underline">
-          Your account
-        </Link>
-      </div>
     </main>
   );
 }

@@ -96,7 +96,7 @@ export default async function InvoiceBookPage({
   if (!organisation) {
     return (
       <Shell>
-        <p className="w-full max-w-6xl text-sm text-muted-foreground">
+        <p className="w-full text-sm text-muted-foreground">
           Create an organisation first.{" "}
           <Link href="/app/organisations/new" className="font-medium text-primary hover:underline">
             New organisation
@@ -130,7 +130,7 @@ export default async function InvoiceBookPage({
   if (notEntitled) {
     return (
       <Shell>
-        <section className="flex w-full max-w-6xl flex-col gap-3 rounded-[var(--radius-card)] bg-muted px-6 py-4">
+        <section className="flex w-full flex-col gap-3 rounded-[var(--radius-card)] border border-border bg-surface px-6 py-4">
           <p className="text-sm">
             {`${organisation.name} doesn't have Invoice Chasing, so there are no invoices to show yet.`}
           </p>
@@ -150,7 +150,7 @@ export default async function InvoiceBookPage({
   if (forbidden || !book) {
     return (
       <Shell>
-        <p className="w-full max-w-6xl text-sm text-muted-foreground">
+        <p className="w-full text-sm text-muted-foreground">
           {`Your role doesn't have access to invoices for ${organisation.name}. Ask an owner or administrator.`}
         </p>
       </Shell>
@@ -197,10 +197,10 @@ export default async function InvoiceBookPage({
 
   return (
     <Shell>
-      <section className="flex w-full max-w-6xl flex-col gap-2">
+      <section className="flex w-full flex-col gap-2">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="flex flex-col gap-2">
-            <h1 className="text-2xl font-bold text-primary">Invoices</h1>
+            <h1 className="font-display text-[29px] leading-tight font-semibold">Invoices</h1>
             <p className="text-sm text-muted-foreground">
               {`Everything ${organisation.name} is owed, oldest first. Eva chases what is left, never the total.`}
             </p>
@@ -208,7 +208,7 @@ export default async function InvoiceBookPage({
           {canImport && (
             <Link
               href="/app/invoices/import"
-              className="rounded-[var(--radius-card)] bg-primary px-4 py-2 text-sm font-medium text-primary-foreground"
+              className="rounded-[var(--radius-control)] border border-input-border bg-surface px-4 py-2 text-[13px] font-semibold hover:bg-chip-hover"
             >
               Upload a spreadsheet
             </Link>
@@ -226,7 +226,7 @@ export default async function InvoiceBookPage({
           })}
         />
       ) : (
-        <p className="w-full max-w-6xl rounded-[var(--radius-card)] bg-muted px-6 py-3 text-sm text-muted-foreground">
+        <p className="w-full rounded-[var(--radius-card)] border border-border bg-surface px-6 py-3 text-sm text-muted-foreground">
           {readOnlyInvoicesLine(organisation.name)}
         </p>
       )}
@@ -234,7 +234,7 @@ export default async function InvoiceBookPage({
       {/* The money, one currency at a time — with the others named beside it so
           choosing GBP cannot hide the AED (founder's ruling 2026-08-04). It
           counts what the TABS below have selected, and says which that is. */}
-      <section className="flex w-full max-w-6xl flex-col gap-2 rounded-[var(--radius-card)] bg-muted px-6 py-4">
+      <section className="flex w-full flex-col gap-2 rounded-[var(--radius-card)] border border-border bg-surface px-6 py-4">
         <div className="flex flex-wrap items-baseline gap-3">
           <p className="text-sm font-medium">
             {bookTotalLine({
@@ -256,7 +256,7 @@ export default async function InvoiceBookPage({
                   className={`rounded-[var(--radius-card)] px-2 py-1 text-xs font-medium ${
                     row.currency === selectedCurrency
                       ? "bg-primary text-primary-foreground"
-                      : "bg-background text-muted-foreground hover:opacity-80"
+                      : "border border-input-border bg-surface text-muted-foreground hover:bg-chip-hover"
                   }`}
                 >
                   {row.currency}
@@ -272,7 +272,7 @@ export default async function InvoiceBookPage({
         )}
       </section>
 
-      <section className="flex w-full max-w-6xl flex-col gap-3">
+      <section className="flex w-full flex-col gap-3">
         <div className="flex flex-wrap items-center gap-2">
           {VIEWS.map((view) => (
             <Link
@@ -281,7 +281,7 @@ export default async function InvoiceBookPage({
               className={`rounded-[var(--radius-card)] px-3 py-1.5 text-xs font-medium ${
                 (status ?? "") === view.key
                   ? "bg-primary text-primary-foreground"
-                  : "bg-muted hover:opacity-80"
+                  : "border border-input-border bg-surface hover:bg-chip-hover"
               }`}
             >
               {view.label}
@@ -296,11 +296,11 @@ export default async function InvoiceBookPage({
               name="search"
               defaultValue={search ?? ""}
               placeholder="Invoice number or client"
-              className="rounded-[var(--radius-card)] border border-muted-foreground/20 px-3 py-1.5 text-xs"
+              className="rounded-[var(--radius-control)] border border-input-border bg-surface px-3 py-1.5 text-xs"
             />
             <button
               type="submit"
-              className="rounded-[var(--radius-card)] bg-muted px-3 py-1.5 text-xs font-medium"
+              className="rounded-[var(--radius-control)] border border-input-border bg-surface px-3 py-1.5 text-xs font-semibold hover:bg-chip-hover"
             >
               Search
             </button>
@@ -318,8 +318,8 @@ export default async function InvoiceBookPage({
       </section>
 
       {book.rows.length > 0 && (
-        <section className="w-full max-w-6xl overflow-x-auto">
-          <table className="w-full border-collapse text-sm">
+        <section className="w-full overflow-x-auto rounded-[var(--radius-card)] border border-border bg-surface px-6 py-2">
+          <table className="w-full min-w-[960px] border-collapse text-sm">
             <thead>
               <tr className="border-b border-muted text-left text-muted-foreground">
                 <th className="px-3 py-2 font-medium">Client</th>
@@ -346,7 +346,7 @@ export default async function InvoiceBookPage({
       )}
 
       {book.totalCount > PAGE_SIZE && (
-        <nav className="flex w-full max-w-6xl items-center gap-3 text-sm">
+        <nav className="flex w-full items-center gap-3 text-sm">
           {page > 1 && (
             <Link
               href={linkTo({ page: String(page - 1) })}

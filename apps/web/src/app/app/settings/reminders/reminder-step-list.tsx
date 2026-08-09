@@ -22,7 +22,7 @@ export function ReminderStepList({ steps }: { steps: ReminderStepDto[] }) {
       {steps.map((step) => (
         <li
           key={step.id}
-          className="flex flex-col gap-1 rounded-[var(--radius-card)] bg-muted px-5 py-4"
+          className="flex flex-col gap-1 rounded-[var(--radius-card)] border border-border bg-surface px-5 py-4"
         >
           <div className="flex flex-wrap items-baseline justify-between gap-2">
             <span className="text-base font-semibold">{stageLabel(step.key)}</span>

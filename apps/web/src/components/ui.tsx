@@ -11,6 +11,71 @@ import Link from "next/link";
  * Hook-free and directive-free so they can be rendered in a plain node test.
  */
 
+/**
+ * The title block every screen opens with.
+ *
+ * ⚠️ THE SUBTITLE IS NOT DECORATION. Each one says what the screen is FOR in a
+ * customer's words — "What Eva has done for Northgate", not "Reminders". It is
+ * the difference between a product that explains itself and one that assumes
+ * you already know the jargon.
+ */
+export function PageHeader({
+  title,
+  subtitle,
+  aside,
+  actions,
+}: {
+  title: string;
+  subtitle: string;
+  aside?: string | undefined;
+  actions?: React.ReactNode;
+}) {
+  return (
+    <header className="flex flex-wrap items-end justify-between gap-4">
+      <div className="flex flex-col gap-1">
+        <h1 className="font-display text-[29px] leading-tight font-semibold">{title}</h1>
+        <p className="text-sm text-muted-foreground">{subtitle}</p>
+      </div>
+      {aside && <p className="pb-1 text-[13px] text-faint">{aside}</p>}
+      {actions && <div className="flex flex-wrap items-center gap-3 pb-0.5">{actions}</div>}
+    </header>
+  );
+}
+
+/**
+ * One blunt number with its own label.
+ *
+ * ⚠️ THE TONE IS ON THE NUMBER, NOT THE CARD. A whole card in red shouts even
+ * when the number in it is 0 — and "0 didn't send" is the best news on the
+ * screen. Colouring only the figure means the alarm scales with the value.
+ */
+export function CounterCard({
+  value,
+  label,
+  sublabel,
+  tone,
+}: {
+  value: number;
+  label: string;
+  sublabel: string;
+  tone?: "warn" | "bad" | undefined;
+}) {
+  const emphasis = value > 0 ? tone : undefined;
+  return (
+    <Card className="flex flex-1 flex-col gap-0.5 px-5 py-4">
+      <span
+        className={`text-[30px] leading-tight font-bold ${
+          emphasis === "bad" ? "text-danger" : emphasis === "warn" ? "text-warning-strong" : ""
+        }`}
+      >
+        {value}
+      </span>
+      <span className="text-[13px] font-semibold">{label}</span>
+      <span className="text-[12px] text-faint">{sublabel}</span>
+    </Card>
+  );
+}
+
 /** The white surface everything sits on. */
 export function Card({
   className = "",
