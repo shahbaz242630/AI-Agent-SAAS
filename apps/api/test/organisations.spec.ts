@@ -294,6 +294,29 @@ describe("Organisations: the caller's own permissions", () => {
     expect(mine.defaultCurrency).toBe("GBP");
   });
 
+  /**
+   * ⚠️ PUBLISHED BECAUSE THE ALTERNATIVE IS A SCREEN GUESSING WHAT DAY IT IS.
+   * The home screen prints today's date and greets by time of day, and both are
+   * claims about the CUSTOMER's clock. Our API runs in `us-west2`, eight hours
+   * behind London, so without this the header would greet a Manchester customer
+   * with "Afternoon" at midnight and print YESTERDAY'S DATE above a book of
+   * overdue invoices — a date wrong by a day, beside money late by days.
+   */
+  it("publishes the organisation's timezone, defaulting to Europe/London", async () => {
+    const response = await listAs("owner").expect(200);
+    const mine = response.body.find((row: { id: string }) => row.id === org.id);
+    expect(mine.timezone).toBe("Europe/London");
+  });
+
+  it("carries the timezone on a newly created organisation too", async () => {
+    const created = await request(app.getHttpServer())
+      .post("/organisations")
+      .set("Authorization", `Bearer ${tokens.get("owner")}`)
+      .send({ name: "Timezone Test Ltd" })
+      .expect(201);
+    expect(created.body.timezone).toBe("Europe/London");
+  });
+
   it("never reports a permission key this build does not have", async () => {
     /**
      * A row naming a removed or hand-written permission must not travel into a

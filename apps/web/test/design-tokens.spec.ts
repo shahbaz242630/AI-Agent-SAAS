@@ -128,10 +128,19 @@ describe("design tokens", () => {
 
     for (const file of sourceFiles(WEB_SRC)) {
       const source = stripComments(readFileSync(file, "utf8"));
+      /**
+       * ⚠️ THE `(?:[lrtbxyse]-)?` IS A BLIND SPOT THIS TEST USED TO HAVE.
+       * `border-l-danger` is a real Tailwind class that renders perfectly, and
+       * the original pattern read its colour as `l-danger` and reported a
+       * false failure. The fix consumes the direction segment rather than
+       * exempting the class — so `border-l-destructive` is still caught, which
+       * is the whole point. A guard that gets waved past on its first false
+       * positive stops being a guard.
+       */
       for (const match of source.matchAll(
-        /\b(?:bg|text|border|ring|fill|stroke)-([a-z][a-z0-9-]*)(?:\/\d+)?\b/g,
+        /\b(?:bg|text|border|ring|fill|stroke)-(?:([lrtbxyse])-)?([a-z][a-z0-9-]*)(?:\/\d+)?\b/g,
       )) {
-        const name = match[1]!;
+        const name = match[2]!;
         if (tokens.has(name) || NON_COLOUR_UTILITIES.has(name)) continue;
         offenders.push(`${file.slice(WEB_SRC.length + 1)}: ${match[0]}`);
       }
@@ -147,8 +156,12 @@ describe("design tokens", () => {
   it("never mentions `destructive`, which is not a token in this palette", () => {
     expect(tokens.has("destructive")).toBe(false);
 
+    // The direction segment is optional here too — `border-l-destructive` is
+    // the same mistake wearing a hat.
     const uses = sourceFiles(WEB_SRC).filter((file) =>
-      /\b(?:bg|text|border)-destructive\b/.test(stripComments(readFileSync(file, "utf8"))),
+      /\b(?:bg|text|border)-(?:[lrtbxyse]-)?destructive\b/.test(
+        stripComments(readFileSync(file, "utf8")),
+      ),
     );
     expect(uses).toEqual([]);
   });
