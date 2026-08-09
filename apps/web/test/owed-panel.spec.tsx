@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { OwedPanel } from "@/app/app/owed-panel";
-import type { CurrencyTotal } from "@/lib/dashboard";
+import { owedRows, type OwedRow } from "@/lib/dashboard";
 
 /**
  * The money on the home screen, actually rendered (Slice 1.9).
@@ -15,8 +15,20 @@ import type { CurrencyTotal } from "@/lib/dashboard";
  * visible once the number reaches the screen.
  */
 
-const GBP: CurrencyTotal = { currency: "GBP", invoiceCount: 9, outstandingMinorUnits: 150_000 };
-const KWD: CurrencyTotal = { currency: "KWD", invoiceCount: 3, outstandingMinorUnits: 4_750_499 };
+const GBP: OwedRow = {
+  currency: "GBP",
+  invoiceCount: 9,
+  outstandingMinorUnits: 150_000,
+  overdueMinorUnits: 0,
+  overdueCount: 0,
+};
+const KWD: OwedRow = {
+  currency: "KWD",
+  invoiceCount: 3,
+  outstandingMinorUnits: 4_750_499,
+  overdueMinorUnits: 0,
+  overdueCount: 0,
+};
 
 describe("the owed panel, rendered", () => {
   it("renders a card per currency and never merges them", () => {
@@ -56,5 +68,62 @@ describe("the owed panel, rendered", () => {
     const html = renderToStaticMarkup(<OwedPanel rows={[{ ...GBP, invoiceCount: 1 }]} />);
     expect(html).toContain("1 invoice ");
     expect(html).not.toContain("1 invoices");
+  });
+
+  describe("how much of it is late", () => {
+    /**
+     * ⚠️ THE OVERDUE FIGURE IS THE ROW'S OWN CURRENCY, AT ITS OWN PRECISION.
+     * A dinar rendered to two decimals is wrong by a factor of ten, and this is
+     * a second place the same amount gets formatted — the first was enough to
+     * ship the defect once.
+     */
+    it("shows the overdue slice at the row's own precision", () => {
+      const html = renderToStaticMarkup(
+        <OwedPanel rows={[{ ...KWD, overdueMinorUnits: 1_250_499, overdueCount: 2 }]} />,
+      );
+      expect(html).toContain("1,250.499 overdue across 2 invoices");
+      // The outstanding figure is still its own number, not replaced.
+      expect(html).toContain("4,750.499");
+    });
+
+    /**
+     * ⚠️ NOTHING OVERDUE PRINTS NOTHING. A "£0.00 overdue" in warning colour
+     * reads as a warning at a glance, and every invoice being paid on time is
+     * the healthiest state a customer can be in.
+     */
+    it("says nothing at all when nothing is late", () => {
+      const html = renderToStaticMarkup(<OwedPanel rows={[GBP]} />);
+      expect(html).not.toContain("overdue");
+      expect(html).not.toContain("0.00 ");
+    });
+
+    it("uses the singular for a single late invoice", () => {
+      const html = renderToStaticMarkup(
+        <OwedPanel rows={[{ ...GBP, overdueMinorUnits: 50_000, overdueCount: 1 }]} />,
+      );
+      expect(html).toContain("overdue across 1 invoice");
+      expect(html).not.toContain("1 invoices");
+    });
+
+    /**
+     * ⚠️ THE END-TO-END SHAPE, BECAUSE THE JOIN IS WHERE THIS GOES WRONG. The
+     * two lists come from two API calls, and a book with nothing late in
+     * sterling returns a shorter overdue list — pairing them by position would
+     * print the Kuwaiti figure under the GBP heading.
+     */
+    it("keeps each currency's late money under its own heading", () => {
+      const rows = owedRows(
+        [
+          { currency: "GBP", invoiceCount: 9, outstandingMinorUnits: 150_000 },
+          { currency: "KWD", invoiceCount: 3, outstandingMinorUnits: 4_750_499 },
+        ],
+        [{ currency: "KWD", invoiceCount: 2, outstandingMinorUnits: 1_250_499 }],
+      );
+      const html = renderToStaticMarkup(<OwedPanel rows={rows} />);
+      expect(html).toContain("1,250.499 overdue");
+      // Sterling has nothing late, so no sterling overdue figure exists at all.
+      expect(html).not.toContain("1,250.50");
+      expect(html).not.toContain("12,504.99");
+    });
   });
 });

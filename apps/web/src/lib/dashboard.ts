@@ -24,17 +24,59 @@ export interface CurrencyTotal {
   outstandingMinorUnits: number;
 }
 
+/** A currency's outstanding total, and how much of it is already late. */
+export interface OwedRow extends CurrencyTotal {
+  overdueMinorUnits: number;
+  overdueCount: number;
+}
+
 /**
- * The per-currency rows, in a stable order.
+ * The per-currency rows, in a stable order, each carrying its own overdue slice.
  *
  * ⚠️ ORDERED BY INVOICE COUNT, NEVER BY AMOUNT — a COUNT has no units, so it is
  * the only figure that can honestly be compared between currencies. Ties break
  * alphabetically so the screen does not reshuffle between page loads.
+ *
+ * ⚠️ THE OVERDUE SLICE IS MATCHED BY CURRENCY CODE, NEVER BY POSITION. The two
+ * lists come from two API calls with different filters, so a book with nothing
+ * overdue in AED returns two GBP-and-AED rows and one GBP row — zipping them
+ * would print sterling's overdue figure under the dirham heading, which is the
+ * cross-currency lie this whole module exists to prevent, arriving by an index.
  */
-export function owedRows(chased: readonly CurrencyTotal[]): CurrencyTotal[] {
+export function owedRows(
+  chased: readonly CurrencyTotal[],
+  overdue: readonly CurrencyTotal[] = [],
+): OwedRow[] {
+  const late = new Map(overdue.map((row) => [row.currency, row]));
   return [...chased]
     .filter((row) => row.invoiceCount > 0)
-    .sort((a, b) => b.invoiceCount - a.invoiceCount || a.currency.localeCompare(b.currency));
+    .sort((a, b) => b.invoiceCount - a.invoiceCount || a.currency.localeCompare(b.currency))
+    .map((row) => ({
+      ...row,
+      overdueMinorUnits: late.get(row.currency)?.outstandingMinorUnits ?? 0,
+      overdueCount: late.get(row.currency)?.invoiceCount ?? 0,
+    }));
+}
+
+/**
+ * How much of one currency's money is late, or `null` when none of it is.
+ *
+ * ⚠️ NOTHING OVERDUE MUST PRINT NOTHING, not "£0.00 overdue". A zero shown in
+ * the same place a warning would appear reads as a warning at a glance, and
+ * every invoice being paid on time is the healthiest state a customer can be
+ * in — the screen should be quiet about it, not congratulate itself in red.
+ *
+ * Takes the money PRE-FORMATTED, the `bookTotalLine` precedent: minor units
+ * cannot be turned into text without knowing the currency's decimal digits, and
+ * that knowledge belongs in one place.
+ */
+export function overdueLine(input: {
+  formattedOverdue: string;
+  invoiceCount: number;
+}): string | null {
+  if (input.invoiceCount === 0) return null;
+  const invoices = input.invoiceCount === 1 ? "1 invoice" : `${input.invoiceCount} invoices`;
+  return `${input.formattedOverdue} overdue across ${invoices}`;
 }
 
 /**

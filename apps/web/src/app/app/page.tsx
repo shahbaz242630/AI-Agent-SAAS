@@ -21,13 +21,12 @@ import { OwedPanel } from "./owed-panel";
  * trading in more than one. Totals are per currency; `lib/dashboard.ts` carries
  * the reasoning and the tests.
  *
- * ⚠️ OVERDUE IS A COUNT, NOT AN AMOUNT, AND THAT IS DELIBERATE. The API's
- * `chasedByCurrency` is computed from the organisation id alone and **ignores
- * the request's filters**, so a `?status=overdue` call returns whole-book money
- * that would be wrong under an "overdue" heading. `totalCount` IS filtered, so
- * the honest thing available today is how MANY are overdue. Showing an amount
- * needs an overdue-by-currency total from the API — worth adding, not worth
- * faking.
+ * ⚠️ OVERDUE MONEY COMES FROM `matchedByCurrency`, NEVER `chasedByCurrency`.
+ * The second is computed from the organisation id alone and ignores the
+ * request's filters, so a `?status=overdue` call returns WHOLE-BOOK money —
+ * printing that beside the word "overdue" would state something untrue in the
+ * one figure a business reads first. Until the API grew a filtered total this
+ * screen could only honestly say how MANY invoices were late.
  */
 
 interface OrganisationSummary {
@@ -39,6 +38,7 @@ interface OrganisationSummary {
 interface Book {
   totalCount: number;
   chasedByCurrency: CurrencyTotal[];
+  matchedByCurrency: CurrencyTotal[];
 }
 
 export default async function AppHomePage() {
@@ -83,14 +83,15 @@ export default async function AppHomePage() {
    * simply not rendered. A dashboard that 500s because one number is
    * unavailable is worse than a dashboard missing one number.
    */
-  const [book, overdueCount, activity, mailboxConnected] = await Promise.all([
+  const [book, overdue, activity, mailboxConnected] = await Promise.all([
     fetchBook(organisation.id, accessToken),
-    fetchOverdueCount(organisation.id, accessToken),
+    fetchOverdue(organisation.id, accessToken),
     fetchActivity(organisation.id, accessToken),
     fetchMailboxConnected(organisation.id, accessToken),
   ]);
 
-  const rows = owedRows(book?.chasedByCurrency ?? []);
+  const overdueCount = overdue?.totalCount ?? null;
+  const rows = owedRows(book?.chasedByCurrency ?? [], overdue?.matchedByCurrency ?? []);
   const attention = activity
     ? attentionItems({
         mailboxConnected,
@@ -210,19 +211,23 @@ async function fetchBook(organisationId: string, accessToken: string): Promise<B
   }
 }
 
-/** How many invoices are overdue. A COUNT — `totalCount` respects the filter. */
-async function fetchOverdueCount(
-  organisationId: string,
-  accessToken: string,
-): Promise<number | null> {
+/**
+ * What is overdue — how many, and how much of each currency.
+ *
+ * ⚠️ THE MONEY MUST COME OFF THIS FILTERED CALL, not the unfiltered one above.
+ * `matchedByCurrency` totals exactly what `?status=overdue` selected, so it is
+ * the only figure that may be printed under the word "overdue"; `totalCount`
+ * from the same response is the matching count, so the two can never disagree.
+ */
+async function fetchOverdue(organisationId: string, accessToken: string): Promise<Book | null> {
   try {
-    const book = (await (
+    // limit=1 because only the totals are wanted; the rows are the book's job.
+    return (await (
       await apiFetch(
         `/organisations/${organisationId}/invoices?status=overdue&limit=1`,
         accessToken,
       )
     ).json()) as Book;
-    return book.totalCount;
   } catch {
     return null;
   }
