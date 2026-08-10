@@ -14,10 +14,17 @@ async function getAccessToken(): Promise<string | null> {
   return data.session?.access_token ?? null;
 }
 
+/**
+ * ⚠️ IT LANDS ON `/signed-out`, NOT `/sign-in` (2026-08-10). Dropping somebody
+ * on a sign-in form immediately after they chose to leave reads as "that
+ * didn't work" — it is the identical screen a failed session produces. The
+ * confirmation page says the one thing that matters at that moment: reminders
+ * already scheduled still go out.
+ */
 export async function signOut(): Promise<void> {
   const supabase = await createClient();
   await supabase.auth.signOut();
-  redirect("/sign-in");
+  redirect("/signed-out");
 }
 
 /**

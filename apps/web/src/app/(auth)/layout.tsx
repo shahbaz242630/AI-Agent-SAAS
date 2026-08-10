@@ -1,11 +1,12 @@
-export default function AuthLayout({
-  children,
-}: Readonly<{
-  children: React.ReactNode;
-}>) {
-  return (
-    <main className="flex flex-1 flex-col items-center justify-center p-8">
-      <div className="flex w-full max-w-sm flex-col gap-6">{children}</div>
-    </main>
-  );
+/**
+ * The auth group owns no layout of its own.
+ *
+ * ⚠️ IT USED TO CENTRE A `max-w-sm` COLUMN INSIDE A `<main>`, and that is now
+ * `AuthFrame`'s job — the design's split screen needs the full viewport,
+ * including the charcoal half, so a wrapper that boxed its children would have
+ * left the panel nowhere to go. Each page renders its own frame, and the frame
+ * renders the one `<main>`.
+ */
+export default function AuthLayout({ children }: Readonly<{ children: React.ReactNode }>) {
+  return children;
 }

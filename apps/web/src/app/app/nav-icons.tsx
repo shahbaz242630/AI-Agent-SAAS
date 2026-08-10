@@ -100,6 +100,36 @@ export function SignOutIcon() {
 }
 
 /**
+ * The padlock beside sign-out (2026-08-10).
+ *
+ * ⚠️ IT EXISTS BECAUSE `/change-password` WOULD OTHERWISE BE UNREACHABLE — the
+ * same defect `SettingsTabs` was built to fix one slice ago. The design puts
+ * this link in the landing page's signed-in dropdown, and the landing page is
+ * blocked on the founder, so without it the route could only be reached by
+ * typing the URL. A screen nobody can get to is a screen that does not exist.
+ */
+export function PasswordIcon() {
+  return (
+    <svg
+      aria-hidden
+      focusable="false"
+      width="15"
+      height="15"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className="text-sidebar-faint"
+    >
+      <rect x="5" y="10" width="14" height="10" rx="2" />
+      <path d="M8 10V7a4 4 0 0 1 8 0v3" />
+    </svg>
+  );
+}
+
+/**
  * Keyed by href so the icon and the nav item cannot drift apart — a positional
  * array would silently shift every icon by one the day a section is inserted.
  * A missing key renders no icon rather than throwing.
