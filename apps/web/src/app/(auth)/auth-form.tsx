@@ -4,6 +4,14 @@ import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
+import {
+  AuthError,
+  AuthField,
+  AuthHeading,
+  AuthOutlineLink,
+  AuthSubmit,
+  SuccessDisc,
+} from "./auth-frame";
 
 interface AuthFormProps {
   mode: "sign-in" | "sign-up";
@@ -12,6 +20,7 @@ interface AuthFormProps {
 const COPY = {
   "sign-in": {
     heading: "Sign in to Eva",
+    subtitle: "Good to have you back.",
     submit: "Sign in",
     pending: "Signing in…",
     switchPrompt: "New to Eva?",
@@ -20,6 +29,7 @@ const COPY = {
   },
   "sign-up": {
     heading: "Create your Eva account",
+    subtitle: "Two minutes to set up.",
     submit: "Create account",
     pending: "Creating account…",
     switchPrompt: "Already have an account?",
@@ -28,7 +38,15 @@ const COPY = {
   },
 } as const;
 
-/** Email + password credentials form shared by /sign-in and /sign-up. */
+/**
+ * Email + password credentials form shared by /sign-in and /sign-up.
+ *
+ * ⚠️ THE DESIGN'S SIGN-UP SUBTITLE SAID "No card needed." IT IS NOT HERE. That
+ * is a pricing promise, and pricing is one of the four things still waiting on
+ * the founder — the same reason the landing page is not built. We do not
+ * currently take a card, so it is probably true; "probably true" is not a
+ * standard for a sentence on the page where somebody hands over their email.
+ */
 export function AuthForm({ mode }: AuthFormProps) {
   const router = useRouter();
   const copy = COPY[mode];
@@ -76,73 +94,68 @@ export function AuthForm({ mode }: AuthFormProps) {
 
   if (awaitingConfirmation) {
     return (
-      <div className="flex flex-col gap-3 text-center">
-        <h1 className="text-2xl font-bold text-primary">Check your email</h1>
-        <p className="text-muted-foreground">
-          We&apos;ve sent a confirmation link to <span className="font-medium">{email}</span>.
-          Confirm your address, then sign in to start using Eva.
-        </p>
-        <Link href="/sign-in" className="font-medium text-primary hover:underline">
-          Back to sign in
-        </Link>
-      </div>
+      <>
+        <SuccessDisc tone="sent" />
+        <AuthHeading
+          title="Check your email"
+          subtitle={
+            <>
+              We&apos;ve sent a confirmation link to <span className="font-semibold">{email}</span>.
+              Confirm your address, then sign in to start using Eva.
+            </>
+          }
+        />
+        <AuthOutlineLink href="/sign-in">Back to sign in</AuthOutlineLink>
+      </>
     );
   }
 
   return (
-    <div className="flex flex-col gap-6">
-      <h1 className="text-center text-2xl font-bold text-primary">{copy.heading}</h1>
-      <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-        <div className="flex flex-col gap-1">
-          <label htmlFor="email" className="text-sm font-medium">
-            Email
-          </label>
-          <input
-            id="email"
-            name="email"
-            type="email"
-            autoComplete="email"
-            required
-            value={email}
-            onChange={(event) => setEmail(event.target.value)}
-            className="rounded-[var(--radius-card)] border border-muted-foreground/30 bg-background px-3 py-2 text-sm outline-none focus:border-primary"
-          />
-        </div>
-        <div className="flex flex-col gap-1">
-          <label htmlFor="password" className="text-sm font-medium">
-            Password
-          </label>
-          <input
-            id="password"
-            name="password"
-            type="password"
-            autoComplete={mode === "sign-up" ? "new-password" : "current-password"}
-            required
-            minLength={6}
-            value={password}
-            onChange={(event) => setPassword(event.target.value)}
-            className="rounded-[var(--radius-card)] border border-muted-foreground/30 bg-background px-3 py-2 text-sm outline-none focus:border-primary"
-          />
-        </div>
-        {error && (
-          <p role="alert" className="text-sm text-danger">
-            {error}
-          </p>
-        )}
-        <button
-          type="submit"
-          disabled={pending}
-          className="rounded-[var(--radius-card)] bg-primary px-4 py-2 text-sm font-medium text-primary-foreground disabled:opacity-60"
-        >
-          {pending ? copy.pending : copy.submit}
-        </button>
+    <>
+      <AuthHeading title={copy.heading} subtitle={copy.subtitle} />
+      <form onSubmit={handleSubmit} className="flex flex-col gap-5">
+        <AuthField
+          id="email"
+          label="Email"
+          name="email"
+          type="email"
+          autoComplete="email"
+          required
+          placeholder="you@yourcompany.co.uk"
+          value={email}
+          onChange={(event) => setEmail(event.target.value)}
+        />
+        <AuthField
+          id="password"
+          label="Password"
+          name="password"
+          type="password"
+          autoComplete={mode === "sign-up" ? "new-password" : "current-password"}
+          required
+          minLength={6}
+          placeholder={mode === "sign-up" ? "At least 6 characters" : "••••••••"}
+          value={password}
+          onChange={(event) => setPassword(event.target.value)}
+          aside={
+            mode === "sign-in" ? (
+              <Link
+                href="/reset-password"
+                className="text-xs font-semibold text-link hover:text-link-hover"
+              >
+                Forgot your password?
+              </Link>
+            ) : undefined
+          }
+        />
+        {error && <AuthError>{error}</AuthError>}
+        <AuthSubmit pending={pending}>{pending ? copy.pending : copy.submit}</AuthSubmit>
       </form>
-      <p className="text-center text-sm text-muted-foreground">
+      <p className="text-center text-[13px] text-muted-foreground">
         {copy.switchPrompt}{" "}
-        <Link href={copy.switchHref} className="font-medium text-primary hover:underline">
+        <Link href={copy.switchHref} className="font-semibold text-link hover:text-link-hover">
           {copy.switchLabel}
         </Link>
       </p>
-    </div>
+    </>
   );
 }

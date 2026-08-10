@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { NAV_ITEMS, isActiveSection } from "@/lib/navigation";
-import { NAV_ICONS } from "./nav-icons";
+import { NAV_ICONS, PasswordIcon } from "./nav-icons";
 
 /**
  * The sidebar's markup, with the current path as an ARGUMENT (2026-08-09).
@@ -149,6 +149,18 @@ export function SidebarBody({
           </span>
           <span className="truncate text-[10.5px] text-sidebar-faint">{identity.user.email}</span>
         </span>
+        {/* ⚠️ THE ONLY WAY INTO `/change-password` UNTIL THE LANDING PAGE
+            EXISTS. The design hangs it off the marketing header's signed-in
+            dropdown; that page is blocked on the founder, and a route with no
+            door is the defect this shell was built to end. */}
+        <Link
+          href="/change-password"
+          title="Change password"
+          className="flex rounded-md p-1 hover:bg-sidebar-active"
+        >
+          <PasswordIcon />
+          <span className="sr-only">Change password</span>
+        </Link>
         {signOutSlot}
       </div>
     </nav>
