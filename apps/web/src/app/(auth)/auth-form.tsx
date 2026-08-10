@@ -3,6 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { EMAIL_RETURN, emailReturnUrl } from "@/lib/auth-redirects";
 import { createClient } from "@/lib/supabase/client";
 import {
   AuthError,
@@ -75,7 +76,19 @@ export function AuthForm({ mode }: AuthFormProps) {
       return;
     }
 
-    const { data, error: signUpError } = await supabase.auth.signUp({ email, password });
+    /**
+     * ⚠️ `emailRedirectTo` IS NOT OPTIONAL, AND OMITTING IT SHIPPED. Without it
+     * Supabase falls back to the project's Site URL — the marketing page — which
+     * is handed a `?code=` it cannot spend. Confirmed on production 2026-08-10:
+     * the account was created and verified, and the customer landed on a page
+     * that said nothing had happened. `/auth/confirm` is the only route that
+     * turns the token into a session.
+     */
+    const { data, error: signUpError } = await supabase.auth.signUp({
+      email,
+      password,
+      options: { emailRedirectTo: emailReturnUrl(window.location.origin, EMAIL_RETURN.signUp) },
+    });
     if (signUpError) {
       setError(signUpError.message);
       setPending(false);

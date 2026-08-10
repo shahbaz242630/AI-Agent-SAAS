@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { EMAIL_RETURN, emailReturnUrl } from "@/lib/auth-redirects";
 import { createClient } from "@/lib/supabase/client";
 import {
   AuthError,
@@ -44,7 +45,7 @@ export function ResetForm() {
      * origin rather than one being hard-coded into the other's build.
      */
     const { error: resetError } = await supabase.auth.resetPasswordForEmail(email, {
-      redirectTo: `${window.location.origin}/auth/confirm?next=/new-password`,
+      redirectTo: emailReturnUrl(window.location.origin, EMAIL_RETURN.passwordReset),
     });
 
     if (resetError) {
