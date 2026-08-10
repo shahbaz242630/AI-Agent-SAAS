@@ -238,6 +238,35 @@ export function PrimaryLink({ href, children }: { href: string; children: React.
   );
 }
 
+/**
+ * The one primary action on a screen, when it submits a form rather than
+ * following a link.
+ *
+ * ⚠️ SET LARGER THAN `PrimaryLink` ON PURPOSE. This is the button on a screen
+ * that has exactly one thing to do — setup, sign-in — where the dashboard's
+ * 13px control would read as one option among several. `disabled` is wired to
+ * the form's pending state by every caller: minting an OAuth URL is a round
+ * trip, and without it the button looks dead on the one click that matters
+ * most.
+ */
+export function PrimaryButton({
+  disabled,
+  children,
+}: {
+  disabled?: boolean | undefined;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="submit"
+      disabled={disabled}
+      className="cursor-pointer rounded-[var(--radius-control)] bg-primary px-[22px] py-[11px] text-sm font-semibold text-primary-foreground shadow-[var(--shadow-primary)] hover:opacity-90 disabled:cursor-default disabled:opacity-60"
+    >
+      {children}
+    </button>
+  );
+}
+
 /** A secondary action: same weight of decision, less weight of ink. */
 export function GhostLink({ href, children }: { href: string; children: React.ReactNode }) {
   return (

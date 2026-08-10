@@ -97,6 +97,9 @@
 
   /* Controls */
   --color-input-border: #d8d3c8;
+  /* The option someone has chosen, behind a charcoal border. Warmer than
+     `row-hover`, which is a pointer passing over rather than a decision. */
+  --color-selected-tint: #faf7ef;
   --color-chip-hover: #f4f1ea;
   --color-neutral-tint: #f4f2ec;
   --color-neutral-border: #ded9cc;
@@ -112,6 +115,12 @@
 
   /* Shadow under the one primary button on a screen. */
   --shadow-primary: 0 8px 16px -8px rgba(33, 30, 25, 0.4);
+  /* A card that floats on the paper rather than sitting in a column of others —
+     the setup frame, which is the whole screen. */
+  --shadow-panel: 0 20px 40px -28px rgba(15, 23, 42, 0.2);
+  /* The halo around the step a customer is on. Amber at a quarter strength, so
+     it reads as a glow rather than a second ring. */
+  --shadow-step: 0 0 0 4px rgba(232, 163, 61, 0.25);
 
   --font-sans:
     ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
