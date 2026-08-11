@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { AdminConsentHelp } from "@/components/admin-consent-help";
 import { MailboxCard, type MailboxSummary } from "@/components/mailbox-card";
 import { ApiError, apiFetch } from "@/lib/api";
+import { fetchOrganisations } from "@/lib/organisations";
 import { mailboxErrorMessage, needsConsentHelp } from "@/lib/mailbox-errors";
 import { disconnectMessage } from "@/lib/mailbox-messages";
 import { createClient } from "@/lib/supabase/server";
@@ -42,9 +43,7 @@ export default async function MailboxSettingsPage({
   if (!accessToken) redirect("/sign-in");
 
   // Single-org app today — the /app list precedent; org switching is a later slice.
-  const organisations = (await (
-    await apiFetch("/organisations", accessToken)
-  ).json()) as OrganisationSummary[];
+  const organisations = await fetchOrganisations<OrganisationSummary>(accessToken);
   const organisation = organisations[0];
 
   let status: MailboxList | null = null;
@@ -278,12 +277,14 @@ export default async function MailboxSettingsPage({
         </section>
       ) : null}
 
+      {/* ⚠️ "Back to your organisations" is gone (2026-08-11): it pointed at
+          `/app`, which has been Home rather than a list of organisations since
+          slice 1.9, and the sidebar reaches Home from here anyway. "Your
+          clients" stays — it is a real onward step from mailbox settings, not a
+          duplicate of the way back. */}
       <div className="flex flex-wrap items-center gap-4">
         <Link href="/app/clients" className="text-sm font-medium text-primary hover:underline">
           Your clients
-        </Link>
-        <Link href="/app" className="text-sm font-medium text-muted-foreground hover:underline">
-          Back to your organisations
         </Link>
       </div>
     </main>

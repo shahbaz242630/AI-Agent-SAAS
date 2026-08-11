@@ -103,8 +103,12 @@ export function SidebarBody({
       </ul>
 
       <div className="mt-[22px] flex flex-col gap-2 border-t border-sidebar-border pt-4">
+        {/* ⚠️ "Products", not "Modules" (2026-08-11). `module` is the
+            database's word — `organisation_modules` — and it had leaked onto
+            the one surface every signed-in screen shows. Settings says
+            "Your products"; so does this now. */}
         <h2 className="px-2.5 text-[10.5px] font-bold tracking-[0.08em] text-sidebar-fainter uppercase">
-          Modules
+          Products
         </h2>
         <ul className="flex flex-col gap-2">
           {MODULES.map((module) => (

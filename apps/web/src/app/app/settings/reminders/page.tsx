@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import type { ReminderSequenceDto } from "@eva/types";
 import { ApiError, apiFetch } from "@/lib/api";
+import { fetchOrganisations } from "@/lib/organisations";
 import { can } from "@/lib/permissions";
 import { MIN_DAYS_BETWEEN_REMINDERS } from "@/lib/reminder-sequence";
 import { createClient } from "@/lib/supabase/server";
@@ -38,9 +39,7 @@ export default async function ReminderSettingsPage() {
   const accessToken = sessionData.session?.access_token;
   if (!accessToken) redirect("/sign-in");
 
-  const organisations = (await (
-    await apiFetch("/organisations", accessToken)
-  ).json()) as OrganisationSummary[];
+  const organisations = await fetchOrganisations<OrganisationSummary>(accessToken);
   const organisation = organisations[0];
 
   if (!organisation) {
@@ -124,23 +123,35 @@ export default async function ReminderSettingsPage() {
       </section>
 
       {canWrite ? (
-        <>
+        /**
+         * ⚠️ ONE CARD OF ROWS, NOT SIX OPEN FORMS (design handoff §13, built
+         * 2026-08-11). Every stage used to render its number boxes at once, so
+         * the schedule — the thing this screen exists to answer — was spread
+         * over a page you had to scroll to the end of before you knew what was
+         * on it. Now each stage says when it goes out on one line, and opens
+         * only when somebody wants to change it.
+         */
+        <section className="flex w-full max-w-3xl flex-col gap-4">
+          <ol className="flex flex-col rounded-[var(--radius-card)] border border-border bg-surface px-5 py-2 sm:px-7">
+            {steps.map((step) => (
+              <StepControls key={step.id} organisationId={organisation.id} step={step} />
+            ))}
+          </ol>
           {/*
             ⚠️ THIS IS NOT THE CURRENCY DEFAULT. Changing a timing reschedules
             invoices the customer is ALREADY chasing, in the same transaction as
             the edit. Someone who believes they are setting a default for future
             invoices would be wrong, and would find out from a customer.
+
+            Below the schedule rather than above it: it answers "what happens
+            when I change one", which is a question nobody has until they have
+            read what there is to change.
           */}
-          <p className="w-full max-w-2xl text-sm text-muted-foreground">
+          <p className="max-w-[60ch] text-[13px] leading-[1.55] text-muted-foreground">
             Changing a timing also reschedules the invoices you are already chasing — not just new
             ones. Nothing already sent is affected.
           </p>
-          <ol className="flex w-full max-w-2xl flex-col gap-3">
-            {steps.map((step) => (
-              <StepControls key={step.id} organisationId={organisation.id} step={step} />
-            ))}
-          </ol>
-        </>
+        </section>
       ) : (
         <section className="flex w-full max-w-2xl flex-col gap-3">
           <ReminderStepList steps={steps} />

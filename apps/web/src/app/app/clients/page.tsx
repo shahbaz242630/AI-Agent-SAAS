@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { ApiError, apiFetch } from "@/lib/api";
+import { fetchOrganisations } from "@/lib/organisations";
 import { createClient } from "@/lib/supabase/server";
 import { AddClientForm, ClientTable } from "./client-controls";
 
@@ -77,9 +78,7 @@ export default async function ClientsPage({
   if (!accessToken) redirect("/sign-in");
 
   // Single-org app today — the /app and mailbox-settings precedent.
-  const organisations = (await (
-    await apiFetch("/organisations", accessToken)
-  ).json()) as OrganisationSummary[];
+  const organisations = await fetchOrganisations<OrganisationSummary>(accessToken);
   const organisation = organisations[0];
 
   if (!organisation) {

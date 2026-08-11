@@ -252,13 +252,25 @@ export function PrimaryLink({ href, children }: { href: string; children: React.
 export function PrimaryButton({
   disabled,
   children,
+  /**
+   * ⚠️ DEFAULTS TO `submit` AND MUST KEEP DOING SO. Every existing use of this
+   * button is the last control in a `<form>`, and a default of "button" would
+   * silently stop those forms submitting — a change that renders identically
+   * and breaks everything. Added 2026-08-11 for the app error boundary, whose
+   * "Try again" calls React's `reset()` and belongs to no form at all.
+   */
+  type = "submit",
+  onClick,
 }: {
   disabled?: boolean | undefined;
   children: React.ReactNode;
+  type?: "submit" | "button";
+  onClick?: (() => void) | undefined;
 }) {
   return (
     <button
-      type="submit"
+      type={type}
+      {...(onClick ? { onClick } : {})}
       disabled={disabled}
       className="cursor-pointer rounded-[var(--radius-control)] bg-primary px-[22px] py-[11px] text-sm font-semibold text-primary-foreground shadow-[var(--shadow-primary)] hover:opacity-90 disabled:cursor-default disabled:opacity-60"
     >

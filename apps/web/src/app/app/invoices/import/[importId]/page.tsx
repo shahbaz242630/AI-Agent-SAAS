@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { ApiError, apiFetch } from "@/lib/api";
+import { fetchOrganisations } from "@/lib/organisations";
 import {
   importConfirmedLine,
   importFieldLabel,
@@ -65,9 +66,7 @@ export default async function ImportPreviewPage({
   const accessToken = sessionData.session?.access_token;
   if (!accessToken) redirect("/sign-in");
 
-  const organisations = (await (
-    await apiFetch("/organisations", accessToken)
-  ).json()) as OrganisationSummary[];
+  const organisations = await fetchOrganisations<OrganisationSummary>(accessToken);
   const organisation = organisations[0];
   if (!organisation) redirect("/app");
 
@@ -108,14 +107,14 @@ export default async function ImportPreviewPage({
   if (notEntitled) {
     return (
       <Shell>
-        <section className="flex w-full max-w-5xl flex-col gap-3 rounded-[var(--radius-card)] bg-muted px-6 py-4">
+        <section className="flex w-full max-w-5xl flex-col gap-3 rounded-[var(--radius-card)] border border-border bg-surface px-6 py-4">
           <p className="text-sm">
             {`${organisation.name} doesn't have Invoice Chasing, so there's nowhere for these invoices to go yet.`}
           </p>
           <div>
             <Link
               href="/app/settings/modules"
-              className="rounded-[var(--radius-card)] bg-primary px-4 py-2 text-sm font-medium text-primary-foreground"
+              className="rounded-[var(--radius-control)] bg-primary px-4 py-2 text-[13px] font-semibold text-primary-foreground shadow-[var(--shadow-primary)] hover:opacity-90"
             >
               See your products
             </Link>
@@ -153,7 +152,7 @@ export default async function ImportPreviewPage({
   return (
     <Shell>
       <section className="flex w-full max-w-5xl flex-col gap-2">
-        <h1 className="text-2xl font-bold text-primary">
+        <h1 className="font-display text-[29px] leading-tight font-semibold">
           {done ? "Imported" : "Check this before it is saved"}
         </h1>
         <p className="text-sm text-muted-foreground">{detail.originalFilename}</p>
@@ -174,7 +173,7 @@ export default async function ImportPreviewPage({
           thing to check before confirming, and the thing a wrong import is
           almost always caused by. */}
       {mappedColumns.length > 0 && (
-        <section className="flex w-full max-w-5xl flex-col gap-2 rounded-[var(--radius-card)] bg-muted px-6 py-4">
+        <section className="flex w-full max-w-5xl flex-col gap-2 rounded-[var(--radius-card)] border border-border bg-surface px-6 py-4">
           <h2 className="text-sm font-medium">How your columns were read</h2>
           <ul className="flex flex-wrap gap-2">
             {mappedColumns.map(([column, field]) => (
@@ -207,7 +206,7 @@ export default async function ImportPreviewPage({
             /* The rows below are still worth reading — this says why nothing
                can be done about them here, rather than leaving a preview that
                appears to have lost its buttons. */
-            <p className="rounded-[var(--radius-card)] bg-muted px-6 py-3 text-sm text-muted-foreground">
+            <p className="rounded-[var(--radius-card)] border border-border bg-surface px-6 py-3 text-sm text-muted-foreground">
               {readOnlyImportsLine(organisation.name)}
             </p>
           )}
@@ -283,13 +282,13 @@ export default async function ImportPreviewPage({
         <div className="flex w-full max-w-5xl gap-3">
           <Link
             href="/app/invoices?status=draft"
-            className="rounded-[var(--radius-card)] bg-primary px-4 py-2 text-sm font-medium text-primary-foreground"
+            className="rounded-[var(--radius-control)] bg-primary px-4 py-2 text-[13px] font-semibold text-primary-foreground shadow-[var(--shadow-primary)] hover:opacity-90"
           >
             See the drafts
           </Link>
           <Link
             href="/app/invoices/import"
-            className="rounded-[var(--radius-card)] bg-muted px-4 py-2 text-sm font-medium hover:opacity-80"
+            className="rounded-[var(--radius-control)] border border-input-border bg-surface px-4 py-2 text-[13px] font-semibold hover:bg-chip-hover"
           >
             Upload another file
           </Link>

@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import type { ReminderActivityDto } from "@eva/types";
 import { Card, CounterCard, EmptyState, PageHeader, StatusPill } from "@/components/ui";
 import { ApiError, apiFetch } from "@/lib/api";
+import { fetchOrganisations } from "@/lib/organisations";
 import { can } from "@/lib/permissions";
 import { explainWaiting, stageLabel, statusLabel, statusTone } from "@/lib/reminder-activity";
 import { createClient } from "@/lib/supabase/server";
@@ -36,9 +37,7 @@ export default async function RemindersPage() {
   const accessToken = sessionData.session?.access_token;
   if (!accessToken) redirect("/sign-in");
 
-  const organisations = (await (
-    await apiFetch("/organisations", accessToken)
-  ).json()) as OrganisationSummary[];
+  const organisations = await fetchOrganisations<OrganisationSummary>(accessToken);
   const organisation = organisations[0];
 
   if (!organisation) {

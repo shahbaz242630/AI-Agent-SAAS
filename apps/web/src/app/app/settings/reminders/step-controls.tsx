@@ -6,6 +6,7 @@ import { stageLabel } from "@/lib/reminder-activity";
 import {
   MAX_OFFSET_DAYS,
   describeDisabling,
+  describeOffsetShort,
   isHandover,
   splitOffset,
   stepPurpose,
@@ -14,7 +15,25 @@ import {
 import { updateReminderStep, type ReminderStepActionState } from "./actions";
 
 /**
- * One editable stage (Slice 1.8).
+ * One stage of the chasing ladder, drawn as a point on a timeline.
+ *
+ * ⚠️ THE SHAPE OF THE CONTENT IS A SEQUENCE IN TIME, AND TWO EARLIER VERSIONS
+ * DREW IT AS A LIST. First six open forms stacked vertically — you scrolled to
+ * the bottom to learn what was even on the screen. Then six equal rows, each
+ * with an amber numbered disc and an Edit chip, which failed the squint test:
+ * nothing led, and the timing — the answer this screen exists to give — was a
+ * grey clause after a middle dot.
+ *
+ * The fix is structural, not decorative. Every reminder is measured from the
+ * invoice's due date, so the due date is drawn ONCE as the anchor of a rail,
+ * with the timings in the left column a reader scans. The phrase "the due
+ * date", previously repeated on all six rows, now appears where it belongs: on
+ * the row that IS it.
+ *
+ * ⚠️ NO ORDINAL DISCS. Numbering a sequence is worth ink only when the ordinal
+ * carries information the reader needs; here the TIMING does, and six saturated
+ * amber circles spent the palette's only bright colour on decoration. Amber now
+ * marks one thing on this screen — the due date.
  *
  * ⚠️ ONE FORM PER STEP, NOT ONE "SAVE ALL". The API is a per-step PATCH and each
  * call recomputes every live invoice in the organisation inside a transaction —
@@ -51,84 +70,164 @@ export function StepControls({
    */
   const [direction, setDirection] = useState<OffsetDirection>(stored.direction);
 
+  /**
+   * ⚠️ OPENS ON A REFUSAL AND STAYS OPEN AFTER A SAVE. A row that collapsed on
+   * error would hide the message explaining what went wrong, and one that
+   * collapsed on success would hide the confirmation — both leaving somebody
+   * staring at an unchanged-looking row wondering whether it took.
+   */
+  const [editing, setEditing] = useState(false);
+  const open = editing || Boolean(state.error) || Boolean(state.success);
+
   // What was typed wins over what is stored, so a refusal keeps the user's work.
   const days = state.submitted?.days ?? String(stored.days);
   const enabled = state.submitted?.enabled ?? step.enabled;
   const handover = isHandover(step.actionType);
+  const anchor = step.offsetDays === 0;
 
+  /**
+   * ⚠️ THE TIMELINE IS A DESKTOP STRUCTURE AND COLLAPSES BELOW `sm`. Held at
+   * every width, the fixed timing column plus a right-hand chip squeezed the
+   * description to one word per line on a phone — caught by rendering both
+   * widths side by side rather than assuming the grid would cope. Narrow, the
+   * timing becomes a label above its stage and the rail disappears; there is no
+   * room for a rail to mean anything at 390px.
+   */
   return (
-    <li className="flex flex-col gap-3 rounded-[var(--radius-card)] border border-border bg-surface px-5 py-4">
-      <div className="flex flex-col gap-1">
-        <span className="text-base font-semibold">{stageLabel(step.key)}</span>
-        <p className="text-sm text-muted-foreground">{stepPurpose(step.key)}</p>
-      </div>
+    <li className="flex flex-col gap-2 border-b border-hairline py-4 last:border-none sm:grid sm:grid-cols-[140px_1fr] sm:gap-0 sm:border-none sm:py-0">
+      {/* The schedule, in the column the eye runs down. Tabular so the numbers
+          line up and the ladder reads as a shape rather than six sentences. */}
+      <p
+        className={`text-[13px] leading-5 tabular-nums sm:py-4 sm:pr-5 sm:text-right ${
+          anchor ? "font-semibold text-foreground" : "text-muted-foreground"
+        } ${enabled ? "" : "line-through decoration-from-font"}`}
+      >
+        {describeOffsetShort(step.offsetDays)}
+      </p>
 
-      <form action={action} className="flex flex-col gap-3">
-        <input type="hidden" name="organisationId" value={organisationId} />
-        <input type="hidden" name="stepId" value={step.id} />
+      {/*
+       * The rail is this border, repeated on every row, so the rows join into
+       * one continuous line without any first/last trimming. The marker punches
+       * a hole in it with a ring in the surface colour.
+       */}
+      <div className="sm:relative sm:border-l sm:border-hairline sm:py-4 sm:pl-6">
+        <span
+          aria-hidden
+          className={`absolute top-[21px] -left-1 hidden size-2 rounded-full ring-4 ring-surface sm:block ${
+            anchor
+              ? "bg-accent"
+              : enabled
+                ? "bg-neutral-border"
+                : "border border-input-border bg-surface"
+          }`}
+        />
 
-        <div className="flex flex-wrap items-end gap-3">
-          <label className="flex w-24 flex-col gap-1 text-sm">
-            Days
-            <input
-              name="days"
-              type="number"
-              min={0}
-              max={MAX_OFFSET_DAYS}
-              step={1}
-              inputMode="numeric"
-              defaultValue={days}
-              disabled={direction === "on"}
-              className={`${FIELD} disabled:opacity-50`}
-            />
-          </label>
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
+          <div className="flex min-w-0 flex-col gap-1 sm:flex-1">
+            <h3 className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm font-semibold">
+              {stageLabel(step.key)}
+              {!enabled && (
+                <span className="rounded-[var(--radius-pill)] border border-neutral-border bg-neutral-tint px-2 py-px text-[10.5px] font-bold tracking-[0.04em] text-faint uppercase">
+                  Off
+                </span>
+              )}
+              {handover && (
+                <span className="rounded-[var(--radius-pill)] border border-neutral-border bg-neutral-tint px-2 py-px text-[10.5px] font-bold tracking-[0.04em] text-faint uppercase">
+                  Not an email
+                </span>
+              )}
+            </h3>
+            <p className="max-w-[52ch] text-[13px] leading-[1.5] text-muted-foreground">
+              {stepPurpose(step.key)}
+            </p>
+          </div>
 
-          <label className="flex flex-col gap-1 text-sm">
-            When
-            <select
-              name="direction"
-              value={direction}
-              onChange={(event) => setDirection(event.target.value as OffsetDirection)}
-              className={FIELD}
-            >
-              <option value="before">before the due date</option>
-              <option value="on">on the due date</option>
-              <option value="after">after the due date</option>
-            </select>
-          </label>
-        </div>
-
-        <label className="flex items-start gap-2 text-sm">
-          <input name="enabled" type="checkbox" defaultChecked={enabled} className="mt-1 h-4 w-4" />
-          <span className="flex flex-col gap-0.5">
-            <span>{handover ? "Hand this invoice back to me" : "Send this reminder"}</span>
-            <span className="text-xs text-muted-foreground">
-              {describeDisabling(step.actionType)}
-            </span>
-          </span>
-        </label>
-
-        {state.error && (
-          <p role="alert" className="text-sm text-danger">
-            {state.error}
-          </p>
-        )}
-        {state.success && (
-          <p role="status" className="text-sm text-success">
-            {state.success}
-          </p>
-        )}
-
-        <div>
           <button
-            type="submit"
-            disabled={pending}
-            className="rounded-[var(--radius-control)] bg-primary px-4 py-2 text-[13px] font-semibold text-primary-foreground shadow-[var(--shadow-primary)] disabled:opacity-60"
+            type="button"
+            onClick={() => setEditing((was) => !was)}
+            aria-expanded={open}
+            className="cursor-pointer self-start rounded-[var(--radius-pill)] border border-input-border bg-surface px-3.5 py-[7px] text-[12.5px] font-semibold text-label transition-colors hover:bg-chip-hover"
           >
-            {pending ? "Saving…" : "Save this stage"}
+            {open ? "Close" : "Edit"}
           </button>
         </div>
-      </form>
+
+        {open && (
+          <form action={action} className="mt-4 flex flex-col gap-3.5">
+            <input type="hidden" name="organisationId" value={organisationId} />
+            <input type="hidden" name="stepId" value={step.id} />
+
+            <div className="flex flex-wrap items-end gap-3">
+              <label className="flex w-24 flex-col gap-1 text-[13px] font-semibold text-label">
+                Days
+                <input
+                  name="days"
+                  type="number"
+                  min={0}
+                  max={MAX_OFFSET_DAYS}
+                  step={1}
+                  inputMode="numeric"
+                  defaultValue={days}
+                  disabled={direction === "on"}
+                  className={`${FIELD} font-normal disabled:opacity-50`}
+                />
+              </label>
+
+              <label className="flex flex-col gap-1 text-[13px] font-semibold text-label">
+                When
+                <select
+                  name="direction"
+                  value={direction}
+                  onChange={(event) => setDirection(event.target.value as OffsetDirection)}
+                  className={`${FIELD} font-normal`}
+                >
+                  <option value="before">before the due date</option>
+                  <option value="on">on the due date</option>
+                  <option value="after">after the due date</option>
+                </select>
+              </label>
+            </div>
+
+            <label className="flex items-start gap-2.5 text-[13px]">
+              <input
+                name="enabled"
+                type="checkbox"
+                defaultChecked={enabled}
+                className="mt-0.5 size-4 accent-primary"
+              />
+              <span className="flex flex-col gap-0.5">
+                <span className="font-semibold text-label">
+                  {handover ? "Hand this invoice back to me" : "Send this reminder"}
+                </span>
+                <span className="text-xs leading-[1.5] text-muted-foreground">
+                  {describeDisabling(step.actionType)}
+                </span>
+              </span>
+            </label>
+
+            {state.error && (
+              <p role="alert" className="text-[13px] text-danger">
+                {state.error}
+              </p>
+            )}
+            {state.success && (
+              <p role="status" className="text-[13px] text-success">
+                {state.success}
+              </p>
+            )}
+
+            <div>
+              <button
+                type="submit"
+                disabled={pending}
+                className="cursor-pointer rounded-[var(--radius-control)] bg-primary px-4 py-2 text-[13px] font-semibold text-primary-foreground shadow-[var(--shadow-primary)] transition-opacity hover:opacity-90 disabled:opacity-60"
+              >
+                {pending ? "Saving…" : "Save this stage"}
+              </button>
+            </div>
+          </form>
+        )}
+      </div>
     </li>
   );
 }

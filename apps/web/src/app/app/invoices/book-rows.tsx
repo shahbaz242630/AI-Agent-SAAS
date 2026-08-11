@@ -39,8 +39,14 @@ import { amountInputValue, dateInputValue, formatDueDate, formatMoney } from "@/
  * within an hour of the original changing.
  */
 
+/**
+ * ⚠️ `whitespace-nowrap` IS LOAD-BEARING (2026-08-11). Without it "Pause
+ * chasing" and "Cancel invoice" broke onto two lines inside their own buttons,
+ * and three of those stacked turned every row of the book into a 110px block.
+ * A table whose rows are three lines tall stops being a table.
+ */
 const SMALL_BUTTON =
-  "rounded-[var(--radius-control)] border border-input-border bg-surface px-2.5 py-1 text-xs font-semibold hover:bg-chip-hover disabled:opacity-60";
+  "rounded-[var(--radius-control)] border border-input-border bg-surface px-2.5 py-1 text-xs font-semibold whitespace-nowrap hover:bg-chip-hover disabled:opacity-60";
 const PRIMARY_BUTTON =
   "rounded-[var(--radius-control)] bg-primary px-4 py-2 text-[13px] font-semibold text-primary-foreground shadow-[var(--shadow-primary)] disabled:opacity-60";
 const DANGER_BUTTON =
@@ -71,6 +77,19 @@ export interface BookRow {
 type OpenPanel =
   | { kind: "lifecycle"; invoiceId: string; action: InvoiceLifecycleAction }
   | { kind: "payment"; invoiceId: string }
+  /**
+   * ⚠️ THE OVERFLOW, AND IT IS A ROW RATHER THAN A FLOATING MENU (2026-08-11).
+   * Every lifecycle action used to sit inline on every row: three buttons whose
+   * labels are deliberately verb phrases ("Pause chasing", "Cancel invoice"),
+   * which pushed the actions past the right edge of a table that already scrolls
+   * at 960px. You had to scroll sideways to pay an invoice.
+   *
+   * A dropdown is the obvious fix and the wrong one here: this table lives in
+   * `overflow-x-auto`, which clips any absolutely-positioned child. Reusing the
+   * panel row the confirm steps already use keeps the words, costs no width, and
+   * cannot be clipped by its own container.
+   */
+  | { kind: "actions"; invoiceId: string }
   | null;
 
 export function BookRows({
@@ -120,7 +139,11 @@ export function BookRows({
       const stillValid =
         panel.kind === "payment"
           ? canRecordPayment(row.status)
-          : availableInvoiceActions(row.status).includes(panel.action);
+          : panel.kind === "actions"
+            ? // The overflow closes itself once the invoice has no actions left
+              // — cancelled in another tab, say — by the same rule as the rest.
+              availableInvoiceActions(row.status).length > 0
+            : availableInvoiceActions(row.status).includes(panel.action);
       if (stillValid) open = { row, panel };
     }
   }
@@ -166,15 +189,28 @@ export function BookRows({
                   <span className="block text-xs text-muted-foreground">{row.contact.phone}</span>
                 )}
               </td>
-              <td className="px-3 py-3">
+              {/* An invoice number is an identifier and must never break across
+                  lines: "INV-" over "2041" is unreadable and unsearchable. */}
+              <td className="px-3 py-3 whitespace-nowrap">
                 <span className="font-medium">{row.invoiceNumber}</span>
                 {row.description && (
-                  <span className="block text-xs text-muted-foreground">{row.description}</span>
+                  <span className="block text-xs whitespace-normal text-muted-foreground">
+                    {row.description}
+                  </span>
                 )}
               </td>
               <td className="px-3 py-3 whitespace-nowrap">
                 {formatDueDate(row.dueDate)}
-                <span className="block text-xs text-muted-foreground">
+                {/* ⚠️ THE AGEING IS THE SCAN SIGNAL ON THIS SCREEN, and it was
+                    the same grey as everything else. Late money is the reason
+                    the book exists; it now reads as late. `current` stays quiet
+                    — colouring "Not due yet" would spend the alarm on the one
+                    state that is fine. */}
+                <span
+                  className={`block text-xs ${
+                    row.ageingBucket === "current" ? "text-muted-foreground" : "text-danger"
+                  }`}
+                >
                   {ageingBucketLabel(row.ageingBucket)}
                 </span>
               </td>
@@ -216,10 +252,26 @@ export function BookRows({
                   formatDate: (value) => formatDueDate(value),
                 })}
               </td>
-              <td className="px-3 py-3">
+              {/*
+               * ⚠️ PINNED TO THE RIGHT EDGE. This table is wider than its
+               * container by design (the spec asks for `overflow-x:auto` and a
+               * 960px minimum), which is fine for detail you read — and not
+               * fine for the controls you press. Before this, paying an invoice
+               * meant scrolling sideways to find the button. Sticky keeps the
+               * actions on screen while Client, Due and Chasing scroll beneath.
+               * The background must stay opaque or the rows show through.
+               */}
+              <td className="sticky right-0 bg-surface px-3 py-3 shadow-[var(--shadow-sticky-edge)]">
                 {/* Empty for a read-only role — the reason is said once above
-                    the table rather than repeated on every row of the book. */}
-                <div className="flex flex-wrap gap-1">
+                    the table rather than repeated on every row of the book.
+
+                    ⚠️ ONE ROW, NOT WRAPPED. `flex-wrap` here stacked the three
+                    actions vertically, because the column is the narrowest one
+                    in the table and always will be. The table already scrolls
+                    horizontally at 960px, so the actions are allowed the width
+                    they need; the ROW HEIGHT is the scarce resource, not the
+                    column. */}
+                <div className="flex items-center justify-end gap-1.5">
                   {/* First, because it is the commonest thing that happens to an
                       invoice: somebody pays it. */}
                   {canWrite && canRecordPayment(row.status) && (
@@ -241,17 +293,29 @@ export function BookRows({
                       is STORED as active. `availableInvoiceActions` normalises
                       the derived statuses anyway, so this cannot go wrong
                       quietly; it is written the right way round regardless. */}
-                  {canWrite &&
-                    availableInvoiceActions(row.status).map((action) => (
-                      <button
-                        key={action}
-                        type="button"
-                        onClick={() => setPanel({ kind: "lifecycle", invoiceId: row.id, action })}
-                        className={SMALL_BUTTON}
-                      >
-                        {invoiceActionLabel(action)}
-                      </button>
-                    ))}
+                  {/* ⚠️ FROM `status`, NOT `displayStatus` — an overdue invoice
+                      is STORED as active. `availableInvoiceActions` normalises
+                      the derived statuses anyway, so this cannot go wrong
+                      quietly; it is written the right way round regardless. */}
+                  {canWrite && availableInvoiceActions(row.status).length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setPanel(
+                          isOpen && panel?.kind === "actions"
+                            ? null
+                            : { kind: "actions", invoiceId: row.id },
+                        )
+                      }
+                      aria-expanded={isOpen && panel?.kind === "actions"}
+                      /* The invoice number is in the name because a screen
+                         reader hears twenty of these and no column header. */
+                      aria-label={`More actions for invoice ${row.invoiceNumber}`}
+                      className={`${SMALL_BUTTON} px-2 leading-none`}
+                    >
+                      <span aria-hidden>···</span>
+                    </button>
+                  )}
                 </div>
               </td>
             </tr>
@@ -259,7 +323,20 @@ export function BookRows({
             {isOpen && open && (
               <tr className="border-b border-hairline">
                 <td colSpan={8} className="px-3 pb-4">
-                  {open.panel.kind === "lifecycle" ? (
+                  {open.panel.kind === "actions" ? (
+                    <div className="flex flex-wrap items-center gap-2 pt-1">
+                      {availableInvoiceActions(row.status).map((action) => (
+                        <button
+                          key={action}
+                          type="button"
+                          onClick={() => setPanel({ kind: "lifecycle", invoiceId: row.id, action })}
+                          className={SMALL_BUTTON}
+                        >
+                          {invoiceActionLabel(action)}
+                        </button>
+                      ))}
+                    </div>
+                  ) : open.panel.kind === "lifecycle" ? (
                     <LifecyclePanel
                       key={`${row.id}:${open.panel.action}`}
                       organisationId={organisationId}

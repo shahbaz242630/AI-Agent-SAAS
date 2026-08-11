@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { ApiError, apiFetch } from "@/lib/api";
+import { fetchOrganisations } from "@/lib/organisations";
 import { defaultInvoiceCurrency } from "@/lib/currencies";
 import { invoiceCountLine, noInvoicesLine } from "@/lib/invoice-messages";
 import { can, readOnlyInvoicesLine } from "@/lib/permissions";
@@ -54,14 +55,12 @@ export default async function CustomerInvoicesPage({
   if (!accessToken) redirect("/sign-in");
 
   // Single-org app today — the /app/clients precedent.
-  const organisations = (await (
-    await apiFetch("/organisations", accessToken)
-  ).json()) as OrganisationSummary[];
+  const organisations = await fetchOrganisations<OrganisationSummary>(accessToken);
   const organisation = organisations[0];
 
   if (!organisation) {
     return (
-      <Shell customerId={null}>
+      <Shell>
         <p className="w-full max-w-4xl text-sm text-muted-foreground">
           Create an organisation first.{" "}
           <Link href="/app/organisations/new" className="font-medium text-primary hover:underline">
@@ -97,7 +96,7 @@ export default async function CustomerInvoicesPage({
 
   if (clientMissing) {
     return (
-      <Shell customerId={null}>
+      <Shell>
         <p className="w-full max-w-4xl text-sm text-muted-foreground">
           That client no longer exists. It may have been removed in another tab.
         </p>
@@ -107,7 +106,7 @@ export default async function CustomerInvoicesPage({
 
   if (clientForbidden || !client) {
     return (
-      <Shell customerId={null}>
+      <Shell>
         <p className="w-full max-w-4xl text-sm text-muted-foreground">
           {`Your role doesn't have access to clients for ${organisation.name}. Ask an owner or administrator.`}
         </p>
@@ -134,7 +133,7 @@ export default async function CustomerInvoicesPage({
 
   if (notEntitled) {
     return (
-      <Shell customerId={customerId}>
+      <Shell>
         <section className="flex w-full max-w-4xl flex-col gap-3 rounded-[var(--radius-card)] bg-muted px-6 py-4">
           {/* One interpolated string, never `{name}` beside wrapping JSX text —
               Next 16's build drops the space between them (handoff §0c), and
@@ -157,7 +156,7 @@ export default async function CustomerInvoicesPage({
 
   if (forbidden) {
     return (
-      <Shell customerId={customerId}>
+      <Shell>
         <p className="w-full max-w-4xl text-sm text-muted-foreground">
           {`Your role can see ${client.name} but not their invoices. Ask an owner or administrator.`}
         </p>
@@ -211,7 +210,7 @@ export default async function CustomerInvoicesPage({
   const canWrite = can(organisation, "invoices:write");
 
   return (
-    <Shell customerId={customerId}>
+    <Shell>
       <section className="flex w-full max-w-4xl flex-col gap-2">
         <h1 className="text-2xl font-bold text-primary">{`Invoices — ${client.name}`}</h1>
         <p className="text-sm text-muted-foreground">
@@ -253,21 +252,20 @@ export default async function CustomerInvoicesPage({
   );
 }
 
-function Shell({ children, customerId }: { children: React.ReactNode; customerId: string | null }) {
+function Shell({ children }: { children: React.ReactNode }) {
   return (
     <main className="flex w-full max-w-[1080px] flex-1 flex-col gap-[26px] px-10 pt-8 pb-9">
       {children}
+      {/* "Back to clients" stays: this screen is a drill-down, and climbing to
+          the list you came from is not something the sidebar does.
+          ⚠️ "Back to your organisations" is gone (2026-08-11) — it pointed at
+          `/app`, which has been Home since slice 1.9. */}
       <Link
         href="/app/clients"
         className="text-sm font-medium text-muted-foreground hover:underline"
       >
         Back to clients
       </Link>
-      {customerId === null && (
-        <Link href="/app" className="text-sm font-medium text-muted-foreground hover:underline">
-          Back to your organisations
-        </Link>
-      )}
     </main>
   );
 }

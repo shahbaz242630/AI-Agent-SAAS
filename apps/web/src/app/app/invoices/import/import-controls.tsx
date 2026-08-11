@@ -6,10 +6,18 @@ import { cancelImport, confirmImport, uploadImport, type ImportActionState } fro
 
 const INITIAL: ImportActionState = {};
 
+/**
+ * ⚠️ THE APP'S BUTTON VOCABULARY, NOT THIS SCREEN'S OWN (dressed 2026-08-11).
+ * These carried the pre-design shapes — card radius, `font-medium`, no shadow,
+ * a grey secondary — so the import flow's controls did not match the buttons on
+ * any screen a customer had already used. Consistency across a product is not
+ * decoration; a control that looks different reads as doing something
+ * different.
+ */
 const BUTTON_CLASS =
-  "rounded-[var(--radius-card)] bg-primary px-4 py-2 text-sm font-medium text-primary-foreground disabled:opacity-60";
+  "cursor-pointer rounded-[var(--radius-control)] bg-primary px-4 py-2 text-[13px] font-semibold text-primary-foreground shadow-[var(--shadow-primary)] hover:opacity-90 disabled:opacity-60";
 const SMALL_BUTTON_CLASS =
-  "rounded-[var(--radius-card)] bg-muted px-3 py-1.5 text-xs font-medium hover:opacity-80 disabled:opacity-60";
+  "cursor-pointer rounded-[var(--radius-control)] border border-input-border bg-surface px-3 py-1.5 text-xs font-semibold hover:bg-chip-hover disabled:opacity-60";
 
 function Feedback({ state }: { state: ImportActionState }) {
   if (!state.error) return null;
@@ -33,7 +41,9 @@ export function UploadForm({ organisationId }: { organisationId: string }) {
         /* A hint to the picker, not a guarantee: the API identifies the file by
            its CONTENT, because an extension is a claim anybody can make. */
         accept=".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        className="text-sm file:mr-3 file:rounded-[var(--radius-card)] file:border-0 file:bg-muted file:px-4 file:py-2 file:text-sm file:font-medium"
+        /* The file picker's own button is a control like any other — the
+           browser's default is nobody's design system. */
+        className="cursor-pointer text-sm text-muted-foreground file:mr-3 file:cursor-pointer file:rounded-[var(--radius-control)] file:border file:border-input-border file:bg-surface file:px-4 file:py-2 file:text-[13px] file:font-semibold file:text-label hover:file:bg-chip-hover"
       />
       <Feedback state={state} />
       <div>

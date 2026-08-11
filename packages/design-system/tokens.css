@@ -131,6 +131,11 @@
   /* The halo around the step a customer is on. Amber at a quarter strength, so
      it reads as a glow rather than a second ring. */
   --shadow-step: 0 0 0 4px rgba(232, 163, 61, 0.25);
+  /* The edge of a column pinned over a horizontally scrolling table, so the
+     rows read as passing UNDER it rather than colliding with it. A token
+     because an inline `rgba()` in an arbitrary shadow is a colour nobody
+     declared, on the busiest screen in the product. */
+  --shadow-sticky-edge: -8px 0 8px -8px rgba(15, 23, 42, 0.12);
 
   --font-sans:
     ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;

@@ -7,6 +7,7 @@ import {
   MIN_OFFSET_DAYS,
   describeDisabling,
   describeOffset,
+  describeOffsetShort,
   isHandover,
   splitOffset,
   stepPurpose,
@@ -73,6 +74,35 @@ describe("reminder timing", () => {
       for (let offset = MIN_OFFSET_DAYS; offset <= MAX_OFFSET_DAYS; offset += 1) {
         expect(describeOffset(offset)).not.toContain("-");
       }
+    });
+
+    /**
+     * The short form for the timeline's left column, where the heading and the
+     * anchor row already say what the days are measured FROM (2026-08-11). The
+     * long form repeated "the due date" on all six rows.
+     */
+    describe("the short form", () => {
+      it("names the anchor rather than counting zero days to it", () => {
+        expect(describeOffsetShort(0)).toBe("Due date");
+      });
+
+      it("drops the repeated 'the due date' but keeps the direction", () => {
+        expect(describeOffsetShort(-3)).toBe("3 days before");
+        expect(describeOffsetShort(7)).toBe("7 days after");
+      });
+
+      it("uses the singular for one day", () => {
+        expect(describeOffsetShort(-1)).toBe("1 day before");
+        expect(describeOffsetShort(1)).toBe("1 day after");
+      });
+
+      /** ⚠️ The same rule as the long form and the editor: a customer reads
+       *  "before", never `-3`. */
+      it("never shows a customer a minus sign", () => {
+        for (let offset = MIN_OFFSET_DAYS; offset <= MAX_OFFSET_DAYS; offset += 1) {
+          expect(describeOffsetShort(offset)).not.toContain("-");
+        }
+      });
     });
   });
 

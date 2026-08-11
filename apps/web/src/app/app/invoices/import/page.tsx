@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { ApiError, apiFetch } from "@/lib/api";
+import { fetchOrganisations } from "@/lib/organisations";
 import { importFieldLabel } from "@/lib/import-messages";
 import { can, readOnlyImportsLine } from "@/lib/permissions";
 import { createClient } from "@/lib/supabase/server";
@@ -44,9 +45,7 @@ export default async function ImportInvoicesPage() {
   const accessToken = sessionData.session?.access_token;
   if (!accessToken) redirect("/sign-in");
 
-  const organisations = (await (
-    await apiFetch("/organisations", accessToken)
-  ).json()) as OrganisationSummary[];
+  const organisations = await fetchOrganisations<OrganisationSummary>(accessToken);
   const organisation = organisations[0];
 
   if (!organisation) {
@@ -120,14 +119,22 @@ export default async function ImportInvoicesPage() {
   return (
     <Shell>
       <section className="flex w-full max-w-3xl flex-col gap-2">
-        <h1 className="text-2xl font-bold text-primary">Upload your invoices</h1>
+        {/* ⚠️ Dressed 2026-08-11. This screen still carried the pre-design
+            heading (`text-2xl font-bold text-primary`) from before the app had
+            a display face, so the one step in the flow that asks a customer to
+            hand over their whole book looked like a different product. */}
+        <h1 className="font-display text-[29px] leading-tight font-semibold">
+          Upload your invoices
+        </h1>
         <p className="text-sm text-muted-foreground">
           Drop in the spreadsheet you already keep. Eva reads it, shows you what it found, and
           creates nothing until you say so.
         </p>
       </section>
 
-      <section className="flex w-full max-w-3xl flex-col gap-4 rounded-[var(--radius-card)] bg-muted px-6 py-5">
+      {/* A card on the paper, like every other panel in the app — not a grey
+          block with no edge. */}
+      <section className="flex w-full max-w-3xl flex-col gap-4 rounded-[var(--radius-card)] border border-border bg-surface px-6 py-5">
         {canImport ? (
           <UploadForm organisationId={organisation.id} />
         ) : (
@@ -136,7 +143,7 @@ export default async function ImportInvoicesPage() {
       </section>
 
       <section className="flex w-full max-w-3xl flex-col gap-2">
-        <h2 className="text-sm font-medium">Columns Eva understands</h2>
+        <h2 className="text-sm font-semibold">Columns Eva understands</h2>
         <p className="text-xs text-muted-foreground">
           Headings are matched automatically, so they do not have to be named exactly like this.
           Anything Eva cannot place is left alone and shown to you.
@@ -145,7 +152,10 @@ export default async function ImportInvoicesPage() {
           {UNDERSTOOD_FIELDS.map((field) => (
             <li
               key={field}
-              className="rounded-[var(--radius-card)] bg-muted px-3 py-1 text-xs text-muted-foreground"
+              /* ⚠️ Was `bg-muted` — the same grey as the panel above it, on a
+                 page whose background is already warm off-white. Chips that do
+                 not read as chips are just wrapped text. */
+              className="rounded-[var(--radius-pill)] border border-neutral-border bg-surface px-3 py-1 text-xs font-medium text-label"
             >
               {importFieldLabel(field)}
             </li>
