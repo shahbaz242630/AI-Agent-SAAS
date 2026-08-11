@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
+import { setPassword } from "./set-password";
 import {
   AuthError,
   AuthField,
@@ -19,13 +20,12 @@ import {
  * `new`    — they just followed a recovery link, so by definition they do not.
  *
  * ⚠️ THE CURRENT-PASSWORD FIELD IS RE-AUTHENTICATION, NOT VALIDATION, and it is
- * OURS rather than Supabase's. `updateUser({ password })` accepts any live
- * session, so without this a stolen or borrowed session — an unlocked laptop —
- * could change the password and lock the owner out of their own account. We
- * check it by signing in with it first, which is the only way to verify a
- * password we deliberately never store.
+ * OURS rather than Supabase's — `updateUser({ password })` accepts any live
+ * session, so without it a borrowed one could lock the owner out of their own
+ * account. That, and ending every OTHER session afterwards, both live in
+ * `set-password.ts`, where a test can reach them; this file is the form.
  *
- * ⚠️ THAT ALSO MEANS `new` IS NOT A WEAKER DOOR INTO `change`. It cannot be
+ * ⚠️ `new` IS NOT A WEAKER DOOR INTO `change`. It cannot be
  * reached without a session Supabase itself just minted from a link sent to the
  * account's own address. The real hardening for both is Supabase's "Secure
  * password change" setting, which requires a recent sign-in at the API level —
@@ -37,39 +37,29 @@ export function PasswordForm({ mode, email }: { mode: "change" | "new"; email: s
   const [next, setNext] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
-  const [done, setDone] = useState(false);
+  const [done, setDone] = useState<{ otherSessionsEnded: boolean } | null>(null);
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError(null);
     setPending(true);
 
-    const supabase = createClient();
+    const outcome = await setPassword(createClient(), {
+      mode,
+      email,
+      currentPassword: current,
+      newPassword: next,
+    });
 
-    if (mode === "change") {
-      const { error: reauthError } = await supabase.auth.signInWithPassword({
-        email,
-        password: current,
-      });
-      if (reauthError) {
-        // Deliberately not the API's wording: "Invalid login credentials" is
-        // about signing in, and this person is already signed in.
-        setError("That current password isn't right. Try again.");
-        setPending(false);
-        return;
-      }
-    }
-
-    const { error: updateError } = await supabase.auth.updateUser({ password: next });
-    if (updateError) {
-      setError(updateError.message);
+    if (!outcome.ok) {
+      setError(outcome.error);
       setPending(false);
       return;
     }
 
     // The session's tokens changed underneath the server components.
     router.refresh();
-    setDone(true);
+    setDone({ otherSessionsEnded: outcome.otherSessionsEnded });
     setPending(false);
   }
 
@@ -79,7 +69,19 @@ export function PasswordForm({ mode, email }: { mode: "change" | "new"; email: s
         <SuccessDisc />
         <AuthHeading
           title={mode === "change" ? "Password changed" : "Password set"}
-          subtitle="You're still signed in on this device."
+          /**
+           * ⚠️ THE SECOND SENTENCE IS NOW TRUE, WHICH IS WHY IT IS HERE. "Signs
+           * out your other devices" was written for these screens on 2026-08-10
+           * and deliberately cut, because we had not checked and we do not state
+           * facts we have not checked. `setPassword` ends the other sessions and
+           * reports whether it managed it, so the screen can say what actually
+           * happened rather than what we hoped.
+           */
+          subtitle={
+            done.otherSessionsEnded
+              ? "You're still signed in on this device. Anywhere else you were signed in has been signed out."
+              : "You're still signed in on this device. We couldn't sign out your other devices — try changing it again in a moment."
+          }
         />
         <AuthPrimaryLink href="/app">Back to Eva</AuthPrimaryLink>
       </>

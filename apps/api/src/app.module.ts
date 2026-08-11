@@ -1,7 +1,7 @@
 import { Module } from "@nestjs/common";
 import { APP_FILTER, APP_GUARD } from "@nestjs/core";
 import { ThrottlerGuard, ThrottlerModule } from "@nestjs/throttler";
-import { LoggerModule } from "nestjs-pino";
+import { LoggerModule, PinoLogger } from "nestjs-pino";
 import { ApiConfigModule } from "./config/config.module.js";
 import { DatabaseModule } from "./common/database/database.module.js";
 import { AuthenticationModule } from "./modules/authentication/authentication.module.js";
@@ -19,6 +19,7 @@ import { UsersModule } from "./modules/users/users.module.js";
 import { LOG_REDACT_PATHS, serializeRequest } from "./common/logging/log-redaction.js";
 import { GlobalExceptionFilter } from "./common/filters/global-exception.filter.js";
 import { ERROR_REPORTER } from "./common/monitoring/error-reporter.js";
+import { FAULT_LOG, type FaultLog } from "./common/monitoring/fault-log.js";
 import { sentryErrorReporter } from "./common/monitoring/sentry.js";
 
 @Module({
@@ -68,6 +69,25 @@ import { sentryErrorReporter } from "./common/monitoring/sentry.js";
     { provide: APP_FILTER, useClass: GlobalExceptionFilter },
     { provide: APP_GUARD, useClass: ThrottlerGuard },
     { provide: ERROR_REPORTER, useValue: sentryErrorReporter },
+    /**
+     * The fault log, on the same pino stream as every other line (so the entry
+     * sits directly beside the request that produced it in Railway) and at
+     * `error` level (so `--level error` finds it).
+     *
+     * ⚠️ `request faulted` IS THE STRING TO GREP. It is deliberately not
+     * "request errored" — that one belongs to pino-http, is emitted for every
+     * 500 with no cause attached, and on 2026-08-11 was the only thing in the
+     * log for two hours of a dead dashboard. The two must not read alike.
+     */
+    {
+      provide: FAULT_LOG,
+      inject: [PinoLogger],
+      useFactory: (logger: PinoLogger): FaultLog => ({
+        recordFault: (entry) => {
+          logger.error(entry, "request faulted");
+        },
+      }),
+    },
   ],
 })
 export class AppModule {}

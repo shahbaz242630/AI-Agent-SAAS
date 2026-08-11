@@ -170,3 +170,83 @@ describe("apiFetch — surfacing the API's own error message (F4)", () => {
     expect(error.status).toBe(401);
   });
 });
+
+/**
+ * ⚠️ THE SECOND HALF OF THE 2026-08-11 LESSON. `/organisations` answered 500 to
+ * every request the founder made for two hours. The API logged nothing — and
+ * neither did the web app, which knew exactly which call had failed and said
+ * only "Something went wrong" on screen and nothing at all in Railway. Two
+ * services watched the same failure in silence, and the cause was eventually
+ * found by querying the database by hand.
+ */
+describe("apiFetch — leaving a trail when a call fails", () => {
+  const failing = async (
+    response: Response | Error,
+    path = "/organisations",
+  ): Promise<{ error: ApiError; logged: string[] }> => {
+    process.env.NEXT_PUBLIC_API_URL = "http://localhost:3001";
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockImplementation(() =>
+          response instanceof Error ? Promise.reject(response) : Promise.resolve(response),
+        ),
+    );
+    const logged: string[] = [];
+    const spy = vi.spyOn(console, "error").mockImplementation((line: unknown) => {
+      logged.push(String(line));
+    });
+    const error = (await apiFetch(path, "access-token").catch((e: unknown) => e)) as ApiError;
+    spy.mockRestore();
+    return { error, logged };
+  };
+
+  it("carries the API's reference so a screen can print it", async () => {
+    const { error } = await failing(
+      new Response(JSON.stringify({ statusCode: 500, message: "Internal server error" }), {
+        status: 500,
+        headers: { "Content-Type": "application/json", "x-correlation-id": "ref-abc-123" },
+      }),
+    );
+
+    expect(error.correlationId).toBe("ref-abc-123");
+  });
+
+  it("logs which call failed, with its status and reference", async () => {
+    const { logged } = await failing(
+      new Response(null, { status: 500, headers: { "x-correlation-id": "ref-abc-123" } }),
+    );
+
+    expect(logged).toHaveLength(1);
+    expect(logged[0]).toContain("/organisations");
+    expect(logged[0]).toContain("500");
+    expect(logged[0]).toContain("ref-abc-123");
+  });
+
+  it("says why the API was unreachable instead of swallowing the cause", async () => {
+    const { error, logged } = await failing(new TypeError("getaddrinfo ENOTFOUND api.example"));
+
+    // The customer keeps the friendly line…
+    expect(error.message).toMatch(/couldn't reach the Eva API/);
+    // …the log keeps the reason.
+    expect(logged[0]).toContain("ENOTFOUND");
+    expect(logged[0]).toContain("/organisations");
+  });
+
+  /** A log that fills with expired sessions and unheld modules is a log nobody
+   *  reads — and both are answered properly on screen already. */
+  it("stays quiet for the routine 4xx", async () => {
+    const { logged } = await failing(new Response(null, { status: 401 }));
+    expect(logged).toHaveLength(0);
+
+    const { logged: entitlement } = await failing(new Response(null, { status: 402 }));
+    expect(entitlement).toHaveLength(0);
+  });
+
+  it("never writes the caller's access token into the log", async () => {
+    const { logged } = await failing(new Response(null, { status: 503 }));
+
+    expect(logged.join(" ")).not.toContain("access-token");
+  });
+});
