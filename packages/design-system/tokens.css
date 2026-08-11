@@ -95,6 +95,16 @@
   /* A module that is switched on and running. */
   --color-module-live: #4ade80;
 
+  /*
+   * The landing hero's amber wash (design handoff §1). Two tokens rather than
+   * an inline `linear-gradient(...)`, because `design-tokens.spec.ts` can only
+   * police colours that go through `bg-`/`text-`/`border-` classes — a gradient
+   * written inline is a pair of colours nobody declared, sitting on the first
+   * screen a stranger sees.
+   */
+  --color-hero-wash-from: #f0e7d3;
+  --color-hero-wash-to: #eaddc2;
+
   /* Controls */
   --color-input-border: #d8d3c8;
   /* The option someone has chosen, behind a charcoal border. Warmer than
