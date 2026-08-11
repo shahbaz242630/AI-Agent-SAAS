@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useFormStatus } from "react-dom";
+import Link from "next/link";
 import { PrimaryButton } from "@/components/ui";
 import { connectMailbox } from "../settings/actions";
 
@@ -184,7 +185,34 @@ export function MailboxStep({
 
       <div className="min-h-8 flex-1" />
 
-      <div className="flex justify-end">
+      {/*
+       * ⚠️ THE WAY OUT, ADDED 2026-08-11 AFTER THE FOUNDER GOT STUCK HERE.
+       * Until now this step offered "Connect mailbox" or nothing: no skip, no
+       * link onward, and the sidebar is hidden during setup. A customer who
+       * could not finish — most obviously one whose IT administrator has to
+       * approve the connection, which this very page has a helper for — had a
+       * wall. They could not add an invoice, import a spreadsheet, or look at
+       * the product they had just signed up for. The only other control on the
+       * screen was "Sign out".
+       *
+       * ⚠️ AND THE DESTINATION WAS ALREADY BUILT FOR THEM. Home renders a
+       * "No mailbox is connected" card whenever the answer is a definite false
+       * — `attentionItems` in `lib/dashboard.ts` — explaining that nothing will
+       * send until one is connected, with a link back. So skipping is not a
+       * hole in the flow; the flow just had no door to the room that was
+       * waiting. That card is why this link does not need to repeat the
+       * consequence here.
+       *
+       * ⚠️ THIS IS NOT A "BACK", which the header above explains has no meaning
+       * on this step. It goes forward, into the product.
+       */}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <Link
+          href="/app"
+          className="text-[13px] font-semibold text-muted-foreground underline hover:text-foreground"
+        >
+          I&apos;ll do this later
+        </Link>
         <SubmitButton />
       </div>
     </form>

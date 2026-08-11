@@ -3,6 +3,7 @@ import { AdminConsentHelp } from "@/components/admin-consent-help";
 import { MailboxCard, type MailboxSummary } from "@/components/mailbox-card";
 import { GhostLink, PrimaryLink } from "@/components/ui";
 import { ApiError, apiFetch } from "@/lib/api";
+import { fetchOrganisations } from "@/lib/organisations";
 import { mailboxErrorMessage, needsConsentHelp } from "@/lib/mailbox-errors";
 import { createClient } from "@/lib/supabase/server";
 import { signOut } from "../actions";
@@ -56,9 +57,7 @@ export default async function OnboardingPage({
   const email = typeof claimsData.claims.email === "string" ? claimsData.claims.email : "";
 
   // Single-org app today — the /app list precedent; org switching is a later slice.
-  const organisations = (await (
-    await apiFetch("/organisations", accessToken)
-  ).json()) as OrganisationSummary[];
+  const organisations = await fetchOrganisations<OrganisationSummary>(accessToken);
   const organisation = organisations[0];
 
   let status: { mailboxes: MailboxSummary[] } | null = null;

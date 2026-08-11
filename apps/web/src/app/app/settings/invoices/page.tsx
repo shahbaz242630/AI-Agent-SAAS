@@ -1,6 +1,5 @@
-import Link from "next/link";
 import { redirect } from "next/navigation";
-import { apiFetch } from "@/lib/api";
+import { fetchOrganisations } from "@/lib/organisations";
 import { FALLBACK_CURRENCY } from "@/lib/currencies";
 import { can } from "@/lib/permissions";
 import { createClient } from "@/lib/supabase/server";
@@ -36,9 +35,7 @@ export default async function InvoiceSettingsPage() {
   const accessToken = sessionData.session?.access_token;
   if (!accessToken) redirect("/sign-in");
 
-  const organisations = (await (
-    await apiFetch("/organisations", accessToken)
-  ).json()) as OrganisationSummary[];
+  const organisations = await fetchOrganisations<OrganisationSummary>(accessToken);
   const organisation = organisations[0];
 
   if (!organisation) {
@@ -58,7 +55,9 @@ export default async function InvoiceSettingsPage() {
   return (
     <Shell>
       <section className="flex w-full max-w-2xl flex-col gap-2">
-        <h1 className="font-display text-[29px] leading-tight font-semibold">Invoice settings</h1>
+        {/* Matches its tab (2026-08-11): this screen holds one setting, and
+            calling it "Invoice settings" promised more than it delivers. */}
+        <h1 className="font-display text-[29px] leading-tight font-semibold">Currency</h1>
         <p className="text-sm text-muted-foreground">
           {`What a new invoice starts as for ${organisation.name}.`}
         </p>
@@ -102,18 +101,10 @@ export default async function InvoiceSettingsPage() {
 function Shell({ children }: { children: React.ReactNode }) {
   return (
     <main className="flex w-full max-w-[1080px] flex-1 flex-col gap-[26px] px-10 pt-8 pb-9">
+      {/* ⚠️ The footer links are gone (2026-08-11): "Invoices" duplicated the
+          sidebar, and "Your account" pointed at `/app`, which has been Home
+          rather than an account page since slice 1.9. */}
       {children}
-      <div className="flex gap-4">
-        <Link
-          href="/app/invoices"
-          className="text-sm font-medium text-muted-foreground hover:underline"
-        >
-          Invoices
-        </Link>
-        <Link href="/app" className="text-sm font-medium text-muted-foreground hover:underline">
-          Your account
-        </Link>
-      </div>
     </main>
   );
 }

@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { ApiError, apiFetch } from "@/lib/api";
+import { fetchOrganisations } from "@/lib/organisations";
 import {
   bookFilterLine,
   bookMoneyPanel,
@@ -88,9 +89,7 @@ export default async function InvoiceBookPage({
   const accessToken = sessionData.session?.access_token;
   if (!accessToken) redirect("/sign-in");
 
-  const organisations = (await (
-    await apiFetch("/organisations", accessToken)
-  ).json()) as OrganisationSummary[];
+  const organisations = await fetchOrganisations<OrganisationSummary>(accessToken);
   const organisation = organisations[0];
 
   if (!organisation) {
@@ -329,7 +328,8 @@ export default async function InvoiceBookPage({
                 <th className="px-3 py-2 text-right font-medium">Outstanding</th>
                 <th className="px-3 py-2 font-medium">Status</th>
                 <th className="px-3 py-2 font-medium">Chasing</th>
-                <th className="px-3 py-2 font-medium">
+                {/* Pinned with its column — see the `td` in `book-rows.tsx`. */}
+                <th className="sticky right-0 bg-surface px-3 py-2 font-medium">
                   <span className="sr-only">Actions</span>
                 </th>
               </tr>
@@ -372,27 +372,21 @@ export default async function InvoiceBookPage({
   );
 }
 
+/**
+ * ⚠️ THE OLD PER-SCREEN FOOTER LINKS ARE GONE — the same removal the reminders
+ * screen had in slice 1.9, finished here on 2026-08-11 after the founder found
+ * the leftovers by walking the product.
+ *
+ * Three links sat below the fold: "Clients" and "Invoice settings", both of
+ * which the sidebar already offers, and "Your account" pointing at `/app` —
+ * which stopped being the account page in slice 1.9 and is now Home. A second,
+ * staler set of navigation is not redundancy; it is a way to get somewhere
+ * other than where the label promised.
+ */
 function Shell({ children }: { children: React.ReactNode }) {
   return (
     <main className="flex w-full max-w-[1080px] flex-1 flex-col gap-[26px] px-10 pt-8 pb-9">
       {children}
-      <div className="flex gap-4">
-        <Link
-          href="/app/clients"
-          className="text-sm font-medium text-muted-foreground hover:underline"
-        >
-          Clients
-        </Link>
-        <Link
-          href="/app/settings/invoices"
-          className="text-sm font-medium text-muted-foreground hover:underline"
-        >
-          Invoice settings
-        </Link>
-        <Link href="/app" className="text-sm font-medium text-muted-foreground hover:underline">
-          Your account
-        </Link>
-      </div>
     </main>
   );
 }

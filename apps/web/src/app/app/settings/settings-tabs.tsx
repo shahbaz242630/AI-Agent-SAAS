@@ -14,11 +14,26 @@ import Link from "next/link";
  * `current` is passed rather than read from `usePathname` so this stays a
  * server component and can be rendered in a plain test.
  */
+/**
+ * ⚠️ TWO LABELS RENAMED 2026-08-11, AND THE ROUTES DELIBERATELY LEFT ALONE.
+ *
+ * "Invoices" → **Currency**: the screen behind it contains one setting, the
+ * currency a new invoice opens on. A tab promising invoice settings and
+ * delivering a single dropdown makes a customer wonder what they have missed.
+ *
+ * "Modules" → **Products**: `module` is the database's word — the table is
+ * `organisation_modules` — and the page behind this tab has been headed "Your
+ * products" since it was built. The customer-facing name was already decided;
+ * only the tab still said otherwise.
+ *
+ * The `key` and `href` stay as they are: they are internal, no customer reads
+ * them, and renaming routes would break every link and bookmark to buy nothing.
+ */
 export const SETTINGS_TABS = [
   { key: "reminders", href: "/app/settings/reminders", label: "Reminders" },
   { key: "mailbox", href: "/app/settings/mailbox", label: "Mailbox" },
-  { key: "invoices", href: "/app/settings/invoices", label: "Invoices" },
-  { key: "modules", href: "/app/settings/modules", label: "Modules" },
+  { key: "invoices", href: "/app/settings/invoices", label: "Currency" },
+  { key: "modules", href: "/app/settings/modules", label: "Products" },
 ] as const;
 
 export type SettingsTabKey = (typeof SETTINGS_TABS)[number]["key"];

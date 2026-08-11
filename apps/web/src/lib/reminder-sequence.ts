@@ -72,6 +72,26 @@ export function describeOffset(offsetDays: number): string {
 }
 
 /**
+ * The same offset for a column that already says what it is measured from —
+ * "3 days before", "Due date", "7 days after".
+ *
+ * ⚠️ THE SCHEDULE IS THE ANSWER THIS SCREEN EXISTS TO GIVE, so it gets the
+ * column a reader scans rather than a grey clause after a middle dot. The long
+ * form repeats "the due date" on all six rows, which is the phrase the timeline
+ * draws once (2026-08-11).
+ *
+ * ⚠️ STILL NO MINUS SIGNS — the same rule as the editor. "before" and "after"
+ * are words a customer reads without decoding; `-3 days` is a number they have
+ * to interpret, on the screen that decides when their clients get chased.
+ */
+export function describeOffsetShort(offsetDays: number): string {
+  if (offsetDays === 0) return "Due date";
+  const { direction, days } = splitOffset(offsetDays);
+  const unit = days === 1 ? "day" : "days";
+  return `${days} ${unit} ${direction}`;
+}
+
+/**
  * Refuse impossible timings before asking the API.
  *
  * Returns the sentence to show, or null when the value is fine. The messages

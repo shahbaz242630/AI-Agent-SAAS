@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { ApiError, apiFetch } from "@/lib/api";
+import { fetchOrganisations } from "@/lib/organisations";
 import { createClient } from "@/lib/supabase/server";
 import { ModuleControls } from "./module-controls";
 import { SettingsTabs } from "../settings-tabs";
@@ -62,9 +63,7 @@ export default async function ModulesPage() {
   const accessToken = sessionData.session?.access_token;
   if (!accessToken) redirect("/sign-in");
 
-  const organisations = (await (
-    await apiFetch("/organisations", accessToken)
-  ).json()) as OrganisationSummary[];
+  const organisations = await fetchOrganisations<OrganisationSummary>(accessToken);
   const organisation = organisations[0];
 
   let modules: ModuleStatus[] = [];
@@ -172,9 +171,9 @@ export default async function ModulesPage() {
         </section>
       )}
 
-      <Link href="/app" className="text-sm font-medium text-muted-foreground hover:underline">
-        Back to your organisations
-      </Link>
+      {/* ⚠️ "Back to your organisations" is gone (2026-08-11): `/app` has been
+          Home rather than a list of organisations since slice 1.9, and the
+          sidebar reaches Home from every screen inside the shell. */}
     </main>
   );
 }
