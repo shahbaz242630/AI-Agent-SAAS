@@ -1,5 +1,6 @@
 import { type EmailOtpType } from "@supabase/supabase-js";
 import { NextResponse, type NextRequest } from "next/server";
+import { publicOrigin } from "@/lib/public-origin";
 import { createClient } from "@/lib/supabase/server";
 
 /**
@@ -26,7 +27,15 @@ import { createClient } from "@/lib/supabase/server";
  * something about a token they are holding.
  */
 export async function GET(request: NextRequest) {
-  const { searchParams, origin } = request.nextUrl;
+  const { searchParams } = request.nextUrl;
+  /**
+   * ⚠️ NOT `request.nextUrl.origin`, AND THIS IS THE 2026-08-11 DEFECT. Behind
+   * Railway's proxy that property resolves to the container's own listening
+   * address, so every link Eva emailed redirected to `https://localhost:8080` —
+   * https, plausible, and nowhere. See `lib/public-origin.ts` for why the fix
+   * is configuration rather than the forwarded host.
+   */
+  const origin = publicOrigin();
 
   const tokenHash = searchParams.get("token_hash");
   const type = searchParams.get("type") as EmailOtpType | null;

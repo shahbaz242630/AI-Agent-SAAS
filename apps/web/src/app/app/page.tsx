@@ -72,6 +72,17 @@ export default async function AppHomePage() {
             ? error.message
             : "We couldn't load your account. Please try again in a moment."}
         </p>
+        {/**
+         * ⚠️ THE REFERENCE, WHERE A SCREENSHOT WILL CATCH IT. On 2026-08-11
+         * this screen said "unexpected error (500)" to the founder for two
+         * hours and there was no path from that sentence to the request behind
+         * it. The id is the API's own fault-log key: quoting it finds the line.
+         * Only shown when there is one — an invented reference is worse than
+         * none.
+         */}
+        {error instanceof ApiError && error.correlationId && (
+          <p className="text-[13px] text-faint">Reference: {error.correlationId}</p>
+        )}
       </main>
     );
   }

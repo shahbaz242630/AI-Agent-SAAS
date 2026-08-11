@@ -86,4 +86,73 @@ describe("GET /users/me", () => {
     expect(second.body.id).toBe(first.body.id);
     expect(second.body.email).toBe("case.user@test.eva.local");
   });
+
+  /**
+   * ⚠️ THE 2026-08-11 LOCKOUT. The founder's Supabase account was deleted and
+   * recreated; our row still pointed at the dead identity. Every sign-in tried
+   * to provision a second row, hit `users_email_key`, and came back as a naked
+   * 500 — on every page load, forever, with nothing in the log. This is the
+   * shape of that day, and what the product must do instead.
+   */
+  describe("an address we already know, arriving with a different sign-in identity", () => {
+    const seedClaimedEmail = async (email: string): Promise<string> => {
+      const userId = randomUUID();
+      await owner.user.create({ data: { id: userId, email, authUserId: randomUUID() } });
+      return userId;
+    };
+
+    it("answers 409 with an explanation, not 500 with silence", async () => {
+      const email = "already.claimed@test.eva.local";
+      await seedClaimedEmail(email);
+      const token = await signToken({ sub: randomUUID(), email });
+
+      const response = await request(app.getHttpServer())
+        .get("/users/me")
+        .set("Authorization", `Bearer ${token}`)
+        .expect(409);
+
+      expect(response.body.message).toMatch(/already belongs to an Eva account/);
+      // The customer must be told what happens next; "Internal server error"
+      // told the founder nothing for two hours.
+      expect(response.body.message).toMatch(/nothing is lost/i);
+    });
+
+    /**
+     * ⚠️ THE SECURITY TEST — DO NOT "FIX" THIS INTO AN ADOPTION. Rebinding the
+     * existing row because the email matches is the classic-federated merge of
+     * the account-pre-hijacking study (arXiv 2205.10174): the row can own an
+     * organisation, its customers and its whole invoice book, and a matching
+     * address is not proof of a claim on any of it. When invites arrive, the
+     * claim must ride on a signed invite naming the row — never on the address.
+     */
+    it("leaves the existing row bound to the identity it already had", async () => {
+      const email = "not.adopted@test.eva.local";
+      const userId = await seedClaimedEmail(email);
+      const before = await owner.user.findUniqueOrThrow({ where: { id: userId } });
+      const intruder = randomUUID();
+
+      await request(app.getHttpServer())
+        .get("/users/me")
+        .set("Authorization", `Bearer ${await signToken({ sub: intruder, email })}`)
+        .expect(409);
+
+      const after = await owner.user.findUniqueOrThrow({ where: { id: userId } });
+      expect(after.authUserId).toBe(before.authUserId);
+      expect(after.authUserId).not.toBe(intruder);
+      // And no second row was smuggled in under a different id.
+      expect(await owner.user.count({ where: { email } })).toBe(1);
+    });
+
+    it("still provisions normally for an address nobody holds", async () => {
+      const sub = randomUUID();
+      const token = await signToken({ sub, email: "unclaimed@test.eva.local" });
+
+      const response = await request(app.getHttpServer())
+        .get("/users/me")
+        .set("Authorization", `Bearer ${token}`)
+        .expect(200);
+
+      expect(response.body.authUserId).toBe(sub);
+    });
+  });
 });

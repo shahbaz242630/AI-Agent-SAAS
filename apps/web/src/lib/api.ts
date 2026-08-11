@@ -11,12 +11,25 @@ export class ApiError extends Error {
    *  `module_not_entitled` on a 402), so callers can branch on the situation
    *  rather than pattern-matching English. */
   readonly code?: string;
+  /**
+   * The API's reference for this exact failure — the same string on its fault
+   * log line (`x-correlation-id`, and in the body of every 5xx since
+   * 2026-08-11).
+   *
+   * ⚠️ CARRIED SO A SCREEN CAN PRINT IT. On 2026-08-11 the founder's dashboard
+   * answered "unexpected error (500)" for two hours and there was no way to get
+   * from that sentence to the request that caused it; the cause was eventually
+   * found by reading the database. A reference on the screen turns a screenshot
+   * into a log query.
+   */
+  readonly correlationId?: string;
 
-  constructor(message: string, status?: number, code?: string) {
+  constructor(message: string, status?: number, code?: string, correlationId?: string) {
     super(message);
     this.name = "ApiError";
     this.status = status;
     this.code = code;
+    this.correlationId = correlationId;
   }
 }
 
@@ -85,7 +98,18 @@ export async function apiFetch(
       headers: { ...init?.headers, Authorization: `Bearer ${accessToken}` },
       cache: "no-store",
     });
-  } catch {
+  } catch (error) {
+    // ⚠️ THIS BRANCH USED TO DISCARD THE CAUSE ENTIRELY. "We couldn't reach the
+    // Eva API" is the right thing to SHOW and a terrible thing to be left with:
+    // DNS failure, TLS failure, the API asleep and a cold start timing out all
+    // read identically from the outside. The customer keeps the friendly line;
+    // the log keeps the reason.
+    console.error(
+      `[eva] api unreachable ${JSON.stringify({
+        path,
+        reason: error instanceof Error ? error.message : String(error),
+      })}`,
+    );
     throw new ApiError("We couldn't reach the Eva API. Please try again in a moment.");
   }
 
@@ -100,11 +124,36 @@ export async function apiFetch(
     // mailbox" reached the user as "unexpected error (400). Please try again."
     // — the wrong advice, and louder than the correct advice beside it.
     const detail = await readApiError(response);
+    const correlationId = response.headers.get("x-correlation-id") ?? undefined;
+
+    /**
+     * ⚠️ THE WEB SERVER SAYS SO TOO, and this is the second half of the
+     * 2026-08-11 lesson. The API logged nothing; the web app, which knew
+     * perfectly well that `/organisations` had just answered 500, also logged
+     * nothing and rendered "Something went wrong". Two services watched the
+     * same failure in silence. One line here means Railway's web logs name the
+     * call and the reference, even on a day when the API's own logs are the
+     * thing that is broken.
+     *
+     * 5xx only: a 401 on an expired session and a 402 on an unheld module are
+     * both routine, and a log that fills with them is a log nobody reads.
+     */
+    if (response.status >= 500) {
+      console.error(
+        `[eva] api call failed ${JSON.stringify({
+          path,
+          status: response.status,
+          correlationId: correlationId ?? null,
+        })}`,
+      );
+    }
+
     throw new ApiError(
       detail?.message ??
         `The Eva API returned an unexpected error (${response.status}). Please try again.`,
       response.status,
       detail?.code,
+      correlationId,
     );
   }
   return response;
