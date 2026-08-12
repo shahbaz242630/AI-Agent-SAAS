@@ -21,7 +21,7 @@
     "@nestjs/platform-express": "^11.0.0",
     "@nestjs/throttler": "^6.5.0",
     "@sentry/nestjs": "^10.69.0",
-    "csv-parse": "^7.0.1",
+    "csv-parse": "^7.0.2",
     "exceljs": "^4.4.0",
     "helmet": "^8.1.0",
     "jose": "^6.2.5",
@@ -46,7 +46,7 @@
     "pdfkit": "^0.19.1",
     "supertest": "^7.2.2",
     "typescript": "^6.0.3",
-    "unplugin-swc": "^1.5.9",
+    "unplugin-swc": "^1.5.10",
     "vitest": "^4.1.10"
   }
 }
