@@ -17,8 +17,21 @@
  */
 export const MAX_UPLOAD_BYTES = 5 * 1024 * 1024;
 
-/** The columns the importer understands, as `IMPORT_CANONICAL_FIELDS` names them. */
-const FIELD_LABELS: Readonly<Record<string, string>> = {
+/**
+ * The columns the importer understands, as `IMPORT_CANONICAL_FIELDS` names them.
+ *
+ * ⚠️ EVERY LABEL HERE IS A PROMISE THE MATCHER HAS TO KEEP. This list is
+ * printed on the upload screen under "Columns Eva understands", so a person
+ * names their spreadsheet column exactly this way and expects it to be read.
+ * Two of them — "Client email" and "Your client reference" — were never
+ * aliases in `autoMapHeaders`, so both columns were silently dropped from every
+ * upload that followed our own advice. Found by uploading one, 2026-08-18.
+ *
+ * ⚠️ EXPORTED SO `import-messages.spec.ts` CAN HOLD IT AGAINST THE MATCHER,
+ * which is the only reason the two can no longer drift. Adding a field here
+ * without an alias for its label now fails a test rather than a customer.
+ */
+export const FIELD_LABELS: Readonly<Record<string, string>> = {
   invoiceNumber: "Invoice number",
   amount: "Amount",
   currency: "Currency",

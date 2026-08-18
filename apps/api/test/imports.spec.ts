@@ -4,6 +4,7 @@ import request from "supertest";
 import ExcelJS from "exceljs";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { EvaPrismaClient } from "@eva/database";
+import { autoMapHeaders } from "@eva/validation";
 import {
   createOrgWithMembers,
   createOwnerClient,
@@ -12,7 +13,6 @@ import {
   signToken,
   type FixtureOrg,
 } from "./support.js";
-import { autoMapHeaders } from "../src/modules/imports/import-mapping.js";
 import { parseImportFile, sniffFileType } from "../src/modules/imports/import-parser.js";
 import {
   normaliseImportCurrency,
@@ -255,6 +255,49 @@ describe("Imports: upload, staging and validation", () => {
     expect(audit?.metadata).toMatchObject({ fileType: "csv", totalRows: 2, validRows: 2 });
     expect(JSON.stringify(audit?.metadata)).not.toContain("123.45");
     expect(JSON.stringify(audit?.metadata)).not.toContain("UP-1");
+  });
+
+  /**
+   * ⚠️ THE PREVIEW MUST PROMISE WHAT CONFIRM WILL DO. Staging resolved every
+   * row against the customers that already existed and never against the ones
+   * earlier rows in the same file were about to create, so a file with two
+   * invoices for one new client announced that client twice. Confirm has always
+   * been right — it grows its list as it goes — and the screen that says "Check
+   * this before it is saved" was the one telling the untruth.
+   *
+   * Found by uploading such a file on 2026-08-18. The test above has always
+   * uploaded two rows for one customer and only ever asserted on the FIRST,
+   * which is exactly how this survived.
+   */
+  it("promises to create a new client ONCE, however many rows name it", async () => {
+    const response = await upload(
+      "finance",
+      csvRows(
+        "TWICE-1,100.00,2026-09-01,Repeated Client Ltd,ap@repeated.test,Ada,ada@repeated.test",
+        // Same client, different case — `resolveCustomer` matches
+        // case-insensitively, so this is the same company by our own rule.
+        "TWICE-2,200.00,2026-09-02,repeated client ltd,ap@repeated.test,Ada,ada@repeated.test",
+        "TWICE-3,300.00,2026-09-03,Another New Client,ap@another.test,Bob,bob@another.test",
+      ),
+    ).expect(201);
+
+    const promises = (response.body.rows as { errors: string[] }[]).map((row) =>
+      row.errors.filter((message) => message.endsWith("will be created on confirm")),
+    );
+    expect(promises[0]).toHaveLength(1);
+    // The row that made the promise is the only one that makes it.
+    expect(promises[1]).toHaveLength(0);
+    // ...and a genuinely different client still gets its own.
+    expect(promises[2]).toHaveLength(1);
+    expect(promises[2]?.[0]).toMatch(/Another New Client/);
+
+    // Every row is still importable — saying nothing is not the same as
+    // refusing, and the second row must still bring its invoice.
+    expect((response.body.rows as { status: string }[]).map((row) => row.status)).toEqual([
+      "valid",
+      "valid",
+      "valid",
+    ]);
   });
 
   it("honours an explicit mapping form field", async () => {

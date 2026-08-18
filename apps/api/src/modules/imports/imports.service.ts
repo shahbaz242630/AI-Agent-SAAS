@@ -17,6 +17,7 @@ import {
   type ImportSummary,
 } from "@eva/types";
 import {
+  autoMapHeaders,
   importMappingSchema,
   importRowSchema,
   type ConfirmImportRequest,
@@ -48,7 +49,6 @@ import {
   parseImportFile,
   sniffFileType,
 } from "./import-parser.js";
-import { autoMapHeaders } from "./import-mapping.js";
 import { normaliseImportCurrency, parseImportAmount, parseImportDate } from "./import-values.js";
 import { transitionImportStatus } from "./import-status-machine.js";
 
@@ -103,6 +103,19 @@ export class ImportsService {
     const user = await this.usersService.resolveOrProvision(authUser);
     return withTenant(this.prisma.db, { organisationId, userId: user.id }, async (tx) => {
       await requirePermission(tx, organisationId, user.id, "imports:write");
+      /**
+       * ⚠️ THIS LIST GROWS AS THE FILE IS READ, exactly as it does at confirm.
+       *
+       * It used to be the live customers and nothing else, so every row was
+       * asked "does this client exist YET" — and a file with two invoices for
+       * one new client answered "no" twice and promised to create it twice.
+       * Confirm has always been right: it pushes each new customer onto its own
+       * copy of this list, so the second row matches the first row's creation.
+       * The preview and the thing it previews disagreed, and the preview is the
+       * screen that says "Check this before it is saved".
+       *
+       * Found by uploading a file with the same client twice, 2026-08-18.
+       */
       const customers = await listLiveCustomers(tx);
       const existingNumbers = await listLiveInvoiceNumbers(tx);
 
@@ -143,9 +156,24 @@ export class ImportsService {
             status = suppressed ? "suppressed" : "valid";
             if (resolution.kind === "create") {
               // Auto-created customers are flagged in preview + report (plan §7.2).
-              errors.push(
-                `customer '${canonical.customerName ?? canonical.customerReference}' will be created on confirm`,
-              );
+              const name = canonical.customerName ?? canonical.customerReference;
+              errors.push(`customer '${String(name)}' will be created on confirm`);
+              /**
+               * ⚠️ RECORDED SO LATER ROWS CAN SEE IT. A placeholder id, because
+               * nothing is created here and staging only ever reads
+               * `resolution.kind` — but the NAME and REFERENCE have to be the
+               * ones `createCustomer` would use, or the match this exists to
+               * make would not happen.
+               *
+               * It cannot introduce a false "ambiguous": a row only reaches
+               * here when nothing already matched it, so no two entries in this
+               * list can share a name or a reference.
+               */
+              customers.push({
+                id: `staged-row-${String(index + 1)}`,
+                name: String(name),
+                reference: canonical.customerReference ?? null,
+              });
             }
           }
         }
