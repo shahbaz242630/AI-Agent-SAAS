@@ -16,6 +16,7 @@ import {
   availableInvoiceActions,
   canRecordPayment,
   chaseBlockedLine,
+  draftBlockedLine,
   invoiceActionConfirmLabel,
   invoiceActionConsequence,
   invoiceActionLabel,
@@ -54,8 +55,33 @@ const PRIMARY_BUTTON =
   "rounded-[var(--radius-control)] bg-primary px-4 py-2 text-[13px] font-semibold text-primary-foreground shadow-[var(--shadow-primary)] disabled:opacity-60";
 const DANGER_BUTTON =
   "rounded-[var(--radius-control)] bg-danger px-4 py-2 text-[13px] font-semibold text-primary-foreground disabled:opacity-60";
+/**
+ * The drawer that opens under a row — payment, a confirm step, a contact.
+ *
+ * ⚠️ IT HAD TO STOP LOOKING LIKE A GREY SLAB (founder, 2026-08-18: "the
+ * information which shows on the table looks really ugly, it show like a table
+ * or boxes"). It was a flat tinted rectangle with a sentence and some inputs
+ * loose inside it, at the same radius as the card it sat in, with nothing
+ * joining it to the row it belonged to.
+ *
+ * ⚠️ THE LEFT EDGE IS WHAT TIES IT TO THE ROW, borrowed from `AlertCard` in the
+ * shared UI, which uses the same 3px rule to carry severity. Amber for the
+ * ordinary panels; danger only where the action cannot be undone, so the colour
+ * means the same thing here as it does everywhere else.
+ */
+const panelClass = (tone?: "danger"): string =>
+  `flex flex-col gap-3.5 rounded-[var(--radius-panel)] border border-l-[3px] bg-muted px-5 py-4 shadow-[var(--shadow-panel)] ${
+    tone === "danger" ? "border-danger-border border-l-danger" : "border-border border-l-accent"
+  }`;
+
+/**
+ * ⚠️ `font-normal` ON THE FIELD IS LOAD-BEARING. The label wraps the input, so
+ * an input with no weight of its own inherits the label's semibold and every
+ * typed value comes out bolder than the page around it.
+ */
+const LABEL = "flex flex-col gap-1.5 text-[13px] font-semibold text-label";
 const FIELD =
-  "rounded-[var(--radius-control)] border border-input-border bg-surface px-3 py-2 text-sm";
+  "rounded-[var(--radius-control)] border border-input-border bg-surface px-3 py-2 text-sm font-normal text-foreground outline-none focus:border-primary";
 
 /**
  * How many columns the book has — Client, Email, Phone, Invoice, Due, Amount,
@@ -248,7 +274,7 @@ export function BookRows({
                   thing you had to change all at once. It costs table width,
                   which this table can least afford; that is a real trade and
                   the founder made it knowingly. */}
-              <td className="px-3 py-3">
+              <td className="px-3 py-3.5">
                 <Link
                   href={`/app/clients/${row.customer.id}/invoices`}
                   className="font-medium text-primary hover:underline"
@@ -256,15 +282,15 @@ export function BookRows({
                   {row.customer.name}
                 </Link>
               </td>
-              <td className="px-3 py-3 text-sm text-muted-foreground">
+              <td className="px-3 py-3.5 text-sm text-muted-foreground">
                 {row.contact?.email ?? <MissingValue />}
               </td>
-              <td className="px-3 py-3 text-sm whitespace-nowrap text-muted-foreground">
+              <td className="px-3 py-3.5 text-sm whitespace-nowrap text-muted-foreground">
                 {row.contact?.phone ?? <MissingValue />}
               </td>
               {/* An invoice number is an identifier and must never break across
                   lines: "INV-" over "2041" is unreadable and unsearchable. */}
-              <td className="px-3 py-3 whitespace-nowrap">
+              <td className="px-3 py-3.5 whitespace-nowrap">
                 <span className="font-medium">{row.invoiceNumber}</span>
                 {row.description && (
                   <span className="block text-xs whitespace-normal text-muted-foreground">
@@ -272,7 +298,7 @@ export function BookRows({
                   </span>
                 )}
               </td>
-              <td className="px-3 py-3 whitespace-nowrap">
+              <td className="px-3 py-3.5 whitespace-nowrap">
                 {formatDueDate(row.dueDate)}
                 {/* ⚠️ THE AGEING IS THE SCAN SIGNAL ON THIS SCREEN, and it was
                     the same grey as everything else. Late money is the reason
@@ -287,10 +313,10 @@ export function BookRows({
                   {ageingBucketLabel(row.ageingBucket)}
                 </span>
               </td>
-              <td className="px-3 py-3 text-right whitespace-nowrap">
+              <td className="px-3 py-3.5 text-right whitespace-nowrap">
                 {formatMoney(row.amountMinorUnits, row.currency)}
               </td>
-              <td className="px-3 py-3 text-right whitespace-nowrap">
+              <td className="px-3 py-3.5 text-right whitespace-nowrap">
                 {/* Bold only when Eva is really collecting it — a cancelled
                     invoice's arithmetic balance is not money anybody is
                     working on. */}
@@ -309,15 +335,26 @@ export function BookRows({
                   </span>
                 )}
               </td>
-              <td className="px-3 py-3">
+              <td className="px-3 py-3.5">
                 <StatusBadge status={row.displayStatus} />
                 {chaseBlockedLine(row.status, row.chaseBlockedReason) && (
                   <span className="mt-1 block max-w-[14rem] text-xs whitespace-normal text-danger">
                     {chaseBlockedLine(row.status, row.chaseBlockedReason)}
                   </span>
                 )}
+                {/* ⚠️ AMBER, NOT RED, AND THAT IS THE DIFFERENCE BETWEEN THE
+                    TWO LINES. Red means Eva is failing right now. A draft is
+                    not failing — nobody asked her to chase it yet — but its
+                    recipient is already wrong, and finding that out one invoice
+                    at a time while activating twenty of them is the thing this
+                    exists to prevent. */}
+                {draftBlockedLine(row.status, row.chaseBlockedReason) && (
+                  <span className="mt-1 block max-w-[14rem] text-xs whitespace-normal text-warning-strong">
+                    {draftBlockedLine(row.status, row.chaseBlockedReason)}
+                  </span>
+                )}
               </td>
-              <td className="px-3 py-3 text-xs whitespace-nowrap text-muted-foreground">
+              <td className="px-3 py-3.5 text-xs whitespace-nowrap text-muted-foreground">
                 {chaseTimingLine({
                   isChased: chased,
                   lastChasedOn: row.lastChasedOn,
@@ -334,7 +371,7 @@ export function BookRows({
                * actions on screen while Client, Due and Chasing scroll beneath.
                * The background must stay opaque or the rows show through.
                */}
-              <td className="sticky right-0 bg-surface px-3 py-3 shadow-[var(--shadow-sticky-edge)]">
+              <td className="sticky right-0 bg-surface px-3 py-3.5 shadow-[var(--shadow-sticky-edge)]">
                 {/* Empty for a read-only role — the reason is said once above
                     the table rather than repeated on every row of the book.
 
@@ -420,6 +457,24 @@ export function BookRows({
 }
 
 /**
+ * What this drawer is and what it is about to do.
+ *
+ * ⚠️ ONE HEADING FOR ALL THREE, so a payment, a confirm step and a contact edit
+ * cannot end up three different sizes of "important". The title carries the
+ * invoice number because the drawer opens under a row in a table of twenty, and
+ * a panel that does not name its subject is a panel you have to scroll up from
+ * to be sure.
+ */
+function PanelHeading({ title, detail }: { title: string; detail?: string | undefined }) {
+  return (
+    <div className="flex flex-col gap-1">
+      <p className="font-display text-[15px] leading-snug font-semibold">{title}</p>
+      {detail && <p className="text-[13px] leading-relaxed text-muted-foreground">{detail}</p>}
+    </div>
+  );
+}
+
+/**
  * Correcting the person Eva writes to, without touching the invoice.
  *
  * ⚠️ THIS EDITS A CONTACT, AND THE INVOICE IS ONLY HERE TO SAY WHOSE. The
@@ -448,25 +503,20 @@ function ContactPanel({
   const sent = state.values;
 
   return (
-    <form
-      action={action}
-      className="flex flex-col gap-3 rounded-[var(--radius-card)] border border-border bg-muted px-5 py-4"
-    >
+    <form action={action} className={panelClass()}>
       <input type="hidden" name="organisationId" value={organisationId} />
       <input type="hidden" name="customerId" value={row.customer.id} />
       <input type="hidden" name="contactId" value={contact.id} />
 
-      <div className="flex flex-col gap-1">
-        <p className="text-sm font-medium">{`Who Eva writes to about ${row.invoiceNumber}`}</p>
-        {/* Said out loud, because the row this panel opens under is an invoice
-            and everything else you can do from that row changes the invoice. */}
-        <p className="text-sm text-muted-foreground">
-          {`This changes ${contact.name}'s details for ${row.customer.name} everywhere — not just on this invoice. The invoice itself is not touched.`}
-        </p>
-      </div>
+      {/* Said out loud, because the row this drawer opens under is an invoice
+          and everything else you can do from that row changes the invoice. */}
+      <PanelHeading
+        title={`Who Eva writes to about ${row.invoiceNumber}`}
+        detail={`This changes ${contact.name}'s details for ${row.customer.name} everywhere — not just on this invoice. The invoice itself is not touched.`}
+      />
 
       <div className="flex flex-wrap gap-3">
-        <label className="flex flex-col gap-1 text-sm">
+        <label className={LABEL}>
           Contact name
           <input
             name="name"
@@ -476,7 +526,7 @@ function ContactPanel({
             className={FIELD}
           />
         </label>
-        <label className="flex flex-col gap-1 text-sm">
+        <label className={LABEL}>
           Email
           <input
             name="email"
@@ -492,7 +542,7 @@ function ContactPanel({
             Clear this and Eva stops chasing — there would be nobody to write to.
           </span>
         </label>
-        <label className="flex flex-col gap-1 text-sm">
+        <label className={LABEL}>
           Phone
           <input
             name="phone"
@@ -552,13 +602,14 @@ function LifecyclePanel({
   onDismiss: () => void;
 }) {
   return (
-    <div className="flex flex-col gap-2 rounded-[var(--radius-card)] border border-border bg-muted px-5 py-4">
-      <p className="text-sm">
-        {invoiceActionConsequence(action, {
+    <div className={panelClass(isInvoiceActionIrreversible(action) ? "danger" : undefined)}>
+      <PanelHeading
+        title={`${invoiceActionLabel(action)} — ${row.invoiceNumber}`}
+        detail={invoiceActionConsequence(action, {
           invoiceNumber: row.invoiceNumber,
           chaseBlockedReason: row.chaseBlockedReason,
         })}
-      </p>
+      />
       <div className="flex flex-wrap gap-2">
         <form action={formAction}>
           <input type="hidden" name="organisationId" value={organisationId} />
@@ -601,23 +652,20 @@ function PaymentPanel({
   const [state, action, pending] = useActionState<PaymentActionState, FormData>(recordPayment, {});
 
   return (
-    <form
-      action={action}
-      className="flex flex-col gap-3 rounded-[var(--radius-card)] border border-border bg-muted px-5 py-4"
-    >
+    <form action={action} className={panelClass()}>
       <input type="hidden" name="organisationId" value={organisationId} />
       <input type="hidden" name="customerId" value={row.customer.id} />
       <input type="hidden" name="invoiceId" value={row.id} />
       {/* The invoice's OWN currency decides how many decimals are allowed. */}
       <input type="hidden" name="currency" value={row.currency} />
 
-      <p className="text-sm font-medium">{`Record a payment against ${row.invoiceNumber}`}</p>
-      <p className="text-sm text-muted-foreground">
-        {`${formatMoney(row.outstandingMinorUnits, row.currency)} is outstanding on a total of ${formatMoney(row.amountMinorUnits, row.currency)}.`}
-      </p>
+      <PanelHeading
+        title={`Record a payment against ${row.invoiceNumber}`}
+        detail={`${formatMoney(row.outstandingMinorUnits, row.currency)} is outstanding on a total of ${formatMoney(row.amountMinorUnits, row.currency)}.`}
+      />
 
       <div className="flex flex-wrap gap-3">
-        <label className="flex flex-col gap-1 text-sm">
+        <label className={LABEL}>
           Amount received
           <input
             name="amount"
@@ -629,7 +677,7 @@ function PaymentPanel({
             className={FIELD}
           />
         </label>
-        <label className="flex flex-col gap-1 text-sm">
+        <label className={LABEL}>
           Date received
           <input
             name="paidAt"

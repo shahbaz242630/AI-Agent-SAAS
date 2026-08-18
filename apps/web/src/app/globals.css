@@ -17,4 +17,20 @@ body {
   background: var(--color-background);
   color: var(--color-foreground);
   font-family: var(--font-sans);
+
+  /**
+   * ⚠️ THE DESIGN PACKAGE ASKED FOR THIS ON DAY ONE — "All numerals:
+   * font-variant-numeric: tabular-nums" — and it was never implemented.
+   *
+   * Proportional digits are narrower for a 1 than a 0, so a column of money
+   * does not line up: £1,111.00 is visibly shorter than £8,000.00 and the
+   * decimal points wander. On a screen whose entire job is a column of amounts
+   * somebody scans for the big one, that is not a typographic nicety. It is why
+   * the invoice book read like a raw spreadsheet (founder, 2026-08-18) while
+   * every individual style on it was correct.
+   *
+   * On `body` rather than on the money cells: dates, invoice numbers, counts
+   * and ageing all line up in columns too, and one rule cannot drift.
+   */
+  font-variant-numeric: tabular-nums;
 }

@@ -352,26 +352,38 @@ export default async function InvoiceBookPage({
       </section>
 
       {book.rows.length > 0 && (
-        <section className="w-full overflow-x-auto rounded-[var(--radius-card)] border border-border bg-surface px-6 py-2">
+        <section className="w-full overflow-x-auto rounded-[var(--radius-card)] border border-border bg-surface px-6 py-3">
           {/* ⚠️ THE MINIMUM GREW WITH THE COLUMN COUNT (2026-08-18). Email and
               phone left the client cell and became columns of their own, and a
               1200px floor is what stops the ten of them crushing each other
               before the horizontal scroll takes over. The `<th>` count here is
               the number `BOOK_COLUMNS` in `book-rows.tsx` must equal. */}
           <table className="w-full min-w-[1200px] border-collapse text-sm">
+            {/* ⚠️ THE HEADER HAS TO STOP LOOKING LIKE ANOTHER ROW (founder,
+                2026-08-18: the book "looks really ugly, it shows like a table or
+                boxes"). It was body-sized grey text over a `border-muted` rule —
+                the same weight as the data beneath it, so the eye read eleven
+                rows where there are ten and a label. Smaller, bolder, tracked
+                and faint reads as a label; a hairline below it stops the rule
+                being the heaviest thing on the card.
+
+                ⚠️ SENTENCE CASE, NOT UPPERCASE. The design package uses
+                uppercase for pills and small section labels — "Outstanding ·
+                GBP", "Modules" — and never for a column heading. Clients shouted
+                its headers until today; the two tables agree now. */}
             <thead>
-              <tr className="border-b border-muted text-left text-muted-foreground">
-                <th className="px-3 py-2 font-medium">Client</th>
-                <th className="px-3 py-2 font-medium">Email</th>
-                <th className="px-3 py-2 font-medium">Phone</th>
-                <th className="px-3 py-2 font-medium">Invoice</th>
-                <th className="px-3 py-2 font-medium">Due</th>
-                <th className="px-3 py-2 text-right font-medium">Amount</th>
-                <th className="px-3 py-2 text-right font-medium">Outstanding</th>
-                <th className="px-3 py-2 font-medium">Status</th>
-                <th className="px-3 py-2 font-medium">Chasing</th>
+              <tr className="border-b border-hairline text-left text-[11.5px] font-semibold tracking-[0.04em] text-faint">
+                <th className="px-3 pt-1 pb-2.5">Client</th>
+                <th className="px-3 pt-1 pb-2.5">Email</th>
+                <th className="px-3 pt-1 pb-2.5">Phone</th>
+                <th className="px-3 pt-1 pb-2.5">Invoice</th>
+                <th className="px-3 pt-1 pb-2.5">Due</th>
+                <th className="px-3 pt-1 pb-2.5 text-right">Amount</th>
+                <th className="px-3 pt-1 pb-2.5 text-right">Outstanding</th>
+                <th className="px-3 pt-1 pb-2.5">Status</th>
+                <th className="px-3 pt-1 pb-2.5">Chasing</th>
                 {/* Pinned with its column — see the `td` in `book-rows.tsx`. */}
-                <th className="sticky right-0 bg-surface px-3 py-2 font-medium">
+                <th className="sticky right-0 bg-surface px-3 pt-1 pb-2.5">
                   <span className="sr-only">Actions</span>
                 </th>
               </tr>

@@ -321,6 +321,32 @@ export function PrimaryButton({
   );
 }
 
+/**
+ * The way back out of a screen you stepped into.
+ *
+ * ⚠️ A CHIP, NOT A SENTENCE (founder, 2026-08-18: the upload screen's
+ * *"Back to your invoices"* — muted grey text at the very bottom of the page —
+ * *"looks like a write up not prominent"*). It was already a chip on the auth
+ * pages and on onboarding, both of which hand-rolled the same class list. This
+ * is that chip, in one place, so the third copy is an import rather than a
+ * paste that drifts.
+ *
+ * ⚠️ IT BELONGS AT THE TOP OF THE SCREEN. Every other back control in the
+ * product sits above the heading, which is where somebody looks when they want
+ * out — not after the thing they were reading.
+ */
+export function BackChip({ href, children }: { href: string; children: React.ReactNode }) {
+  return (
+    <Link
+      href={href}
+      className="inline-flex w-fit items-center gap-1.5 rounded-[var(--radius-pill)] border border-input-border bg-surface px-3.5 py-[7px] text-[12.5px] font-semibold text-label hover:bg-chip-hover"
+    >
+      <span aria-hidden>←</span>
+      {children}
+    </Link>
+  );
+}
+
 /** A secondary action: same weight of decision, less weight of ink. */
 export function GhostLink({ href, children }: { href: string; children: React.ReactNode }) {
   return (
