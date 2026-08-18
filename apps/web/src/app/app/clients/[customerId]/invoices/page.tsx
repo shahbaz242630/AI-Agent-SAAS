@@ -63,7 +63,7 @@ export default async function CustomerInvoicesPage({
       <Shell>
         <p className="w-full max-w-4xl text-sm text-muted-foreground">
           Create an organisation first.{" "}
-          <Link href="/app/organisations/new" className="font-medium text-primary hover:underline">
+          <Link href="/app/organisations/new" className="font-medium text-link hover:underline">
             New organisation
           </Link>
         </p>

@@ -207,7 +207,7 @@ export function AddClientForm({
                 {/* The way OUT of the warning, not just a description of it. */}
                 <Link
                   href={`/app/clients/${client.id}/invoices`}
-                  className="font-medium text-primary hover:underline"
+                  className="font-medium text-link hover:underline"
                 >
                   Open this one
                 </Link>

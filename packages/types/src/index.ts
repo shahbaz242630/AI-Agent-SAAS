@@ -171,6 +171,67 @@ export const MODULE_DEPENDENCIES: Record<ModuleKey, readonly ModuleKey[]> = {
   ai_receptionist: ["voice_credit_controller"],
 };
 
+/**
+ * What each product is CALLED, what it does, and whether it exists yet.
+ *
+ * ⚠️ THE NAMES LIVED IN THREE PLACES AND DISAGREED IN TWO OF THEM (found by
+ * walking, 2026-08-18). The sidebar said "Lead Follow-up" and "AI Reception",
+ * the settings screen said "Lead Follow-Up" and "AI Receptionist", and the 402
+ * message had its own third copy. A customer reading two of our screens saw
+ * two different products.
+ *
+ * ⚠️ `live` IS THE ONE THAT MATTERS, AND IT IS NOT COSMETIC. Three of these
+ * four products are not built. `PERMISSION_MODULE` grants them nothing, so
+ * turning one on wrote an entitlement row, printed "On", and changed nothing
+ * whatsoever — the screen reporting an outcome that had not happened, which is
+ * the same failure as the money bug and the lying upload preview. The flag is
+ * read by BOTH the screen (which offers no button) and the API (which refuses
+ * the write), because hiding a control is not enforcement.
+ *
+ * Flip a `live` to `true` in this one place on the day the product ships.
+ */
+export interface ModuleDescriptor {
+  /** The product's name, as a customer reads it. Never the database key. */
+  readonly name: string;
+  /** One honest line about what it does. */
+  readonly blurb: string;
+  /** Whether the product is BUILT. `false` means it cannot be turned on. */
+  readonly live: boolean;
+}
+
+export const MODULE_CATALOGUE: Record<ModuleKey, ModuleDescriptor> = {
+  email_credit_controller: {
+    name: "Invoice Chasing",
+    blurb: "Chases your unpaid invoices by email, from your own mailbox.",
+    live: true,
+  },
+  voice_credit_controller: {
+    name: "Voice Credit Control",
+    blurb: "Follows up overdue invoices by phone when email has not worked.",
+    live: false,
+  },
+  lead_follow_up_agent: {
+    name: "Lead Follow-up",
+    blurb: "Calls back new enquiries before they go cold.",
+    live: false,
+  },
+  ai_receptionist: {
+    name: "AI Receptionist",
+    blurb: "Answers the phone when you cannot get to it.",
+    live: false,
+  },
+};
+
+/** A product's name, for a sentence a person will read. */
+export function moduleName(moduleKey: ModuleKey): string {
+  return MODULE_CATALOGUE[moduleKey].name;
+}
+
+/** Whether the product behind this key actually exists yet. */
+export function isModuleLive(moduleKey: ModuleKey): boolean {
+  return MODULE_CATALOGUE[moduleKey].live;
+}
+
 /** How a module came to be enabled. `subscription` is written by Paddle
  *  webhooks later; the table stays authoritative for ENFORCEMENT and Paddle
  *  for BILLING, because deriving entitlement live from Paddle would let a

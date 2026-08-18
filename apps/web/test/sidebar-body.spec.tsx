@@ -1,5 +1,6 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
+import { MODULE_CATALOGUE, MODULE_KEYS } from "@eva/types";
 import { SidebarBody, type SidebarIdentity } from "@/app/app/sidebar-body";
 
 /**
@@ -123,11 +124,32 @@ describe("the sidebar, rendered", () => {
 
   /**
    * Naming what is coming is honest; hiding it would make the product look
-   * finished. The live one must be distinguishable from the two that are not.
+   * finished. The live one must be distinguishable from the ones that are not.
    */
   it("names the modules that are not built yet as 'soon'", () => {
     const html = render("/app");
     expect(html).toContain("Invoice Chasing");
-    expect(html.match(/soon/g)).toHaveLength(2);
+    expect(html.match(/soon/g)).toHaveLength(
+      MODULE_KEYS.filter((key) => !MODULE_CATALOGUE[key].live).length,
+    );
+  });
+
+  /**
+   * ⚠️ THE GUARD FOR THE DEFECT, NOT THE DEFECT (found by walking, 2026-08-18).
+   *
+   * This list was hand-written here and it had drifted from the settings screen
+   * in every way a list can: it was missing Voice Credit Control entirely, and
+   * it called the other two by different names than settings did. Nothing could
+   * fail, because no test could see both files at once.
+   *
+   * Fixing the list would have fixed today. Asserting the sidebar shows the
+   * WHOLE catalogue, under the catalogue's OWN names, is what stops the next
+   * product being added to one screen and not the other.
+   */
+  it("shows every product in the catalogue, under the catalogue's name", () => {
+    const html = render("/app");
+    for (const key of MODULE_KEYS) {
+      expect(html).toContain(MODULE_CATALOGUE[key].name);
+    }
   });
 });

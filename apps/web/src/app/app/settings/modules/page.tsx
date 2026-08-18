@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import { MODULE_CATALOGUE, type ModuleKey } from "@eva/types";
 import { ApiError, apiFetch } from "@/lib/api";
 import { fetchOrganisations } from "@/lib/organisations";
 import { createClient } from "@/lib/supabase/server";
@@ -32,28 +33,14 @@ interface ModuleStatus {
   missingDependencies: string[];
 }
 
-/** Product names and one honest line each. The database key is not a name a
- *  customer should ever have to read. */
-const PRODUCTS: Record<string, { name: string; blurb: string }> = {
-  email_credit_controller: {
-    name: "Invoice Chasing",
-    blurb: "Chases your unpaid invoices by email, from your own mailbox.",
-  },
-  voice_credit_controller: {
-    name: "Voice Credit Control",
-    blurb: "Follows up overdue invoices by phone when email has not worked.",
-  },
-  lead_follow_up_agent: {
-    name: "Lead Follow-Up",
-    blurb: "Calls back new enquiries before they go cold.",
-  },
-  ai_receptionist: {
-    name: "AI Receptionist",
-    blurb: "Answers the phone when you cannot get to it.",
-  },
-};
+/**
+ * ⚠️ THE NAMES AND BLURBS USED TO LIVE HERE, AND THE SIDEBAR HAD ITS OWN COPY
+ * THAT DISAGREED. They are `MODULE_CATALOGUE` in `@eva/types` now — one list,
+ * read by this screen, the sidebar and the API's 402 message alike.
+ */
+const productOf = (key: string) => MODULE_CATALOGUE[key as ModuleKey] ?? null;
 
-const nameOf = (key: string): string => PRODUCTS[key]?.name ?? key;
+const nameOf = (key: string): string => productOf(key)?.name ?? key;
 
 export default async function ModulesPage() {
   const supabase = await createClient();
@@ -104,7 +91,7 @@ export default async function ModulesPage() {
       {!organisation ? (
         <p className="w-full max-w-2xl text-sm text-muted-foreground">
           Create an organisation first.{" "}
-          <Link href="/app/organisations/new" className="font-medium text-primary hover:underline">
+          <Link href="/app/organisations/new" className="font-medium text-link hover:underline">
             New organisation
           </Link>
         </p>
@@ -115,8 +102,16 @@ export default async function ModulesPage() {
       ) : (
         <section className="flex w-full max-w-2xl flex-col gap-4">
           {modules.map((module) => {
-            const product = PRODUCTS[module.moduleKey];
-            const blocked = module.missingDependencies.length > 0 && !module.enabled;
+            const product = productOf(module.moduleKey);
+            /**
+             * ⚠️ "NOT BUILT" OUTRANKS "NEEDS SOMETHING FIRST". Lead Follow-up
+             * and the receptionist are blocked on Voice Credit Control, which
+             * is itself unbuilt — so telling somebody to turn Voice on first
+             * would send them to a button that no longer exists. When a product
+             * does not exist, that is the only thing worth saying about it.
+             */
+            const comingSoon = product ? !product.live : false;
+            const blocked = !comingSoon && module.missingDependencies.length > 0 && !module.enabled;
             return (
               <article
                 key={module.moduleKey}
@@ -124,13 +119,19 @@ export default async function ModulesPage() {
               >
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <h2 className="text-base font-semibold">{product?.name ?? module.moduleKey}</h2>
-                  <span
-                    className={
-                      module.enabled ? "text-sm text-success" : "text-sm text-muted-foreground"
-                    }
-                  >
-                    {module.enabled ? "On" : "Off"}
-                  </span>
+                  {comingSoon ? (
+                    <span className="rounded-[var(--radius-pill)] border border-border px-2.5 py-0.5 text-xs font-semibold text-muted-foreground">
+                      Coming soon
+                    </span>
+                  ) : (
+                    <span
+                      className={
+                        module.enabled ? "text-sm text-success" : "text-sm text-muted-foreground"
+                      }
+                    >
+                      {module.enabled ? "On" : "Off"}
+                    </span>
+                  )}
                 </div>
                 <p className="text-sm text-muted-foreground">{product?.blurb}</p>
 
@@ -140,7 +141,7 @@ export default async function ModulesPage() {
                     use ·{" "}
                     <Link
                       href="/app/settings/mailbox"
-                      className="font-medium text-primary hover:underline"
+                      className="font-medium text-link hover:underline"
                     >
                       Mailboxes
                     </Link>
@@ -153,7 +154,14 @@ export default async function ModulesPage() {
                   </p>
                 )}
 
-                {canManage ? (
+                {comingSoon ? (
+                  /* No control at all, deliberately. A disabled button invites
+                     somebody to keep pressing it and to wonder what they are
+                     missing; a sentence says the true thing once. */
+                  <p className="text-xs text-muted-foreground">
+                    We&apos;re still building this one. It isn&apos;t available to switch on yet.
+                  </p>
+                ) : canManage ? (
                   <ModuleControls
                     organisationId={organisation.id}
                     moduleKey={module.moduleKey}

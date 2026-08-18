@@ -277,7 +277,7 @@ export function BookRows({
               <td className="px-3 py-3.5">
                 <Link
                   href={`/app/clients/${row.customer.id}/invoices`}
-                  className="font-medium text-primary hover:underline"
+                  className="font-medium text-link hover:underline"
                 >
                   {row.customer.name}
                 </Link>

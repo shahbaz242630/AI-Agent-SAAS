@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { MODULE_CATALOGUE, MODULE_KEYS } from "@eva/types";
 import { NAV_ITEMS, isActiveSection } from "@/lib/navigation";
 import { NAV_ICONS } from "./nav-icons";
 import { UserMenu } from "./user-menu";
@@ -23,12 +24,21 @@ export interface SidebarIdentity {
   user: { name: string; email: string; initials: string };
 }
 
-/** The modules, live first. The `soon` ones are named so the shape is honest. */
-const MODULES: readonly { label: string; live: boolean }[] = [
-  { label: "Invoice Chasing", live: true },
-  { label: "Lead Follow-up", live: false },
-  { label: "AI Reception", live: false },
-];
+/**
+ * The modules, live first. The `soon` ones are named so the shape is honest.
+ *
+ * ⚠️ THIS USED TO BE A HAND-WRITTEN LIST OF THREE and it had drifted from the
+ * settings screen in every way a list can (found by walking, 2026-08-18): it
+ * omitted Voice Credit Control entirely, and it called the other two "Lead
+ * Follow-up" and "AI Reception" where settings said "Lead Follow-Up" and "AI
+ * Receptionist". Two screens, one product, three disagreements. Derived from
+ * `MODULE_CATALOGUE` now, so a product cannot exist in one place and not the
+ * other and cannot be called two things.
+ */
+const MODULES: readonly { label: string; live: boolean }[] = MODULE_KEYS.map((key) => ({
+  label: MODULE_CATALOGUE[key].name,
+  live: MODULE_CATALOGUE[key].live,
+}));
 
 export function SidebarBody({
   pathname,

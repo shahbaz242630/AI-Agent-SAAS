@@ -4,7 +4,14 @@ import { BadRequestException, Injectable } from "@nestjs/common";
 // eslint-disable-next-line @typescript-eslint/consistent-type-imports
 import { PinoLogger } from "nestjs-pino";
 import { withTenant } from "@eva/database";
-import { MODULE_DEPENDENCIES, MODULE_KEYS, type ModuleKey, type ModuleStatusDto } from "@eva/types";
+import {
+  isModuleLive,
+  MODULE_DEPENDENCIES,
+  MODULE_KEYS,
+  moduleName,
+  type ModuleKey,
+  type ModuleStatusDto,
+} from "@eva/types";
 import type { SetModuleInput } from "@eva/validation";
 // eslint-disable-next-line @typescript-eslint/consistent-type-imports
 import { PrismaService } from "../../common/database/prisma.service.js";
@@ -60,7 +67,18 @@ export class EntitlementsService {
         where: { moduleKey, deletedAt: null },
       });
 
-      if (input.enabled) await this.assertDependenciesMet(tx, moduleKey);
+      /**
+       * ⚠️ DEPENDENCIES FIRST, THEN "DOES IT EXIST" — AND THE ORDER IS
+       * DELIBERATE. Every product with a dependency is currently unbuilt, so
+       * checking existence first would make the dependency rule unreachable
+       * from any live test, and a rule nothing can exercise is a rule that
+       * rots. The prerequisite answer is also the more specific of the two
+       * when both apply. Revisit the day a second product ships.
+       */
+      if (input.enabled) {
+        await this.assertDependenciesMet(tx, moduleKey);
+        this.assertModuleIsBuilt(moduleKey);
+      }
       const seats = await this.resolveSeats(tx, moduleKey, input, existing?.seats ?? 1);
 
       const now = new Date();
@@ -108,6 +126,26 @@ export class EntitlementsService {
       this.logger.info({ moduleKey, enabled: input.enabled, seats }, "organisation module updated");
       return this.describeAll(tx);
     });
+  }
+
+  /**
+   * A product that does not exist cannot be turned on (found by walking,
+   * 2026-08-18).
+   *
+   * ⚠️ THE SCREEN HIDING THE BUTTON IS NOT WHAT STOPS THIS. Three of the four
+   * products are unbuilt — they own no permissions in `PERMISSION_MODULE`, so
+   * enabling one wrote an entitlement row, showed "On", and delivered nothing.
+   * A customer would have been told they had bought something they had not.
+   *
+   * ⚠️ ONLY ENABLING IS REFUSED. If an unbuilt product is somehow already on —
+   * an older row, a seeded environment — turning it OFF has to keep working,
+   * or the guard traps the very state it exists to prevent.
+   */
+  private assertModuleIsBuilt(moduleKey: ModuleKey): void {
+    if (isModuleLive(moduleKey)) return;
+    throw new BadRequestException(
+      `${moduleName(moduleKey)} isn't built yet, so it can't be turned on.`,
+    );
   }
 
   /**

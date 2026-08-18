@@ -86,7 +86,7 @@ export default async function ClientsPage({
       <Shell>
         <p className="w-full max-w-4xl text-sm text-muted-foreground">
           Create an organisation first.{" "}
-          <Link href="/app/organisations/new" className="font-medium text-primary hover:underline">
+          <Link href="/app/organisations/new" className="font-medium text-link hover:underline">
             New organisation
           </Link>
         </p>
@@ -200,7 +200,7 @@ export default async function ClientsPage({
         </p>
         {focused && (
           <p className="text-sm">
-            <Link href="/app/clients" className="font-medium text-primary hover:underline">
+            <Link href="/app/clients" className="font-medium text-link hover:underline">
               Show all clients
             </Link>
           </p>

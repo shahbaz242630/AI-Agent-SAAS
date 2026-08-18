@@ -1,15 +1,6 @@
 import { HttpStatus } from "@nestjs/common";
-import type { ModuleKey } from "@eva/types";
+import { moduleName, type ModuleKey } from "@eva/types";
 import { StructuredHttpException } from "../errors/structured-http.exception.js";
-
-/** Human-readable product names, so the message reads like something a person
- *  wrote rather than a database value leaking into a sentence. */
-const MODULE_NAMES: Record<ModuleKey, string> = {
-  email_credit_controller: "Invoice Chasing",
-  voice_credit_controller: "Voice Credit Control",
-  lead_follow_up_agent: "Lead Follow-Up",
-  ai_receptionist: "AI Receptionist",
-};
 
 /**
  * 402 Payment Required — the organisation has not got this product.
@@ -30,7 +21,7 @@ export class ModuleNotEntitledException extends StructuredHttpException {
         statusCode: HttpStatus.PAYMENT_REQUIRED,
         code: "module_not_entitled",
         module,
-        message: `Your organisation doesn't have ${MODULE_NAMES[module]}. Add it to use this.`,
+        message: `Your organisation doesn't have ${moduleName(module)}. Add it to use this.`,
       },
       HttpStatus.PAYMENT_REQUIRED,
     );

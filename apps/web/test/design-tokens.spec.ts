@@ -150,6 +150,38 @@ describe("design tokens", () => {
   });
 
   /**
+   * ⚠️ FOURTEEN LINKS WERE PAINTED IN THE BODY COLOUR (found by walking,
+   * 2026-08-18). `text-primary` is `#211e19` — the near-black the palette uses
+   * for headings and for the fill of dark buttons. Against body text it is
+   * invisible as a link: no colour difference, and `hover:underline` only helps
+   * somebody who already suspects there is something there to hover over.
+   *
+   * The worst of them sat alone at the foot of Mailbox settings reading
+   * "Your clients", which looked like a heading with its section missing.
+   *
+   * The palette has `--color-link` (#92400e) for exactly this. Both classes are
+   * real, so the sweep above cannot catch it — nothing is undefined here, it is
+   * simply the wrong one, and it spread by being copied.
+   */
+  it("never paints a link in the body colour", () => {
+    const offenders: string[] = [];
+
+    for (const file of sourceFiles(WEB_SRC)) {
+      const source = stripComments(readFileSync(file, "utf8"));
+      for (const match of source.matchAll(/className=(?:"([^"]*)"|\{`([^`]*)`\})/g)) {
+        const classes = match[1] ?? match[2] ?? "";
+        // `hover:underline` is what marks the element as a link rather than a
+        // heading; `bg-primary` on a real button is untouched by this.
+        if (!/\bhover:underline\b/.test(classes)) continue;
+        if (!/\btext-primary\b/.test(classes)) continue;
+        offenders.push(`${file.slice(WEB_SRC.length + 1)}: ${classes.trim()}`);
+      }
+    }
+
+    expect(offenders).toEqual([]);
+  });
+
+  /**
    * Named explicitly as well as caught by the sweep above, because this is the
    * specific string that keeps coming back and a future reader should see why.
    */

@@ -101,7 +101,7 @@ export default async function InvoiceBookPage({
       <Shell>
         <p className="w-full text-sm text-muted-foreground">
           Create an organisation first.{" "}
-          <Link href="/app/organisations/new" className="font-medium text-primary hover:underline">
+          <Link href="/app/organisations/new" className="font-medium text-link hover:underline">
             New organisation
           </Link>
         </p>
@@ -409,7 +409,7 @@ export default async function InvoiceBookPage({
           {page > 1 && (
             <Link
               href={linkTo({ page: String(page - 1) })}
-              className="font-medium text-primary hover:underline"
+              className="font-medium text-link hover:underline"
             >
               Previous
             </Link>
@@ -420,7 +420,7 @@ export default async function InvoiceBookPage({
           {page * PAGE_SIZE < book.totalCount && (
             <Link
               href={linkTo({ page: String(page + 1) })}
-              className="font-medium text-primary hover:underline"
+              className="font-medium text-link hover:underline"
             >
               Next
             </Link>
