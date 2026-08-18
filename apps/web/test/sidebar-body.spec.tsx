@@ -35,9 +35,33 @@ const currentLink = (html: string): string =>
 describe("the sidebar, rendered", () => {
   it("offers every section", () => {
     const html = render("/app");
-    for (const label of ["Home", "Invoices", "Clients", "Chasing", "Settings"]) {
+    // ⚠️ FOUR, NOT FIVE. Settings left the nav on 2026-08-18 for the account
+    // menu below — see the next test, which is where it is covered now.
+    for (const label of ["Home", "Invoices", "Clients", "Chasing"]) {
       expect(html).toContain(label);
     }
+  });
+
+  /**
+   * ⚠️ THE ACCOUNT MENU IS THE ONLY DOOR TO TWO SCREENS. Settings and
+   * `/change-password` are reachable from nowhere else in the signed-in app —
+   * the padlock icon that used to carry the second one was removed when they
+   * were gathered under the user's name (founder, 2026-08-18). Both routes
+   * would still exist, still pass their own tests, and be unreachable by anyone
+   * not typing a URL.
+   *
+   * Rendered even while shut, which is what makes it visible to a static test —
+   * `UserMenu` hides it with a class rather than dropping it from the markup,
+   * and says so.
+   */
+  it("puts Settings, the password and sign-out under the user's own name", () => {
+    const html = render("/app");
+    expect(html).toContain('href="/app/settings/reminders"');
+    expect(html).toContain('href="/change-password"');
+    expect(html).toContain("sign out");
+    // The trigger is the user's card, and it says what it does.
+    expect(html).toContain('aria-haspopup="menu"');
+    expect(html).toContain("Sam Okafor");
   });
 
   /**
@@ -58,10 +82,14 @@ describe("the sidebar, rendered", () => {
     expect(render("/app").match(/aria-current="page"/g)).toHaveLength(1);
     expect(currentLink(render("/app"))).toContain('href="/app"');
     expect(currentLink(render("/app/reminders"))).toContain('href="/app/reminders"');
-    // A deeper settings path still lights Settings, not Home.
-    expect(currentLink(render("/app/settings/reminders"))).toContain(
-      'href="/app/settings/reminders"',
-    );
+    /**
+     * ⚠️ NOTHING IS CURRENT ON A SETTINGS SCREEN, and that is the state after
+     * 2026-08-18 rather than a gap: settings is no longer a section of the nav.
+     * The half that still matters is the half that was the original bug — a
+     * careless `startsWith` would light HOME here, on a path that belongs to no
+     * section at all, which is precisely where it would be least noticed.
+     */
+    expect(render("/app/settings/reminders")).not.toContain('aria-current="page"');
   });
 
   it("names the organisation and the role you hold in it", () => {
