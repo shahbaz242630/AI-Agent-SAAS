@@ -44,6 +44,15 @@ export async function addBookRow(
   formData: FormData,
 ): Promise<AddRowState> {
   const organisationId = text(formData, "organisationId");
+  /**
+   * Present only when an EXISTING client was chosen from the picker.
+   *
+   * ⚠️ NOT ECHOED BACK IN `values`, and it does not need to be. `values`
+   * exists because React 19 empties UNCONTROLLED fields when an action
+   * returns; the picker holds its choice in React state and its input is
+   * controlled, so both survive a refusal on their own.
+   */
+  const customerId = text(formData, "customerId");
   const currency = text(formData, "currency").toUpperCase() || "GBP";
   const values: Record<string, string> = {
     clientName: text(formData, "clientName"),
@@ -102,6 +111,9 @@ export async function addBookRow(
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
+        // An id when one was picked; the API then ignores the name for
+        // matching and uses it only if it has to create the client.
+        ...(customerId ? { customerId } : {}),
         clientName: values.clientName,
         ...(values.contactName ? { contactName: values.contactName } : {}),
         ...(values.contactEmail ? { contactEmail: values.contactEmail } : {}),

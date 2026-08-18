@@ -463,3 +463,93 @@ export async function runInvoiceAction(
     success: invoiceActionSuccess(action, invoiceNumber || "That invoice", { chaseBlockedReason }),
   };
 }
+
+/**
+ * The state of an edit to the person Eva writes to.
+ *
+ * Separate from `InvoiceActionState` because it echoes different fields back on
+ * a refusal, and sharing one shape would mean one of them carrying values the
+ * other never sets.
+ */
+export interface ContactActionState {
+  error?: string;
+  success?: string;
+  values?: { name: string; email: string; phone: string };
+}
+
+/**
+ * Correct the contact on an invoice — name, address, phone (founder,
+ * 2026-08-18: *"if there is mistake or change in one information, user will
+ * have to edit the whole invoice details"*).
+ *
+ * ⚠️ THIS IS THE CONTACT, NOT THE CUSTOMER, AND THEY ARE DIFFERENT RECORDS
+ * WITH DIFFERENT EMAILS. `Customer.email` is the client company's own address
+ * and the Clients screen edits that one. `Contact.email` is the person on this
+ * invoice, and it is the ONLY one a reminder is ever sent to —
+ * `reminder-sender.service.ts` reads `contact.email` and holds the invoice as
+ * `no_recipient` without it. Editing the customer here would report success and
+ * change nothing about who gets chased.
+ *
+ * ⚠️ IT IS NOT DRAFT-ONLY, AND THAT IS THE POINT. The invoice itself locks once
+ * Eva starts chasing it (BRD 4.1), which is right — its figures were sent to
+ * somebody. A wrong email is the opposite case: it is most worth fixing exactly
+ * when the invoice is live, because that is when the chasing is failing.
+ */
+export async function updateContact(
+  _prevState: ContactActionState,
+  formData: FormData,
+): Promise<ContactActionState> {
+  const organisationId = String(formData.get("organisationId") ?? "");
+  const customerId = String(formData.get("customerId") ?? "");
+  const contactId = String(formData.get("contactId") ?? "");
+
+  const values = {
+    name: String(formData.get("name") ?? "").trim(),
+    email: String(formData.get("email") ?? "").trim(),
+    phone: String(formData.get("phone") ?? "").trim(),
+  };
+
+  if (values.name.length === 0) {
+    return { error: "A contact needs a name — it is who the reminder is addressed to.", values };
+  }
+
+  const accessToken = await getAccessToken();
+  if (!accessToken) redirect("/sign-in");
+
+  try {
+    await apiFetch(
+      `/organisations/${organisationId}/customers/${customerId}/contacts/${contactId}`,
+      accessToken,
+      {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        /**
+         * ⚠️ EMPTY MEANS `null`, NEVER OMITTED. An omitted field tells the API
+         * to leave that column alone, so clearing the box and saving would
+         * report success and keep the old address — the failure this project
+         * keeps finding. `updateContactRequestSchema` accepts null for exactly
+         * this reason.
+         */
+        body: JSON.stringify({
+          name: values.name,
+          email: values.email.length > 0 ? values.email : null,
+          phone: values.phone.length > 0 ? values.phone : null,
+        }),
+      },
+    );
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 401) redirect("/sign-in");
+    return { error: refusalMessage(error, "edit-contact"), values };
+  }
+
+  // Both screens show this person, and the book shows their address in its own
+  // column now — leaving either stale shows an address that was just corrected.
+  revalidatePath(`/app/clients/${customerId}/invoices`);
+  revalidatePath("/app/invoices");
+  return {
+    success:
+      values.email.length > 0
+        ? `${values.name} updated. Eva will write to ${values.email}.`
+        : `${values.name} updated. There is no address now, so Eva cannot chase this invoice.`,
+  };
+}

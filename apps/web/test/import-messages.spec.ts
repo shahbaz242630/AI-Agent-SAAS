@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
+import { autoMapHeaders } from "@eva/validation";
 import {
+  FIELD_LABELS,
   importConfirmLabel,
   importConfirmedLine,
   importFieldLabel,
@@ -162,5 +164,56 @@ describe("column names", () => {
 
   it("shows an unknown field rather than dropping it", () => {
     expect(importFieldLabel("vatNumber")).toBe("vatNumber");
+  });
+});
+
+/**
+ * The upload screen's promise, held against the thing that keeps it.
+ *
+ * ⚠️ THIS IS THE GUARD FOR A DEFECT THAT SHIPPED. The screen prints a list of
+ * "Columns Eva understands" from `FIELD_LABELS`; the matcher recognises headings
+ * from its own alias table. Nothing connected the two, and two labels — "Client
+ * email" and "Your client reference" — were never aliases at all. A file using
+ * the exact headings we recommend had both columns dropped, silently: the row
+ * detail still echoed the raw value, so it looked read.
+ *
+ * ⚠️ IT IMPORTS THE MATCHER FROM `@eva/validation`, which is where it now lives
+ * precisely so a web test can reach it. It used to sit in `apps/api`, on the
+ * other side of a boundary no test crossed — which is why nothing caught this.
+ */
+describe("every column the upload screen advertises", () => {
+  it("is a heading the importer actually recognises", () => {
+    for (const [field, label] of Object.entries(FIELD_LABELS)) {
+      expect(autoMapHeaders([label])).toEqual({ [label]: field });
+    }
+  });
+
+  /**
+   * The wording a person is shown says "client"; the code says "customer".
+   * That gap is the whole trap — `customerName` already accepted "client name",
+   * which made the two that did not look deliberate rather than missed.
+   */
+  it("accepts the customer's fields whether a person writes client or customer", () => {
+    for (const [clientWording, customerWording] of [
+      ["Client name", "Customer name"],
+      ["Client email", "Customer email"],
+      ["Client reference", "Customer reference"],
+    ]) {
+      expect(Object.values(autoMapHeaders([clientWording!]))).toEqual(
+        Object.values(autoMapHeaders([customerWording!])),
+      );
+      expect(Object.values(autoMapHeaders([clientWording!]))).toHaveLength(1);
+    }
+  });
+
+  it("still reads a spreadsheet that never heard of us", () => {
+    // The headings a real accounts file arrives with, none of them ours.
+    expect(autoMapHeaders(["Inv No", "Total", "Due", "Company", "Attn"])).toEqual({
+      "Inv No": "invoiceNumber",
+      Total: "amount",
+      Due: "dueDate",
+      Company: "customerName",
+      Attn: "contactName",
+    });
   });
 });

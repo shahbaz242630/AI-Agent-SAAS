@@ -1413,6 +1413,16 @@ describe("Invoices: the organisation-wide book", () => {
       dueOffset: -30,
       status: "draft",
     });
+    /* Paused: NOT chased and absolutely still owed. The one row that tells the
+       two lists apart — without it, "owed" and "chased" return the same number
+       and the difference between them is untested. */
+    await seedInvoice({
+      customerId: customerA,
+      number: "BK-PAUSED",
+      amount: 70_000,
+      dueOffset: -30,
+      status: "paused",
+    });
     // Part paid: chased, and only the BALANCE counts.
     await seedInvoice({
       customerId: customerA,
@@ -1574,6 +1584,79 @@ describe("Invoices: the organisation-wide book", () => {
       expect(gbp.outstandingMinorUnits).not.toBe(250_000 + 99_000 + 88_000);
       // And the count is of chased invoices, not of the rows on screen.
       expect(gbp.invoiceCount).toBeLessThan(numbers.length);
+    });
+
+    /**
+     * ⚠️ THE HALF OF THIS NOBODY CHECKED UNTIL PRODUCTION SAID IT OUT LOUD.
+     * `matchedByCurrency` follows the caller's filters, which made it look safe
+     * under every heading — but with NO filter it sweeps in the cancelled and
+     * the draft, and that is the view the book screen opens on. On 2026-08-12
+     * production read "£4,525.00 outstanding across 1 invoice" about a single
+     * cancelled invoice.
+     *
+     * This test pins the behaviour that is CORRECT and dangerous, so that the
+     * one below it has something to be different from.
+     */
+    it("still totals cancelled and draft money in matchedByCurrency when nothing is filtered", async () => {
+      const response = await book("?limit=200").expect(200);
+      const gbp = response.body.matchedByCurrency.find(
+        (c: { currency: string }) => c.currency === "GBP",
+      );
+      expect(gbp.outstandingMinorUnits).toBe(250_000 + 99_000 + 88_000 + 70_000);
+    });
+
+    /**
+     * ⚠️ THIS IS THE TOTAL THE WORD "OUTSTANDING" IS ALLOWED TO SIT ON, and the
+     * only one. It follows the filters like `matched` — so it cannot disagree
+     * with the list printed under it — and drops the states nobody is
+     * collecting like `chased`, so the sentence above it stays true.
+     */
+    it("leaves cancelled and draft money out of collectableByCurrency", async () => {
+      const response = await book("?limit=200").expect(200);
+      const gbp = response.body.collectableByCurrency.find(
+        (c: { currency: string }) => c.currency === "GBP",
+      );
+      expect(gbp.outstandingMinorUnits).toBe(250_000 + 70_000);
+      expect(gbp.outstandingMinorUnits).not.toBe(250_000 + 99_000 + 88_000 + 70_000);
+      expect(gbp.invoiceCount).toBe(8);
+    });
+
+    /**
+     * ⚠️ THE OTHER DIRECTION, AND IT IS JUST AS WRONG. The first pass at this
+     * fix narrowed the total to the CHASED statuses, which reads as the obvious
+     * thing to do and quietly deletes every paused invoice from what the
+     * business is owed. Eva not writing to a debtor this week does not mean the
+     * debtor stopped owing.
+     *
+     * BK-PAUSED is the row that tells the two lists apart: absent from the
+     * chased total, present in the owed one.
+     */
+    it("counts a PAUSED invoice as owed, though nobody is chasing it", async () => {
+      const response = await book("?limit=200").expect(200);
+      const gbpIn = (list: { currency: string; outstandingMinorUnits: number }[]) =>
+        list.find((c) => c.currency === "GBP")?.outstandingMinorUnits;
+      expect(gbpIn(response.body.chasedByCurrency)).toBe(250_000);
+      expect(gbpIn(response.body.collectableByCurrency)).toBe(250_000 + 70_000);
+      // And it is on screen as a row, so the money and the list agree.
+      const numbers = response.body.rows.map((r: { invoiceNumber: string }) => r.invoiceNumber);
+      expect(numbers).toContain("BK-PAUSED");
+    });
+
+    /**
+     * And it must keep FOLLOWING the filter, or it has quietly become
+     * `chasedByCurrency` — whole-book money above a narrowed list, which is the
+     * disagreement this screen already fixed once.
+     */
+    it("narrows collectableByCurrency with the filter, unlike the whole-book total", async () => {
+      const response = await book("?status=overdue&limit=200").expect(200);
+      const collectable = response.body.collectableByCurrency.find(
+        (c: { currency: string }) => c.currency === "GBP",
+      );
+      const chased = response.body.chasedByCurrency.find(
+        (c: { currency: string }) => c.currency === "GBP",
+      );
+      expect(chased.outstandingMinorUnits).toBe(250_000);
+      expect(collectable.outstandingMinorUnits).toBeLessThan(chased.outstandingMinorUnits);
     });
   });
 
@@ -1840,6 +1923,50 @@ describe("Invoices: the organisation-wide book", () => {
       expect(after).toBe(before);
       const invoice = await owner.invoice.findUniqueOrThrow({ where: { id: response.body.id } });
       expect(invoice.customerId).toBe(customerA);
+    });
+
+    /**
+     * ⚠️ THE PROBLEM THIS SOLVES IS A FREELANCER WITH TWO CLIENTS CALLED IMRAN
+     * KHALID. A name cannot tell them apart, so the screen sends the id of the
+     * one that was picked and the name is not matched at all.
+     */
+    it("puts the invoice on the PICKED client, ignoring the name entirely", async () => {
+      const before = await owner.customer.count({ where: { organisationId: org.id } });
+      const response = await addRow({
+        customerId: customerB,
+        // Deliberately the OTHER client's name. The id must win, and nothing
+        // may be created from the name that lost.
+        clientName: "Alpha Trading",
+      }).expect(201);
+
+      const invoice = await owner.invoice.findUniqueOrThrow({ where: { id: response.body.id } });
+      expect(invoice.customerId).toBe(customerB);
+      expect(await owner.customer.count({ where: { organisationId: org.id } })).toBe(before);
+    });
+
+    it("refuses a picked client that does not exist, rather than inventing one", async () => {
+      const before = await owner.customer.count({ where: { organisationId: org.id } });
+      await addRow({ customerId: randomUUID(), clientName: "Ghost Ltd" }).expect(404);
+      expect(await owner.customer.count({ where: { organisationId: org.id } })).toBe(before);
+    });
+
+    it("still refuses a typed name that two clients share, and says to pick instead", async () => {
+      const twin = `Imran Khalid ${randomUUID().slice(0, 6)}`;
+      for (const suffix of ["one", "two"]) {
+        await owner.customer.create({
+          data: { organisationId: org.id, name: twin, reference: `IK-${suffix}` },
+        });
+      }
+      const refused = await addRow({ clientName: twin }).expect(409);
+      expect(String(refused.body.message)).toContain("Pick the one you mean");
+
+      // ...and picking one of them by id goes through, which is the way out.
+      const picked = await owner.customer.findFirstOrThrow({
+        where: { organisationId: org.id, name: twin, reference: "IK-two" },
+      });
+      const response = await addRow({ customerId: picked.id, clientName: twin }).expect(201);
+      const invoice = await owner.invoice.findUniqueOrThrow({ where: { id: response.body.id } });
+      expect(invoice.customerId).toBe(picked.id);
     });
 
     it("lands as a draft by default, so nothing is chased by accident", async () => {

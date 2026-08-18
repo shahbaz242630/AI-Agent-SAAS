@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useActionState, useState } from "react";
+import { useActionState, useMemo, useState } from "react";
 import {
   addClient,
   assignClients,
@@ -82,13 +82,55 @@ export function AddClientForm({
   organisationId,
   emailAccountId,
   mailboxAddress,
+  existing,
 }: {
   organisationId: string;
   emailAccountId: string | null;
   mailboxAddress: string | null;
+  /**
+   * Every client in the organisation, for the duplicate check.
+   *
+   * ⚠️ ALL OF THEM, NEVER THE VISIBLE ONES. Inside a mailbox's book the table
+   * shows only that mailbox's clients — so checking against what is on screen
+   * would miss a same-named client filed under a different mailbox, which is
+   * exactly the duplicate hardest to notice afterwards.
+   */
+  existing: ClientRow[];
 }) {
   const [state, action, pending] = useActionState(addClient, INITIAL_STATE);
   const [open, setOpen] = useState(false);
+  const [name, setName] = useState("");
+  /** Ticked to say "yes, a different client of the same name" — see below. */
+  const [acknowledged, setAcknowledged] = useState(false);
+
+  /**
+   * ⚠️ CLEARED WHEN AN ADD SUCCEEDS, DURING RENDER RATHER THAN IN AN EFFECT.
+   * React empties an uncontrolled form once its action returns, but this field
+   * is controlled so it would keep the name — and the client it just created
+   * would then match it and warn about a duplicate of itself. Comparing the
+   * last success we handled is React's own way of adjusting state to a change,
+   * and it avoids setting state from an effect.
+   */
+  const [lastSuccess, setLastSuccess] = useState(state.success);
+  if (state.success !== lastSuccess) {
+    setLastSuccess(state.success);
+    setName("");
+    setAcknowledged(false);
+  }
+
+  /**
+   * ⚠️ A WARNING, NOT A BLOCK, AND THE FOUNDER IS RIGHT ABOUT WHY (2026-08-18):
+   * *"two companies might have same names.. or even when a freelancer wants to
+   * add an individual"*. Two clients called Imran Khalid are an ordinary fact
+   * about the world, so refusing would be wrong. What is NOT ordinary is
+   * creating the second one without noticing, which is how a book quietly ends
+   * up chasing the wrong person.
+   */
+  const duplicates = useMemo(() => {
+    const wanted = name.trim().toLowerCase();
+    return wanted === "" ? [] : existing.filter((client) => client.name.toLowerCase() === wanted);
+  }, [existing, name]);
+  const mustAcknowledge = duplicates.length > 0 && !acknowledged;
 
   if (!open) {
     return (
@@ -118,7 +160,18 @@ export function AddClientForm({
       <div className="grid gap-3 sm:grid-cols-2">
         <label className="flex flex-col gap-1 text-sm">
           Name
-          <input name="name" required maxLength={200} className={FIELD_CLASS} />
+          <input
+            name="name"
+            required
+            maxLength={200}
+            value={name}
+            onChange={(event) => {
+              setName(event.target.value);
+              // A tick made about one name must not carry over to another.
+              setAcknowledged(false);
+            }}
+            className={FIELD_CLASS}
+          />
         </label>
         <label className="flex flex-col gap-1 text-sm">
           Email
@@ -133,9 +186,51 @@ export function AddClientForm({
           <input name="reference" maxLength={100} className={FIELD_CLASS} />
         </label>
       </div>
+      {duplicates.length > 0 && (
+        <div
+          role="alert"
+          className="flex flex-col gap-2 rounded-[var(--radius-card)] border border-warning-border bg-warning-tint px-4 py-3"
+        >
+          <p className="text-sm font-semibold text-warning-strong">
+            {duplicates.length === 1
+              ? `You already have a client called "${name.trim()}".`
+              : `You already have ${String(duplicates.length)} clients called "${name.trim()}".`}
+          </p>
+          <ul className="flex flex-col gap-1">
+            {duplicates.map((client) => (
+              <li key={client.id} className="flex flex-wrap items-center gap-2 text-sm">
+                <span className="text-muted-foreground">
+                  {[client.reference ? `Ref ${client.reference}` : null, client.email]
+                    .filter(Boolean)
+                    .join(" · ") || "No reference or email"}
+                </span>
+                {/* The way OUT of the warning, not just a description of it. */}
+                <Link
+                  href={`/app/clients/${client.id}/invoices`}
+                  className="font-medium text-link hover:underline"
+                >
+                  Open this one
+                </Link>
+              </li>
+            ))}
+          </ul>
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={acknowledged}
+              onChange={(event) => setAcknowledged(event.target.checked)}
+            />
+            This is a different client — add it anyway
+          </label>
+          <p className="text-xs text-muted-foreground">
+            If it is, give it a reference below. It is the only thing that will tell the two apart
+            on a list, and Eva matches on it before the name.
+          </p>
+        </div>
+      )}
       <div className="flex flex-wrap gap-2">
-        <button type="submit" disabled={pending} className={BUTTON_CLASS}>
-          {pending ? "Adding…" : "Add client"}
+        <button type="submit" disabled={pending || mustAcknowledge} className={BUTTON_CLASS}>
+          {pending ? "Adding…" : duplicates.length > 0 ? "Add as a separate client" : "Add client"}
         </button>
         <button
           type="button"
@@ -269,9 +364,18 @@ export function ClientTable({
         <Feedback state={assignState} />
 
         <div className="overflow-x-auto rounded-[var(--radius-card)] border border-border bg-surface">
-          <table className="w-full min-w-[36rem] text-left text-sm">
+          {/* 36rem was the floor when the client, its email and its reference
+              shared one cell. Splitting email and phone out added two columns
+              that need real room before they start wrapping mid-address. */}
+          <table className="w-full min-w-[52rem] text-left text-sm">
             <thead>
-              <tr className="border-b border-hairline text-[11.5px] font-semibold tracking-[0.04em] text-faint uppercase">
+              {/* ⚠️ NOT UPPERCASE ANY MORE (2026-08-18). Invoices sets its
+                  headers in sentence case and this table shouted them, so the
+                  two tables in the product disagreed about what a table header
+                  looks like. The design package uses uppercase for pills and
+                  small section labels — "Outstanding · GBP", "Modules" — and
+                  never for a column heading. Noted as a snag on 2026-08-12. */}
+              <tr className="border-b border-hairline text-[11.5px] font-semibold tracking-[0.04em] text-faint">
                 {mailboxes.length > 1 && (
                   <th scope="col" className="px-4 py-3">
                     <input
@@ -291,8 +395,17 @@ export function ClientTable({
                     />
                   </th>
                 )}
+                {/* Email and phone are columns here for the same reason they
+                    are columns on Invoices: they are separate facts somebody
+                    corrects one at a time, not one blob of "client details". */}
                 <th scope="col" className="px-4 py-3 font-medium">
                   Client
+                </th>
+                <th scope="col" className="px-4 py-3 font-medium">
+                  Email
+                </th>
+                <th scope="col" className="px-4 py-3 font-medium">
+                  Phone
                 </th>
                 <th scope="col" className="px-4 py-3 font-medium">
                   Chased from
@@ -324,14 +437,20 @@ export function ClientTable({
                     )}
                     <td className="px-4 py-3">
                       <span className="font-medium">{client.name}</span>
-                      {client.email && (
-                        <span className="block text-xs text-muted-foreground">{client.email}</span>
-                      )}
+                      {/* The reference stays under the name because it IS the
+                          name — the customer's own code for this client — and
+                          not a way of contacting anybody. */}
                       {client.reference && (
                         <span className="block text-xs text-muted-foreground">
                           {`Ref ${client.reference}`}
                         </span>
                       )}
+                    </td>
+                    <td className="px-4 py-3 text-muted-foreground">
+                      {client.email ?? <span className="text-faint">—</span>}
+                    </td>
+                    <td className="px-4 py-3 whitespace-nowrap text-muted-foreground">
+                      {client.phone ?? <span className="text-faint">—</span>}
                     </td>
                     <td className="px-4 py-3">
                       {/* The API resolved this, not the browser. A client with
@@ -354,9 +473,16 @@ export function ClientTable({
                             A plain link, not a button: it navigates, and it
                             must keep working inside this form without
                             submitting it. */}
+                        {/* ⚠️ STILL AN ANCHOR, ONLY DRESSED LIKE ITS NEIGHBOUR.
+                            It navigates, so it must stay a link — middle-click
+                            and "open in new tab" are real things people do with
+                            it, and a <button> takes both away. What changed on
+                            2026-08-18 is the look: bare blue text beside a
+                            bordered "Edit" read as two unrelated things when
+                            they are two controls on the same row. */}
                         <Link
                           href={`/app/clients/${client.id}/invoices`}
-                          className="text-sm font-medium text-primary hover:underline"
+                          className={SMALL_BUTTON_CLASS}
                         >
                           Invoices
                         </Link>

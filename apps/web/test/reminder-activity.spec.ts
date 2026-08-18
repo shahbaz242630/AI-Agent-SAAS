@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { REMINDER_STEP_KEYS, SCHEDULED_ACTION_STATUSES } from "@eva/types";
 import {
+  describeNoHistoryYet,
   explainWaiting,
   stageLabel,
   statusLabel,
   statusTone,
-  summarise,
 } from "@/lib/reminder-activity";
 
 /**
@@ -90,27 +90,94 @@ describe("reminder activity copy", () => {
     });
   });
 
-  describe("the summary line", () => {
+  /**
+   * ⚠️ `summarise` USED TO LIVE HERE AND WAS DEAD CODE. It was a second,
+   * unused copy of `chaseSummary` in `lib/dashboard.ts` — same sentences, no
+   * caller in `src`, covered only by its own tests. Two functions for one job
+   * is how the product ends up saying two things; it was deleted rather than
+   * updated alongside the live one. Its coverage lives in `dashboard.spec.ts`.
+   */
+  describe("what to say before Eva has written to anybody", () => {
+    /** Dates arrive already resolved in the org's timezone. */
+    const asGiven = (isoDate: string) => isoDate;
+
     /**
      * A new customer with no overdue invoices is the HEALTHIEST state there is.
      * It must not read as though something has gone wrong.
      */
-    it("treats an empty week as normal, not as a problem", () => {
-      const summary = summarise({ sentLast7Days: 0, waiting: 0, failedLast7Days: 0 });
+    it("treats a book with nothing to chase as normal, not as a problem", () => {
+      const state = describeNoHistoryYet({
+        scheduled: 0,
+        noWorkingMailbox: false,
+        nextDate: null,
+        formatDate: asGiven,
+      });
 
-      expect(summary).toContain("hasn't needed to chase");
-      expect(summary.toLowerCase()).not.toContain("error");
-      expect(summary.toLowerCase()).not.toContain("problem");
-      expect(summary.toLowerCase()).not.toContain("fail");
+      expect(state.detail).toContain("has not needed to write to anybody");
+      expect(state.detail.toLowerCase()).not.toContain("error");
+      expect(state.detail.toLowerCase()).not.toContain("problem");
     });
 
-    it("counts what went out", () => {
-      expect(summarise({ sentLast7Days: 4, waiting: 0, failedLast7Days: 0 })).toContain(
-        "4 reminders sent",
-      );
-      expect(summarise({ sentLast7Days: 1, waiting: 0, failedLast7Days: 0 })).toContain(
-        "1 reminder sent",
-      );
+    /**
+     * ⚠️ THE DEFECT THIS FUNCTION EXISTS FOR (found by walking, 2026-08-18).
+     * The old copy claimed "Eva simply has not needed to write to anybody"
+     * unconditionally, while six reminders sat scheduled for an invoice worth
+     * £45,711. "Has not needed to" and "is not due yet" are different claims.
+     */
+    it("never says Eva has not needed to write when reminders are scheduled", () => {
+      const state = describeNoHistoryYet({
+        scheduled: 6,
+        noWorkingMailbox: false,
+        nextDate: "2026-09-15",
+        formatDate: asGiven,
+      });
+
+      expect(state.detail).not.toContain("has not needed to write");
+      expect(state.detail).toContain("2026-09-15");
+      expect(state.detail).toContain("6 reminders are");
+    });
+
+    it("counts one scheduled reminder as one", () => {
+      const state = describeNoHistoryYet({
+        scheduled: 1,
+        noWorkingMailbox: false,
+        nextDate: "2026-09-15",
+        formatDate: asGiven,
+      });
+      expect(state.detail).toContain("1 reminder is");
+    });
+
+    /**
+     * ⚠️ A DATE WE CANNOT KEEP IS WORSE THAN NO DATE. Promising a send from an
+     * organisation with no mailbox is the upload-preview defect wearing a
+     * different hat: the screen stating an outcome that will not happen.
+     */
+    it("leads with the missing mailbox rather than the promise", () => {
+      const state = describeNoHistoryYet({
+        scheduled: 6,
+        noWorkingMailbox: true,
+        nextDate: "2026-09-15",
+        formatDate: asGiven,
+      });
+
+      expect(state.headline).toContain("nowhere to send from");
+      expect(state.detail).toContain("no mailbox is connected");
+      // Still says nothing is lost — the fix is one click and the plan survives.
+      expect(state.detail).toContain("Nothing is lost");
+    });
+
+    /**
+     * A count with no date to attach it to would read as a broken sentence.
+     * Falling back is safer than printing "starting on null".
+     */
+    it("falls back to the plain copy when a count arrives with no date", () => {
+      const state = describeNoHistoryYet({
+        scheduled: 4,
+        noWorkingMailbox: false,
+        nextDate: null,
+        formatDate: asGiven,
+      });
+      expect(state.headline).toBe("Nothing to show yet.");
     });
   });
 });

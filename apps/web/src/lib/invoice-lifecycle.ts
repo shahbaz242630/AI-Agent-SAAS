@@ -150,6 +150,42 @@ const BLOCKED_PHRASES: Readonly<Record<string, string>> = {
   no_mailbox: "no working mailbox is connected",
 };
 
+/**
+ * The blockers a person can fix on the row in front of them.
+ *
+ * ⚠️ `no_mailbox` IS DELIBERATELY ABSENT. It is true of every invoice in the
+ * book at once — an organisation-level fault — so repeating it on each draft
+ * would be a column of identical warnings about one thing, and the one thing is
+ * not fixable from here. Settings says it once, properly.
+ */
+const RECIPIENT_BLOCKERS: readonly string[] = [
+  "no_contact",
+  "contact_deleted",
+  "no_email",
+  "suppressed",
+];
+
+/**
+ * The line shown on a DRAFT whose recipient would stop a chase before it began
+ * (founder, 2026-08-18).
+ *
+ * ⚠️ A DRAFT SAID NOTHING AT ALL, AND THE ADD FORM SAVES DRAFTS BY DEFAULT. So
+ * somebody could type twenty invoices with no email address, see no warning
+ * anywhere, and only be told one at a time as they activated them. This is the
+ * quiet version of that warning, at the moment the rows are being entered.
+ *
+ * ⚠️ IT IS NOT `chaseBlockedLine`'s SENTENCE, AND MUST NOT BECOME IT. "Eva
+ * can't chase this" is false of a draft — she is not supposed to be chasing it
+ * yet, and saying so would read as a fault where there is none. The tense is
+ * the whole message: this is about what will happen WHEN you start.
+ */
+export function draftBlockedLine(status: string, reason: string | null): string | null {
+  if (status !== "draft" || reason === null) return null;
+  if (!RECIPIENT_BLOCKERS.includes(reason)) return null;
+  const phrase = blockedPhrase(reason);
+  return phrase === null ? null : `Nothing will be sent when you start — ${phrase}.`;
+}
+
 function blockedPhrase(reason: string | null): string | null {
   if (reason === null) return null;
   // An unknown reason still says something true. The web app can be older than

@@ -34,10 +34,31 @@ export const NAV_ITEMS: readonly NavItem[] = [
   { href: "/app/invoices", label: "Invoices", description: "Every invoice on one screen" },
   { href: "/app/clients", label: "Clients", description: "Who owes you" },
   { href: "/app/reminders", label: "Chasing", description: "What Eva has actually sent" },
+];
+
+/**
+ * The account menu at the foot of the sidebar (founder, 2026-08-18).
+ *
+ * ⚠️ SETTINGS MOVED HERE OUT OF `NAV_ITEMS`, and the split is by WHO the screen
+ * is about. Home, Invoices, Clients and Chasing are the business — the things
+ * somebody came to Eva to look at. Settings, your password and signing out are
+ * about the person using it, and they now sit together under that person's own
+ * name instead of one being a section and the other two being unlabelled icons.
+ *
+ * ⚠️ `/change-password` IS OUTSIDE `/app` ON PURPOSE and is why this is a
+ * separate list rather than a flag on `NavItem`: every entry in `NAV_ITEMS` is
+ * a section of the app, and a test asserts each one starts with `/app`.
+ */
+export const ACCOUNT_MENU_ITEMS: readonly NavItem[] = [
   {
     href: "/app/settings/reminders",
     label: "Settings",
     description: "When Eva chases, and from where",
+  },
+  {
+    href: "/change-password",
+    label: "Change password",
+    description: "Set a new password without signing out",
   },
 ];
 

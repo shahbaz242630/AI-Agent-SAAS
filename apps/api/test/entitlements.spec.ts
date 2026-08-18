@@ -320,16 +320,64 @@ describe("Module entitlements (Slice 1.6a)", () => {
       expect(response.body.message).toContain("voice_credit_controller");
     });
 
-    it("accepts the same product once its prerequisite chain is enabled", async () => {
-      await put(entitled, "voice_credit_controller").send({ enabled: true }).expect(200);
-      const response = await put(entitled, "lead_follow_up_agent")
+    /**
+     * ⚠️ THIS TEST USED TO ASSERT THE DEFECT (found by walking, 2026-08-18).
+     *
+     * It enabled Voice Credit Control, then Lead Follow-up, and checked both
+     * came back `enabled: true` — which they did, and which was exactly the
+     * bug. Three of the four products are not built: they own no permissions in
+     * `PERMISSION_MODULE`, so turning one on wrote a row, printed "On" and
+     * delivered nothing. The screen no longer offers the button, but the button
+     * was never what stopped it — this is.
+     *
+     * `voice_credit_controller` has its prerequisite met here (`entitled` holds
+     * the email controller), so the only thing left to refuse it is being
+     * unbuilt.
+     */
+    it("refuses a product that is not built yet, even with its prerequisites met", async () => {
+      const response = await put(entitled, "voice_credit_controller")
         .send({ enabled: true })
+        .expect(400);
+      // Named as a customer would read it, not as the database spells it.
+      expect(response.body.message).toContain("Voice Credit Control");
+      expect(response.body.message).toContain("isn't built yet");
+
+      const modules = await request(app.getHttpServer())
+        .get(`/organisations/${entitled.id}/modules`)
+        .set("Authorization", `Bearer ${tokenFor(entitled, "owner")}`)
         .expect(200);
-      const lead = response.body.find(
-        (row: { moduleKey: string }) => row.moduleKey === "lead_follow_up_agent",
+      const voice = modules.body.find(
+        (row: { moduleKey: string }) => row.moduleKey === "voice_credit_controller",
       );
-      expect(lead.enabled).toBe(true);
-      expect(lead.missingDependencies).toEqual([]);
+      // The refusal has to leave nothing behind — a half-written entitlement
+      // would be the same lie in the database instead of on the screen.
+      expect(voice.enabled).toBe(false);
+    });
+
+    /**
+     * ⚠️ TURNING ONE OFF MUST STILL WORK. If an unbuilt product is somehow
+     * already on — an older row, a seeded environment, a hand-edited database —
+     * a guard that refused every write would trap the organisation in the very
+     * state it exists to prevent.
+     */
+    it("still lets an unbuilt product be turned OFF", async () => {
+      await owner.organisationModule.create({
+        data: {
+          organisationId: entitled.id,
+          moduleKey: "voice_credit_controller",
+          enabled: true,
+          seats: 1,
+          source: "manual",
+        },
+      });
+
+      const response = await put(entitled, "voice_credit_controller")
+        .send({ enabled: false })
+        .expect(200);
+      const voice = response.body.find(
+        (row: { moduleKey: string }) => row.moduleKey === "voice_credit_controller",
+      );
+      expect(voice.enabled).toBe(false);
     });
 
     it("reports what a locked product is still waiting for", async () => {

@@ -12,7 +12,9 @@ import { defaultInvoiceCurrency } from "@/lib/currencies";
 import { formatMoney } from "@/lib/money";
 import { can, readOnlyInvoicesLine } from "@/lib/permissions";
 import { createClient } from "@/lib/supabase/server";
+import { GhostLink } from "@/components/ui";
 import { AddRowForm } from "./add-row-form";
+import type { PickableClient } from "./client-picker";
 import { BookRows, type BookRow } from "./book-rows";
 
 /**
@@ -53,8 +55,10 @@ interface Book {
   totalCount: number;
   /** Every currency the org is chasing — the PICKER, and never filtered. */
   chasedByCurrency: CurrencyTotal[];
-  /** What the current filters selected — the MONEY on screen. */
+  /** What the current filters selected, INCLUDING money nobody is collecting. */
   matchedByCurrency: CurrencyTotal[];
+  /** The same filters with the uncollectable states removed — the MONEY on screen. */
+  collectableByCurrency: CurrencyTotal[];
 }
 
 /** The quick filters, in the order a credit controller works through them. */
@@ -97,7 +101,7 @@ export default async function InvoiceBookPage({
       <Shell>
         <p className="w-full text-sm text-muted-foreground">
           Create an organisation first.{" "}
-          <Link href="/app/organisations/new" className="font-medium text-primary hover:underline">
+          <Link href="/app/organisations/new" className="font-medium text-link hover:underline">
             New organisation
           </Link>
         </p>
@@ -161,14 +165,39 @@ export default async function InvoiceBookPage({
    * amount — see `defaultBookCurrency`; comparing minor units across currencies
    * opened this page on three Kuwaiti invoices and hid a sterling book.
    *
-   * ⚠️ TWO LISTS, TWO JOBS, AND SWAPPING THEM BREAKS SOMETHING EITHER WAY.
-   * The PICKER is built from the unfiltered `chasedByCurrency`, because its
-   * whole purpose is telling someone looking at GBP that there is money in AED
-   * — filtering it would collapse it to the currency already chosen. The MONEY
-   * is `matchedByCurrency`, because it sits above a table the tabs filter, and
-   * a whole-book figure over an "Overdue" list reads as two numbers disagreeing.
+   * ⚠️ THREE LISTS, THREE JOBS, AND SWAPPING THEM BREAKS SOMETHING EVERY TIME.
+   * The PICKER is the unfiltered `chasedByCurrency`, because its whole purpose
+   * is telling someone looking at GBP that there is money in AED — filtering it
+   * would collapse it to the currency already chosen. The MONEY is
+   * `collectableByCurrency`: it follows the tabs, so it cannot disagree with the
+   * list printed beneath it, and it drops the states nobody is collecting, so
+   * the word above it stays true. `matchedByCurrency` still holds the
+   * uncollectable money, for the headings that ask for it BY NAME.
+   *
+   * The view is passed in for exactly that last decision, and `bookMoneyPanel`
+   * owns it because this page is an async server component no test can render.
    */
-  const { currencies, selectedCurrency, money: selected } = bookMoneyPanel(book, currency);
+  const { currencies, selectedCurrency, money: selected } = bookMoneyPanel(book, currency, status);
+
+  /**
+   * The clients the add form's picker offers (founder, 2026-08-18).
+   *
+   * ⚠️ ITS FAILURE MUST NEVER TAKE THE BOOK DOWN — the dashboard's rule, and it
+   * applies with force here because this list is a convenience on ONE form
+   * while the table around it is the whole point of the screen. An empty list
+   * is also a perfectly ordinary state: a new account has no clients. Either
+   * way the picker falls back to plain typing, which is what it replaced.
+   */
+  let clients: PickableClient[] = [];
+  try {
+    clients = (await (
+      await apiFetch(`/organisations/${organisation.id}/customers`, accessToken)
+    ).json()) as PickableClient[];
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 401) redirect("/sign-in");
+    // Anything else — a role without `customers:read`, a module not entitled —
+    // leaves the picker empty and the rest of the screen working.
+  }
 
   const linkTo = (changes: Record<string, string | undefined>): string => {
     const next = new URLSearchParams();
@@ -193,26 +222,18 @@ export default async function InvoiceBookPage({
    */
   const canWrite = can(organisation, "invoices:write");
   const canImport = can(organisation, "imports:write");
+  /* ⚠️ A THIRD PERMISSION, NOT A REUSE OF `canWrite`. Correcting the person
+     Eva writes to is `contacts:write` — a separate grant that a role can hold
+     without `invoices:write`, and vice versa. */
+  const canEditContacts = can(organisation, "contacts:write");
 
   return (
     <Shell>
       <section className="flex w-full flex-col gap-2">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div className="flex flex-col gap-2">
-            <h1 className="font-display text-[29px] leading-tight font-semibold">Invoices</h1>
-            <p className="text-sm text-muted-foreground">
-              {`Everything ${organisation.name} is owed, oldest first. Eva chases what is left, never the total.`}
-            </p>
-          </div>
-          {canImport && (
-            <Link
-              href="/app/invoices/import"
-              className="rounded-[var(--radius-control)] border border-input-border bg-surface px-4 py-2 text-[13px] font-semibold hover:bg-chip-hover"
-            >
-              Upload a spreadsheet
-            </Link>
-          )}
-        </div>
+        <h1 className="font-display text-[29px] leading-tight font-semibold">Invoices</h1>
+        <p className="text-sm text-muted-foreground">
+          {`Everything ${organisation.name} is owed, oldest first. Eva chases what is left, never the total.`}
+        </p>
       </section>
 
       {canWrite ? (
@@ -223,11 +244,25 @@ export default async function InvoiceBookPage({
           defaultCurrency={defaultInvoiceCurrency({
             organisationDefault: organisation.defaultCurrency,
           })}
-        />
+          clients={clients}
+        >
+          {canImport && <GhostLink href="/app/invoices/import">Upload a spreadsheet</GhostLink>}
+        </AddRowForm>
       ) : (
-        <p className="w-full rounded-[var(--radius-card)] border border-border bg-surface px-6 py-3 text-sm text-muted-foreground">
-          {readOnlyInvoicesLine(organisation.name)}
-        </p>
+        /* ⚠️ UPLOADING SURVIVES LOSING THE OTHER HALF. `imports:write` and
+           `invoices:write` are separate permissions, so a role that may upload
+           a spreadsheet but not type a row still needs its button — it just no
+           longer has anything to sit beside. */
+        <div className="flex w-full max-w-6xl flex-col gap-3">
+          {canImport && (
+            <div className="flex flex-wrap items-center gap-2">
+              <GhostLink href="/app/invoices/import">Upload a spreadsheet</GhostLink>
+            </div>
+          )}
+          <p className="w-full rounded-[var(--radius-card)] border border-border bg-surface px-6 py-3 text-sm text-muted-foreground">
+            {readOnlyInvoicesLine(organisation.name)}
+          </p>
+        </div>
       )}
 
       {/* The money, one currency at a time — with the others named beside it so
@@ -317,19 +352,38 @@ export default async function InvoiceBookPage({
       </section>
 
       {book.rows.length > 0 && (
-        <section className="w-full overflow-x-auto rounded-[var(--radius-card)] border border-border bg-surface px-6 py-2">
-          <table className="w-full min-w-[960px] border-collapse text-sm">
+        <section className="w-full overflow-x-auto rounded-[var(--radius-card)] border border-border bg-surface px-6 py-3">
+          {/* ⚠️ THE MINIMUM GREW WITH THE COLUMN COUNT (2026-08-18). Email and
+              phone left the client cell and became columns of their own, and a
+              1200px floor is what stops the ten of them crushing each other
+              before the horizontal scroll takes over. The `<th>` count here is
+              the number `BOOK_COLUMNS` in `book-rows.tsx` must equal. */}
+          <table className="w-full min-w-[1200px] border-collapse text-sm">
+            {/* ⚠️ THE HEADER HAS TO STOP LOOKING LIKE ANOTHER ROW (founder,
+                2026-08-18: the book "looks really ugly, it shows like a table or
+                boxes"). It was body-sized grey text over a `border-muted` rule —
+                the same weight as the data beneath it, so the eye read eleven
+                rows where there are ten and a label. Smaller, bolder, tracked
+                and faint reads as a label; a hairline below it stops the rule
+                being the heaviest thing on the card.
+
+                ⚠️ SENTENCE CASE, NOT UPPERCASE. The design package uses
+                uppercase for pills and small section labels — "Outstanding ·
+                GBP", "Modules" — and never for a column heading. Clients shouted
+                its headers until today; the two tables agree now. */}
             <thead>
-              <tr className="border-b border-muted text-left text-muted-foreground">
-                <th className="px-3 py-2 font-medium">Client</th>
-                <th className="px-3 py-2 font-medium">Invoice</th>
-                <th className="px-3 py-2 font-medium">Due</th>
-                <th className="px-3 py-2 text-right font-medium">Amount</th>
-                <th className="px-3 py-2 text-right font-medium">Outstanding</th>
-                <th className="px-3 py-2 font-medium">Status</th>
-                <th className="px-3 py-2 font-medium">Chasing</th>
+              <tr className="border-b border-hairline text-left text-[11.5px] font-semibold tracking-[0.04em] text-faint">
+                <th className="px-3 pt-1 pb-2.5">Client</th>
+                <th className="px-3 pt-1 pb-2.5">Email</th>
+                <th className="px-3 pt-1 pb-2.5">Phone</th>
+                <th className="px-3 pt-1 pb-2.5">Invoice</th>
+                <th className="px-3 pt-1 pb-2.5">Due</th>
+                <th className="px-3 pt-1 pb-2.5 text-right">Amount</th>
+                <th className="px-3 pt-1 pb-2.5 text-right">Outstanding</th>
+                <th className="px-3 pt-1 pb-2.5">Status</th>
+                <th className="px-3 pt-1 pb-2.5">Chasing</th>
                 {/* Pinned with its column — see the `td` in `book-rows.tsx`. */}
-                <th className="sticky right-0 bg-surface px-3 py-2 font-medium">
+                <th className="sticky right-0 bg-surface px-3 pt-1 pb-2.5">
                   <span className="sr-only">Actions</span>
                 </th>
               </tr>
@@ -339,7 +393,12 @@ export default async function InvoiceBookPage({
                   pausing it, cancelling it — opens a panel underneath, and the
                   rules and words for all of that come from
                   `lib/invoice-lifecycle.ts` rather than being restated here. */}
-              <BookRows organisationId={organisation.id} rows={book.rows} canWrite={canWrite} />
+              <BookRows
+                organisationId={organisation.id}
+                rows={book.rows}
+                canWrite={canWrite}
+                canEditContacts={canEditContacts}
+              />
             </tbody>
           </table>
         </section>
@@ -350,7 +409,7 @@ export default async function InvoiceBookPage({
           {page > 1 && (
             <Link
               href={linkTo({ page: String(page - 1) })}
-              className="font-medium text-primary hover:underline"
+              className="font-medium text-link hover:underline"
             >
               Previous
             </Link>
@@ -361,7 +420,7 @@ export default async function InvoiceBookPage({
           {page * PAGE_SIZE < book.totalCount && (
             <Link
               href={linkTo({ page: String(page + 1) })}
-              className="font-medium text-primary hover:underline"
+              className="font-medium text-link hover:underline"
             >
               Next
             </Link>
@@ -383,9 +442,27 @@ export default async function InvoiceBookPage({
  * staler set of navigation is not redundancy; it is a way to get somewhere
  * other than where the label promised.
  */
+/**
+ * ⚠️ THIS SCREEN IS WIDER THAN THE OTHER NINE, AND THAT IS DELIBERATE (founder,
+ * 2026-08-18: *"if we utilize empty space on the page on the right side we will
+ * not need the scroll bar"*).
+ *
+ * Every other screen caps its main column at the design package's 1080px,
+ * which is a READING width — the measure at which a line of prose stays
+ * comfortable. The book is not prose. It is ten columns of facts, and at 1080
+ * it was scrolling sideways inside its own card while several hundred pixels of
+ * empty paper sat to its right. A table that hides half of itself to protect a
+ * reading measure has the trade exactly backwards.
+ *
+ * ⚠️ CAPPED RATHER THAN UNBOUNDED. Left to fill any monitor, ten columns on an
+ * ultrawide put the client's name and its actions a whole arm apart, and the
+ * eye loses the row between them. 1600 clears the table's 1200px floor plus its
+ * padding on any normal wide screen — no horizontal scrollbar — without letting
+ * a row grow past what one glance can follow.
+ */
 function Shell({ children }: { children: React.ReactNode }) {
   return (
-    <main className="flex w-full max-w-[1080px] flex-1 flex-col gap-[26px] px-10 pt-8 pb-9">
+    <main className="flex w-full max-w-[1600px] flex-1 flex-col gap-[26px] px-10 pt-8 pb-9">
       {children}
     </main>
   );

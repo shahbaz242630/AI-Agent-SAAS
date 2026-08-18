@@ -23,14 +23,32 @@ import {
  *
  * Anonymous-only: the proxy sends a signed-in visitor to /app, because telling
  * somebody they are signed out while they are signed in is worse than useless.
+ *
+ * ⚠️ IT ALSO CATCHES THE TWO-DAY IDLE SIGN-OUT, and that arrival needs
+ * different words. Somebody who chose to leave already knows why they are here;
+ * somebody who came back to a session we ended does not, and "You're signed
+ * out" with no reason reads as a fault in the product. `?reason=idle` is set by
+ * the proxy — it decides copy and nothing else, so a visitor typing it into the
+ * address bar changes only which sentence they read.
  */
-export default function SignedOutPage() {
+export default async function SignedOutPage({
+  searchParams,
+}: {
+  // Next 16: `searchParams` is a Promise and must be awaited.
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
+  const idle = (await searchParams).reason === "idle";
+
   return (
     <AuthFrame panel={AUTH_PANELS.signedOut}>
       <SuccessDisc />
       <AuthHeading
-        title="You're signed out"
-        subtitle="Eva carries on without you — reminders already scheduled still send, and everything will be on the record when you're back."
+        title={idle ? "Signed out after two days" : "You're signed out"}
+        subtitle={
+          idle
+            ? "Nobody had used this account for two days, so we ended the session to keep it safe. Nothing stopped — reminders already scheduled still went out, and it is all on the record."
+            : "Eva carries on without you — reminders already scheduled still send, and everything will be on the record when you're back."
+        }
       />
       <AuthPrimaryLink href="/sign-in">Sign back in</AuthPrimaryLink>
       <AuthOutlineLink href="/">Back to the home page</AuthOutlineLink>

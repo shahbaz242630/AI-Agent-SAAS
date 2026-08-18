@@ -5,7 +5,13 @@ import { Card, CounterCard, EmptyState, PageHeader, StatusPill } from "@/compone
 import { ApiError, apiFetch } from "@/lib/api";
 import { fetchOrganisations } from "@/lib/organisations";
 import { can } from "@/lib/permissions";
-import { explainWaiting, stageLabel, statusLabel, statusTone } from "@/lib/reminder-activity";
+import {
+  describeNoHistoryYet,
+  explainWaiting,
+  stageLabel,
+  statusLabel,
+  statusTone,
+} from "@/lib/reminder-activity";
 import { createClient } from "@/lib/supabase/server";
 import { dayMonth } from "../week-panel";
 
@@ -97,6 +103,12 @@ export default async function RemindersPage() {
   }
 
   const waiting = explainWaiting(activity.counts.waiting, activity.waitingReason);
+  const emptyHistory = describeNoHistoryYet({
+    scheduled: activity.counts.scheduled,
+    noWorkingMailbox: activity.noWorkingMailbox,
+    nextDate: activity.upcoming[0]?.scheduledDate ?? null,
+    formatDate: dayMonth,
+  });
 
   return (
     <Shell>
@@ -116,6 +128,11 @@ export default async function RemindersPage() {
           sublabel="last 7 days"
           tone="bad"
         />
+        {/* ⚠️ NO TONE. The other three are news about the past — two of them
+            things to act on. This one is just the size of the plan, and
+            colouring it would make a healthy book look like it needed
+            attention. */}
+        <CounterCard value={activity.counts.scheduled} label="Scheduled" sublabel="still to come" />
       </div>
 
       {waiting && (
@@ -133,13 +150,80 @@ export default async function RemindersPage() {
         </div>
       )}
 
+      {/* ⚠️ WHAT IS COMING SITS ABOVE WHAT HAPPENED, and that is the point of
+          the section rather than a layout preference. The question a customer
+          brings to this screen is "is Eva going to chase my money", which is
+          about the future; the history is how they check the answer afterwards.
+          For every new customer the history is empty and the plan is not. */}
+      {activity.upcoming.length > 0 && (
+        <section className="flex flex-col gap-2.5">
+          <h2 className="text-sm font-bold">What Eva will do next</h2>
+
+          {activity.noWorkingMailbox && (
+            <div className="flex flex-col gap-1.5 rounded-[var(--radius-card)] border border-warning-border bg-warning-tint px-6 py-4">
+              <h3 className="text-[13.5px] font-bold text-warning-strong">
+                None of these can go out yet
+              </h3>
+              <p className="text-[13px] text-muted-foreground">
+                No mailbox is connected, so Eva has nowhere to send from. Nothing is lost — connect
+                one and these send on their day as planned.
+              </p>
+              <Link
+                href="/app/settings/mailbox"
+                className="text-[13px] font-semibold text-warning-strong hover:underline"
+              >
+                Connect a mailbox →
+              </Link>
+            </div>
+          )}
+
+          <Card className="overflow-x-auto px-6 py-2">
+            <table className="w-full min-w-[640px] border-collapse text-left">
+              <thead>
+                <tr className="text-[11.5px] font-semibold tracking-[0.04em] text-faint uppercase">
+                  <th className="py-2.5 font-semibold">Date</th>
+                  <th className="py-2.5 font-semibold">Client</th>
+                  <th className="py-2.5 font-semibold">Invoice</th>
+                  <th className="py-2.5 font-semibold">Stage</th>
+                </tr>
+              </thead>
+              <tbody>
+                {activity.upcoming.map((row) => (
+                  <tr key={row.id} className="border-t border-hairline text-[13px]">
+                    {/* Already a calendar day in the ORG's timezone. */}
+                    <td className="py-3 text-muted-foreground">{dayMonth(row.scheduledDate)}</td>
+                    <td className="py-3 font-semibold">{row.customerName}</td>
+                    <td className="py-3">
+                      <Link
+                        href={`/app/clients/${row.customerId}/invoices`}
+                        className="text-link hover:underline"
+                      >
+                        {row.invoiceNumber}
+                      </Link>
+                    </td>
+                    <td className="py-3 text-muted-foreground">{stageLabel(row.stageKey)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </Card>
+
+          {/* ⚠️ NO SILENT TRUNCATION. The list is the near horizon; the count
+              is the whole plan, and a reader who sees ten rows must not be left
+              believing that is all of it. */}
+          {activity.counts.scheduled > activity.upcoming.length && (
+            <p className="text-[13px] text-muted-foreground">
+              The next {activity.upcoming.length} of {activity.counts.scheduled} reminders Eva has
+              scheduled.
+            </p>
+          )}
+        </section>
+      )}
+
       <section className="flex flex-col gap-2.5">
         <h2 className="text-sm font-bold">Recent activity</h2>
         {activity.recent.length === 0 ? (
-          <EmptyState
-            headline="Nothing to show yet."
-            detail="Reminders appear here once an invoice is overdue enough to chase. Nothing is wrong — Eva simply has not needed to write to anybody."
-          />
+          <EmptyState {...emptyHistory} />
         ) : (
           <Card className="overflow-x-auto px-6 py-2">
             <table className="w-full min-w-[640px] border-collapse text-left">

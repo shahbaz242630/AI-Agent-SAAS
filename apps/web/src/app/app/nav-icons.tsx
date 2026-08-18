@@ -69,12 +69,40 @@ function ChasingIcon(props: IconProps) {
   );
 }
 
-function SettingsIcon(props: IconProps) {
+export function SettingsIcon(props: IconProps) {
   return (
     <Icon {...props}>
       <circle cx="12" cy="12" r="3.2" />
       <path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2 2M16.7 16.7l2 2M18.7 5.3l-2 2M7.3 16.7l-2 2" />
     </Icon>
+  );
+}
+
+/**
+ * The account menu's disclosure arrow (2026-08-18).
+ *
+ * ⚠️ IT POINTS UP WHEN THE MENU IS SHUT, WHICH IS THE RIGHT WAY ROUND. This
+ * menu opens UPWARDS — it lives at the bottom of the sidebar and there is no
+ * room below it — so the arrow shows where the panel will appear rather than
+ * where the list would unroll. Caller flips it with a class when open.
+ */
+export function ChevronIcon({ className }: IconProps) {
+  return (
+    <svg
+      aria-hidden
+      focusable="false"
+      width="13"
+      height="13"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2.4"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+    >
+      <path d="m6 15 6-6 6 6" />
+    </svg>
   );
 }
 
@@ -100,13 +128,18 @@ export function SignOutIcon() {
 }
 
 /**
- * The padlock beside sign-out (2026-08-10).
+ * The padlock on the account menu's Change password row (2026-08-10).
  *
  * ⚠️ IT EXISTS BECAUSE `/change-password` WOULD OTHERWISE BE UNREACHABLE — the
  * same defect `SettingsTabs` was built to fix one slice ago. The design puts
  * this link in the landing page's signed-in dropdown, and the landing page is
  * blocked on the founder, so without it the route could only be reached by
  * typing the URL. A screen nobody can get to is a screen that does not exist.
+ *
+ * ⚠️ IT IS NO LONGER THE WHOLE CONTROL. Until 2026-08-18 this padlock WAS the
+ * link, unlabelled, beside the user's name; the founder moved it into the
+ * account menu where it sits next to the words "Change password". The icon is
+ * decoration now, and the label carries the meaning.
  */
 export function PasswordIcon() {
   return (

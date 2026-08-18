@@ -103,6 +103,7 @@ export function humanRefusal(status: number | undefined, action: WriteAction): s
 export type WriteAction =
   | "create-invoice"
   | "edit-invoice"
+  | "edit-contact"
   | "record-payment"
   | "change-invoice"
   | "add-row"
@@ -120,6 +121,13 @@ export type WriteAction =
 const REFUSED: Record<WriteAction, string> = {
   "create-invoice": "Your role can't raise invoices.",
   "edit-invoice": "Your role can't edit invoices.",
+  // ⚠️ NOT "edit-invoice". Correcting the address Eva writes to is a change
+  // to the CONTACT, a different record behind a different permission
+  // (`contacts:write`), and it works on invoices that are far past the point
+  // of being editable themselves. A shared sentence would tell somebody their
+  // role cannot edit invoices when the thing they were refused was a phone
+  // number.
+  "edit-contact": "Your role can't change a client's contact details.",
   "record-payment": "Your role can't record payments.",
   // Pause, resume, cancel — named by what they have in common rather than
   // guessing which one was clicked, because one sentence that is true of all

@@ -86,7 +86,7 @@ export default async function ClientsPage({
       <Shell>
         <p className="w-full max-w-4xl text-sm text-muted-foreground">
           Create an organisation first.{" "}
-          <Link href="/app/organisations/new" className="font-medium text-primary hover:underline">
+          <Link href="/app/organisations/new" className="font-medium text-link hover:underline">
             New organisation
           </Link>
         </p>
@@ -200,7 +200,7 @@ export default async function ClientsPage({
         </p>
         {focused && (
           <p className="text-sm">
-            <Link href="/app/clients" className="font-medium text-primary hover:underline">
+            <Link href="/app/clients" className="font-medium text-link hover:underline">
               Show all clients
             </Link>
           </p>
@@ -240,6 +240,10 @@ export default async function ClientsPage({
            client is filed there without anyone choosing. */
         emailAccountId={focused?.id ?? null}
         mailboxAddress={focused?.emailAddress ?? null}
+        /* ⚠️ `clients`, NOT `visible`. The duplicate check has to see the whole
+           organisation, or a same-named client filed under another mailbox is
+           invisible to exactly the warning meant to catch it. */
+        existing={clients}
       />
 
       <ClientTable
@@ -256,7 +260,12 @@ export default async function ClientsPage({
 
 function Shell({ children }: { children: React.ReactNode }) {
   return (
-    <main className="flex w-full max-w-[1080px] flex-1 flex-col gap-[26px] px-10 pt-8 pb-9">
+    /* ⚠️ WIDER THAN THE DESIGN PACKAGE'S 1080, FOR THE SAME REASON AS INVOICES
+       (founder, 2026-08-18). 1080 is a reading measure and this screen is a
+       table; see the note on `Shell` in `app/invoices/page.tsx`, which owns the
+       full reasoning. These two are the only screens that get the wider column,
+       and they get it because they are the only two that are mostly table. */
+    <main className="flex w-full max-w-[1600px] flex-1 flex-col gap-[26px] px-10 pt-8 pb-9">
       {children}
     </main>
   );

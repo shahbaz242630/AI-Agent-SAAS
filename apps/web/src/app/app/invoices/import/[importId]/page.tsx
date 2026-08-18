@@ -11,6 +11,7 @@ import {
 } from "@/lib/import-messages";
 import { can, readOnlyImportsLine } from "@/lib/permissions";
 import { createClient } from "@/lib/supabase/server";
+import { BackChip } from "@/components/ui";
 import { ConfirmImportControls } from "../import-controls";
 
 /**
@@ -301,13 +302,10 @@ export default async function ImportPreviewPage({
 function Shell({ children }: { children: React.ReactNode }) {
   return (
     <main className="flex w-full max-w-[1080px] flex-1 flex-col gap-[26px] px-10 pt-8 pb-9">
+      {/* ⚠️ FIRST, NOT LAST. It used to sit under everything as grey text, which
+          read as a footnote rather than a way out (founder, 2026-08-18). */}
+      <BackChip href="/app/invoices">Back to your invoices</BackChip>
       {children}
-      <Link
-        href="/app/invoices"
-        className="text-sm font-medium text-muted-foreground hover:underline"
-      >
-        Back to your invoices
-      </Link>
     </main>
   );
 }

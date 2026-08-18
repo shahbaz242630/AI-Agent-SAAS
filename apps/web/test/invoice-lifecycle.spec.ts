@@ -4,6 +4,7 @@ import {
   availableInvoiceActions,
   canRecordPayment,
   chaseBlockedLine,
+  draftBlockedLine,
   paymentRecordedLine,
   invoiceActionConfirmLabel,
   invoiceActionConsequence,
@@ -364,6 +365,67 @@ describe("recording a payment (tasks 5-7)", () => {
       });
       expect(line).toMatch(/nothing will be sent/i);
       expect(line).not.toMatch(/keeps chasing/i);
+    }
+  });
+});
+
+describe("what a DRAFT row says about the recipient it will need", () => {
+  /**
+   * ⚠️ THE GAP THIS CLOSES. The add form saves drafts BY DEFAULT, and a draft
+   * said nothing at all about a missing address — so twenty invoices could be
+   * typed with no recipient and the first warning would arrive one row at a
+   * time, at the moment each was activated. Founder, 2026-08-18.
+   */
+  it("warns a draft about the recipient blockers a person can fix", () => {
+    for (const reason of ["no_contact", "contact_deleted", "no_email", "suppressed"]) {
+      const line = draftBlockedLine("draft", reason);
+      expect(line).toMatch(/^Nothing will be sent when you start — /);
+      expect(line).toMatch(/\.$/);
+    }
+  });
+
+  /**
+   * ⚠️ ITS TENSE IS THE WHOLE MESSAGE, and it must never borrow the other
+   * line's. "Eva can't chase this" is FALSE of a draft — nobody asked her to —
+   * and reads as a fault where there is none. This one is about what will
+   * happen when you start.
+   */
+  it("does not claim Eva is failing at something she was never asked to do", () => {
+    expect(draftBlockedLine("draft", "no_email")).not.toMatch(/can't chase/i);
+  });
+
+  /**
+   * ⚠️ `no_mailbox` IS AN ORGANISATION-LEVEL FAULT and is true of every row at
+   * once. Repeating it down a column of drafts would be a wall of identical
+   * warnings about one thing that cannot be fixed from any of them.
+   */
+  it("stays quiet about a missing mailbox, which is not this row's problem", () => {
+    expect(draftBlockedLine("draft", "no_mailbox")).toBeNull();
+  });
+
+  it("says nothing on anything that is not a draft", () => {
+    for (const status of ["active", "paused", "overdue", "partially_paid", "paid", "cancelled"]) {
+      expect(draftBlockedLine(status, "no_email")).toBeNull();
+    }
+  });
+
+  it("stays silent on a draft with a perfectly good recipient", () => {
+    expect(draftBlockedLine("draft", null)).toBeNull();
+  });
+
+  /**
+   * The two lines must never both appear on one row: red says Eva is failing
+   * now, amber says she would fail if you started. A row claiming both would be
+   * telling the reader two different things about the same invoice.
+   */
+  it("never speaks at the same time as the chasing warning", () => {
+    for (const status of ["draft", "active", "partially_paid", "paid"]) {
+      for (const reason of ["no_contact", "contact_deleted", "no_email", "suppressed"]) {
+        const both = [chaseBlockedLine(status, reason), draftBlockedLine(status, reason)].filter(
+          (line) => line !== null,
+        );
+        expect(both.length).toBeLessThanOrEqual(1);
+      }
     }
   });
 });

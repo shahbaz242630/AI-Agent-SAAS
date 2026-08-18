@@ -1,6 +1,8 @@
 import Link from "next/link";
+import { MODULE_CATALOGUE, MODULE_KEYS } from "@eva/types";
 import { NAV_ITEMS, isActiveSection } from "@/lib/navigation";
-import { NAV_ICONS, PasswordIcon } from "./nav-icons";
+import { NAV_ICONS } from "./nav-icons";
+import { UserMenu } from "./user-menu";
 
 /**
  * The sidebar's markup, with the current path as an ARGUMENT (2026-08-09).
@@ -22,12 +24,21 @@ export interface SidebarIdentity {
   user: { name: string; email: string; initials: string };
 }
 
-/** The modules, live first. The `soon` ones are named so the shape is honest. */
-const MODULES: readonly { label: string; live: boolean }[] = [
-  { label: "Invoice Chasing", live: true },
-  { label: "Lead Follow-up", live: false },
-  { label: "AI Reception", live: false },
-];
+/**
+ * The modules, live first. The `soon` ones are named so the shape is honest.
+ *
+ * ⚠️ THIS USED TO BE A HAND-WRITTEN LIST OF THREE and it had drifted from the
+ * settings screen in every way a list can (found by walking, 2026-08-18): it
+ * omitted Voice Credit Control entirely, and it called the other two "Lead
+ * Follow-up" and "AI Reception" where settings said "Lead Follow-Up" and "AI
+ * Receptionist". Two screens, one product, three disagreements. Derived from
+ * `MODULE_CATALOGUE` now, so a product cannot exist in one place and not the
+ * other and cannot be called two things.
+ */
+const MODULES: readonly { label: string; live: boolean }[] = MODULE_KEYS.map((key) => ({
+  label: MODULE_CATALOGUE[key].name,
+  live: MODULE_CATALOGUE[key].live,
+}));
 
 export function SidebarBody({
   pathname,
@@ -140,33 +151,14 @@ export function SidebarBody({
 
       <div className="flex-1" />
 
-      <div className="flex items-center gap-2.5 rounded-[var(--radius-control)] bg-sidebar-hover p-2">
-        <span
-          aria-hidden
-          className="flex size-7 shrink-0 items-center justify-center rounded-full bg-sidebar-avatar text-[11px] font-semibold text-sidebar-foreground"
-        >
-          {identity.user.initials}
-        </span>
-        <span className="flex min-w-0 flex-1 flex-col">
-          <span className="truncate text-xs font-semibold text-sidebar-foreground">
-            {identity.user.name}
-          </span>
-          <span className="truncate text-[10.5px] text-sidebar-faint">{identity.user.email}</span>
-        </span>
-        {/* ⚠️ THE ONLY WAY INTO `/change-password` UNTIL THE LANDING PAGE
-            EXISTS. The design hangs it off the marketing header's signed-in
-            dropdown; that page is blocked on the founder, and a route with no
-            door is the defect this shell was built to end. */}
-        <Link
-          href="/change-password"
-          title="Change password"
-          className="flex rounded-md p-1 hover:bg-sidebar-active"
-        >
-          <PasswordIcon />
-          <span className="sr-only">Change password</span>
-        </Link>
-        {signOutSlot}
-      </div>
+      {/* ⚠️ THREE THINGS UNDER ONE NAME, INSTEAD OF TWO ANONYMOUS ICONS
+          (founder, 2026-08-18). Change password and sign out used to sit here
+          as bare glyphs beside the user's name, and Settings was a nav section
+          above. They are all about the PERSON rather than the business, so they
+          are one menu now — opening upwards, because this card is at the bottom
+          of the screen. `UserMenu` owns the disclosure; this file stays
+          hook-free so it can still be rendered in a plain node test. */}
+      <UserMenu user={identity.user} signOutSlot={signOutSlot} />
     </nav>
   );
 }

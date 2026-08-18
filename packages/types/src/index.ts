@@ -171,6 +171,67 @@ export const MODULE_DEPENDENCIES: Record<ModuleKey, readonly ModuleKey[]> = {
   ai_receptionist: ["voice_credit_controller"],
 };
 
+/**
+ * What each product is CALLED, what it does, and whether it exists yet.
+ *
+ * ⚠️ THE NAMES LIVED IN THREE PLACES AND DISAGREED IN TWO OF THEM (found by
+ * walking, 2026-08-18). The sidebar said "Lead Follow-up" and "AI Reception",
+ * the settings screen said "Lead Follow-Up" and "AI Receptionist", and the 402
+ * message had its own third copy. A customer reading two of our screens saw
+ * two different products.
+ *
+ * ⚠️ `live` IS THE ONE THAT MATTERS, AND IT IS NOT COSMETIC. Three of these
+ * four products are not built. `PERMISSION_MODULE` grants them nothing, so
+ * turning one on wrote an entitlement row, printed "On", and changed nothing
+ * whatsoever — the screen reporting an outcome that had not happened, which is
+ * the same failure as the money bug and the lying upload preview. The flag is
+ * read by BOTH the screen (which offers no button) and the API (which refuses
+ * the write), because hiding a control is not enforcement.
+ *
+ * Flip a `live` to `true` in this one place on the day the product ships.
+ */
+export interface ModuleDescriptor {
+  /** The product's name, as a customer reads it. Never the database key. */
+  readonly name: string;
+  /** One honest line about what it does. */
+  readonly blurb: string;
+  /** Whether the product is BUILT. `false` means it cannot be turned on. */
+  readonly live: boolean;
+}
+
+export const MODULE_CATALOGUE: Record<ModuleKey, ModuleDescriptor> = {
+  email_credit_controller: {
+    name: "Invoice Chasing",
+    blurb: "Chases your unpaid invoices by email, from your own mailbox.",
+    live: true,
+  },
+  voice_credit_controller: {
+    name: "Voice Credit Control",
+    blurb: "Follows up overdue invoices by phone when email has not worked.",
+    live: false,
+  },
+  lead_follow_up_agent: {
+    name: "Lead Follow-up",
+    blurb: "Calls back new enquiries before they go cold.",
+    live: false,
+  },
+  ai_receptionist: {
+    name: "AI Receptionist",
+    blurb: "Answers the phone when you cannot get to it.",
+    live: false,
+  },
+};
+
+/** A product's name, for a sentence a person will read. */
+export function moduleName(moduleKey: ModuleKey): string {
+  return MODULE_CATALOGUE[moduleKey].name;
+}
+
+/** Whether the product behind this key actually exists yet. */
+export function isModuleLive(moduleKey: ModuleKey): boolean {
+  return MODULE_CATALOGUE[moduleKey].live;
+}
+
 /** How a module came to be enabled. `subscription` is written by Paddle
  *  webhooks later; the table stays authoritative for ENFORCEMENT and Paddle
  *  for BILLING, because deriving entitlement live from Paddle would let a
@@ -249,6 +310,45 @@ export type ChasedInvoiceStatus = (typeof CHASED_INVOICE_STATUSES)[number];
 /** Is Eva chasing an invoice in this stored status? */
 export function isChasedInvoiceStatus(status: string): status is ChasedInvoiceStatus {
   return (CHASED_INVOICE_STATUSES as readonly string[]).includes(status);
+}
+
+/**
+ * The statuses in which the money is still OWED to the business.
+ *
+ * ⚠️ THIS IS NOT `CHASED_INVOICE_STATUSES`, AND CONFLATING THEM MISSTATES THE
+ * BOOK IN BOTH DIRECTIONS. "Is Eva writing to this debtor" and "does this
+ * debtor still owe us" are different questions. A PAUSED invoice is the plain
+ * case: somebody stopped the chase over a query or a dispute, and the debt did
+ * not stop existing. Totalling only the chased statuses under the word
+ * "outstanding" therefore hides real money — the mistake made while fixing the
+ * opposite mistake on 2026-08-12, when cancelled money was being counted IN.
+ *
+ * Out, and why: `draft` has not been sent to anybody, `cancelled` was voided,
+ * `paid` is settled, and `written_off` is money the business has decided to
+ * stop counting. In: everything else, including `disputed` — a contested
+ * invoice is still a receivable until it is credited, and a credit-control
+ * product that quietly drops disputes understates the very number it exists to
+ * report.
+ *
+ * ⚠️ `promise_to_pay`, `disputed` AND `written_off` HAVE NO API PATH UNTIL
+ * SLICE 1.8, so they cannot occur yet. They are listed now on purpose: this is
+ * the list a future status gets added to, and the whole reason the constant
+ * exists is that the last one was added in three places and forgotten in the
+ * fourth.
+ */
+export const OWED_INVOICE_STATUSES = [
+  "active",
+  "paused",
+  "promise_to_pay",
+  "disputed",
+  "partially_paid",
+] as const;
+
+export type OwedInvoiceStatus = (typeof OWED_INVOICE_STATUSES)[number];
+
+/** Does an invoice in this stored status still represent money owed? */
+export function isOwedInvoiceStatus(status: string): status is OwedInvoiceStatus {
+  return (OWED_INVOICE_STATUSES as readonly string[]).includes(status);
 }
 
 /**
@@ -538,10 +638,41 @@ export interface ReminderActivityDto {
     /** Due, still `ready` — should have gone out and has not. */
     waiting: number;
     failedLast7Days: number;
+    /**
+     * Still to come: every `pending` action Eva holds.
+     *
+     * ⚠️ NOT DATE-FILTERED, DELIBERATELY. A `pending` row dated in the PAST
+     * means the scheduler did not promote it, which is a fault worth seeing
+     * rather than a row worth hiding. Filtering to the future would make the
+     * one state that indicates something is broken the one state nothing
+     * counts.
+     */
+    scheduled: number;
   };
   /** Null when nothing is waiting; otherwise why, as far as we can tell. */
   waitingReason: ReminderWaitingReason | null;
+  /**
+   * Whether the organisation has NO healthy mailbox right now.
+   *
+   * ⚠️ THE PLAN IS A PROMISE, AND THIS IS WHETHER WE CAN KEEP IT. Listing what
+   * Eva will send next without saying there is nowhere to send it from is the
+   * same defect as an upload preview that disagrees with the upload: a screen
+   * stating an outcome that will not happen.
+   */
+  noWorkingMailbox: boolean;
   recent: ReminderActivityRowDto[];
+  /**
+   * What Eva will do next, soonest first — the near horizon, not the whole
+   * plan. `counts.scheduled` is the whole plan.
+   *
+   * ⚠️ THIS EXISTS BECAUSE EVA'S FUTURE WORK WAS INVISIBLE (found by walking,
+   * 2026-08-18). Slice 1.7 made the PAST visible and stopped there, so a book
+   * whose invoices were not due yet — which is every new customer for their
+   * first weeks — showed three zeroes and "Eva simply has not needed to write
+   * to anybody", with six reminders sitting scheduled in the database. A
+   * product that has a plan and a product that has none looked identical.
+   */
+  upcoming: ReminderActivityRowDto[];
 }
 
 /** One human escalation as the API exposes it (plan §3). */
@@ -736,4 +867,51 @@ export interface MailboxAdminConsentDto {
   url: string | null;
   /** The customer's own organisation name, for copy that names them. */
   organisationName: string | null;
+}
+
+// --- Session lifetime (founder's request, 2026-08-12) ---
+
+/**
+ * How long a session survives with NO activity before it is ended.
+ *
+ * ⚠️ SUPABASE CANNOT DO THIS FOR US ON THE FREE PLAN. Their "inactivity
+ * timeout" is a Pro-plan setting, so the rule lives here — which is better
+ * anyway: enforced in our own API against a stored timestamp, it holds against
+ * a stolen token, whereas anything the browser carries can be replayed with it.
+ */
+export const SESSION_IDLE_TIMEOUT_MS = 2 * 24 * 60 * 60 * 1000;
+
+/**
+ * How stale `users.last_seen_at` may get before a request bothers to write it.
+ *
+ * ⚠️ A WRITE ON EVERY REQUEST WOULD BE FIVE WRITES PER SCREEN. The dashboard
+ * asks five questions to draw itself. Five minutes of imprecision costs nothing
+ * against a two-day window and turns that into one write.
+ */
+export const SESSION_ACTIVITY_WRITE_INTERVAL_MS = 5 * 60 * 1000;
+
+/** The code on the 401 an idle session gets, so a caller can branch on it. */
+export const SESSION_IDLE_TIMEOUT_CODE = "session_idle_timeout";
+
+/** The machine-readable body of that 401. */
+export interface SessionIdleTimeoutBody {
+  statusCode: 401;
+  code: typeof SESSION_IDLE_TIMEOUT_CODE;
+  message: string;
+}
+
+/**
+ * Has a session with this last-activity stamp gone idle?
+ *
+ * ⚠️ NULL IS FRESH, NOT ANCIENT, AND GETTING THAT BACKWARDS SIGNS EVERYBODY
+ * OUT. Every existing row has no `last_seen_at` the moment the column ships;
+ * reading "unknown" as "idle since the epoch" would end every live session on
+ * deploy. The first request stamps it instead.
+ *
+ * Shared by the API (which enforces it) and the web proxy (which acts on it) so
+ * one rule cannot drift into two.
+ */
+export function isSessionIdle(lastSeenAt: Date | null | undefined, now: Date): boolean {
+  if (!lastSeenAt) return false;
+  return now.getTime() - lastSeenAt.getTime() > SESSION_IDLE_TIMEOUT_MS;
 }

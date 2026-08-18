@@ -116,7 +116,7 @@ export function MailboxCard({
       )}
 
       {clientsHref && (
-        <a href={clientsHref} className="text-sm font-medium text-primary hover:underline">
+        <a href={clientsHref} className="text-sm font-medium text-link hover:underline">
           {count === 0
             ? "No clients filed here yet — file some"
             : `${count === 1 ? "1 client" : `${count} clients`} filed here`}

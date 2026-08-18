@@ -180,7 +180,7 @@ export default async function MailboxSettingsPage({
       {!organisation ? (
         <p className="w-full max-w-2xl text-sm text-muted-foreground">
           Create an organisation first.{" "}
-          <Link href="/app/organisations/new" className="font-medium text-primary hover:underline">
+          <Link href="/app/organisations/new" className="font-medium text-link hover:underline">
             New organisation
           </Link>
         </p>
@@ -255,10 +255,7 @@ export default async function MailboxSettingsPage({
           {status.seatLimitReached ? (
             <p className="text-sm text-muted-foreground">
               Every seat is in use. Disconnect one, or add a seat on{" "}
-              <Link
-                href="/app/settings/modules"
-                className="font-medium text-primary hover:underline"
-              >
+              <Link href="/app/settings/modules" className="font-medium text-link hover:underline">
                 your products
               </Link>
               , to connect another.
@@ -283,7 +280,7 @@ export default async function MailboxSettingsPage({
           clients" stays — it is a real onward step from mailbox settings, not a
           duplicate of the way back. */}
       <div className="flex flex-wrap items-center gap-4">
-        <Link href="/app/clients" className="text-sm font-medium text-primary hover:underline">
+        <Link href="/app/clients" className="text-sm font-medium text-link hover:underline">
           Your clients
         </Link>
       </div>

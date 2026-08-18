@@ -75,24 +75,38 @@ describe("which currency the book opens on", () => {
 });
 
 describe("which list feeds the picker and which feeds the figure", () => {
-  /** A filtered book: the whole book is 250,000 in GBP, the filter caught 220,000. */
+  /**
+   * A filtered book: the whole book is 250,000 in GBP, the filter caught
+   * 220,000 of it — and 40,000 of THAT is money nobody is collecting, so only
+   * 180,000 across 4 invoices may be called outstanding.
+   */
   const book = {
     chasedByCurrency: [
       { currency: "AED", invoiceCount: 1, outstandingMinorUnits: 100_000 },
       { currency: "GBP", invoiceCount: 7, outstandingMinorUnits: 250_000 },
     ],
     matchedByCurrency: [{ currency: "GBP", invoiceCount: 5, outstandingMinorUnits: 220_000 }],
+    collectableByCurrency: [{ currency: "GBP", invoiceCount: 4, outstandingMinorUnits: 180_000 }],
   };
 
   /**
-   * ⚠️ THE TWO LISTS ARE THE SAME SHAPE AND SWAPPING THEM TYPECHECKS. That is
+   * ⚠️ THE THREE LISTS ARE THE SAME SHAPE AND SWAPPING THEM TYPECHECKS. That is
    * the entire reason this is a function with a test rather than two lines in
    * an async server component nothing can render.
    */
   it("takes the figure from the FILTERED list, not the whole book", () => {
     const panel = bookMoneyPanel(book);
-    expect(panel.money?.outstandingMinorUnits).toBe(220_000);
-    expect(panel.money?.invoiceCount).toBe(5);
+    expect(panel.money?.outstandingMinorUnits).toBe(180_000);
+    expect(panel.money?.invoiceCount).toBe(4);
+  });
+
+  /**
+   * ⚠️ AND FROM THE COLLECTABLE LIST, NOT MERELY THE MATCHED ONE. Both follow
+   * the filters, so both look right; only one excludes the money nobody is
+   * chasing. 220,000 is the number that shipped and was wrong.
+   */
+  it("takes the figure from the COLLECTABLE list, not everything the filter matched", () => {
+    expect(bookMoneyPanel(book).money?.outstandingMinorUnits).not.toBe(220_000);
   });
 
   /**
@@ -131,6 +145,65 @@ describe("which list feeds the picker and which feeds the figure", () => {
         view: "overdue",
       }),
     ).toBe("Nothing overdue in AED.");
+  });
+
+  /**
+   * ⚠️ THE PRODUCTION BUG OF 2026-08-12, IN NUMBERS. The founder's book held
+   * exactly one invoice and it had been CANCELLED. The book screen read
+   * "£4,525.00 outstanding across 1 invoice" while the home screen, on the same
+   * data, correctly said nothing was outstanding — two screens disagreeing
+   * about money, and the wrong one flattering us.
+   *
+   * The unfiltered view is not the safe default it was assumed to be: it is the
+   * only view that contains cancelled invoices.
+   */
+  const cancelledOnly = {
+    chasedByCurrency: [],
+    matchedByCurrency: [{ currency: "GBP", invoiceCount: 1, outstandingMinorUnits: 452_500 }],
+    collectableByCurrency: [],
+  };
+
+  it("never calls a cancelled invoice money the business is owed", () => {
+    const panel = bookMoneyPanel(cancelledOnly);
+    expect(panel.money).toBeUndefined();
+    expect(
+      bookTotalLine({
+        currency: panel.selectedCurrency,
+        formattedOutstanding: "£0.00",
+        invoiceCount: panel.money?.invoiceCount ?? 0,
+      }),
+    ).toBe("Nothing outstanding in GBP.");
+  });
+
+  /**
+   * The other half of the rule: the money is not hidden, it is only refused the
+   * word "outstanding". Ask for cancelled invoices BY NAME and the figure is
+   * both shown and correctly labelled.
+   */
+  it("still totals cancelled money under a heading that asks for it", () => {
+    const panel = bookMoneyPanel(cancelledOnly, undefined, "cancelled");
+    expect(panel.money?.outstandingMinorUnits).toBe(452_500);
+    expect(
+      bookTotalLine({
+        currency: panel.selectedCurrency,
+        formattedOutstanding: "£4,525.00",
+        invoiceCount: panel.money?.invoiceCount ?? 0,
+        view: "cancelled",
+      }),
+    ).toBe("£4,525.00 in cancelled invoices, across 1 invoice.");
+  });
+
+  /**
+   * Drafts are the case the original wording guard was written for, and it must
+   * keep working: a draft is not outstanding either, and its own view says so.
+   */
+  it("keeps the drafts view reading from the matched list", () => {
+    const drafts = {
+      chasedByCurrency: [{ currency: "GBP", invoiceCount: 2, outstandingMinorUnits: 50_000 }],
+      matchedByCurrency: [{ currency: "GBP", invoiceCount: 3, outstandingMinorUnits: 90_000 }],
+      collectableByCurrency: [],
+    };
+    expect(bookMoneyPanel(drafts, undefined, "draft").money?.outstandingMinorUnits).toBe(90_000);
   });
 });
 

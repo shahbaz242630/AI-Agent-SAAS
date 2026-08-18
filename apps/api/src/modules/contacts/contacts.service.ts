@@ -108,7 +108,13 @@ export class ContactsService {
         where: { id: contactId },
         data: {
           ...(input.name !== undefined ? { name: input.name } : {}),
-          ...(input.email !== undefined ? { email: input.email.toLowerCase() } : {}),
+          /* ⚠️ `null` CLEARS, AND IT IS NOT THE SAME AS ABSENT. Absent leaves
+             the address alone; null removes it, which stops Eva chasing this
+             invoice at all. `toLowerCase()` must not be reached for null — it
+             would throw, turning a deliberate removal into a 500. */
+          ...(input.email !== undefined
+            ? { email: input.email === null ? null : input.email.toLowerCase() }
+            : {}),
           ...(input.phone !== undefined ? { phone: input.phone } : {}),
           ...(input.jobTitle !== undefined ? { jobTitle: input.jobTitle } : {}),
         },

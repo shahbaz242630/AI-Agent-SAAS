@@ -23,9 +23,11 @@ const ROW = {
 };
 
 const activity = (over: Partial<Parameters<typeof WeekPanel>[0]["activity"]> = {}) => ({
-  counts: { sentLast7Days: 14, waiting: 3, failedLast7Days: 1 },
+  counts: { sentLast7Days: 14, waiting: 3, failedLast7Days: 1, scheduled: 0 },
   waitingReason: null,
+  noWorkingMailbox: false,
   recent: [ROW],
+  upcoming: [],
   ...over,
 });
 
@@ -33,7 +35,9 @@ describe("Eva this week, rendered", () => {
   it("shows all three counters, including the ones that are zero", () => {
     const html = renderToStaticMarkup(
       <WeekPanel
-        activity={activity({ counts: { sentLast7Days: 0, waiting: 0, failedLast7Days: 0 } })}
+        activity={activity({
+          counts: { sentLast7Days: 0, waiting: 0, failedLast7Days: 0, scheduled: 0 },
+        })}
       />,
     );
     // Hiding a zeroed counter makes its absence ambiguous — is nothing broken,

@@ -68,6 +68,17 @@ export interface CurrencyTotal {
 }
 
 /**
+ * The views whose own heading ASKS for money nobody is collecting.
+ *
+ * ⚠️ ONLY THESE MAY BE TOTALLED FROM `matchedByCurrency`. Under "Drafts" or
+ * "Cancelled" the reader asked for exactly that money and the heading says so,
+ * which makes the figure honest. Under ANY other heading — above all the
+ * unfiltered one — the same figure becomes a claim about what the business is
+ * owed, and a cancelled invoice is not that.
+ */
+const NON_COLLECTING_VIEWS: ReadonlySet<string> = new Set(["draft", "cancelled"]);
+
+/**
  * Which list feeds the picker and which feeds the figure.
  *
  * ⚠️ THIS EXISTS TO MAKE THE MOST BREAKABLE DECISION ON THE SCREEN TESTABLE.
@@ -82,21 +93,40 @@ export interface CurrencyTotal {
  *   collapse it to the currency already chosen and hide the rest of the book.
  * - The FIGURE is the FILTERED list, because it sits above a table the view
  *   tabs filter, and whole-book money over an "Overdue" list reads as two
- *   numbers disagreeing.
+ *   numbers disagreeing. WHICH filtered list depends on the heading — below.
+ *
+ * ⚠️ A THIRD LIST EXISTS BECAUSE "FILTERED" WAS NOT ENOUGH. `matched` follows
+ * the tabs, which made it look correct under every heading — but the
+ * unfiltered "Everything" tab is the ONE view that contains CANCELLED
+ * invoices, and on 2026-08-12 production told the founder £4,525.00 was
+ * outstanding when the only invoice on the book had been cancelled. Home, on
+ * the same data, correctly said nothing was. `collectable` is that same filter
+ * with the states nobody is collecting removed, and it is what every ordinary
+ * heading gets; `matched` is now reserved for the headings that ASK for
+ * uncollectable money and say so.
  */
 export function bookMoneyPanel(
-  book: { chasedByCurrency: CurrencyTotal[]; matchedByCurrency: CurrencyTotal[] },
+  book: {
+    chasedByCurrency: CurrencyTotal[];
+    matchedByCurrency: CurrencyTotal[];
+    collectableByCurrency: CurrencyTotal[];
+  },
   requestedCurrency?: string,
+  view?: string,
 ): {
   currencies: CurrencyTotal[];
   selectedCurrency: string;
   money: CurrencyTotal | undefined;
 } {
   const selectedCurrency = defaultBookCurrency(book.chasedByCurrency, requestedCurrency);
+  const figures =
+    view !== undefined && NON_COLLECTING_VIEWS.has(view)
+      ? book.matchedByCurrency
+      : book.collectableByCurrency;
   return {
     currencies: book.chasedByCurrency,
     selectedCurrency,
-    money: book.matchedByCurrency.find((row) => row.currency === selectedCurrency),
+    money: figures.find((row) => row.currency === selectedCurrency),
   };
 }
 
@@ -109,16 +139,26 @@ export function bookMoneyPanel(
  * "1 invoice", and the two numbers appeared to disagree. Whichever figure a
  * reader trusted, one of them was answering a question they had not asked.
  *
- * ⚠️ "OUTSTANDING" IS ONLY TRUE OF THE UNFILTERED VIEW, which is why each view
- * gets its own word. A draft has not been sent to anybody, so no money in it is
- * outstanding — calling it that would misreport the one figure a business reads
- * first, in the direction that flatters us.
+ * ⚠️ EACH VIEW GETS ITS OWN WORD, AND "OUTSTANDING" IS NOT A SAFE DEFAULT.
+ * A draft has not been sent to anybody, so no money in it is outstanding —
+ * calling it that would misreport the one figure a business reads first, in
+ * the direction that flatters us.
+ *
+ * ⚠️ THE UNFILTERED VIEW WAS ONCE ASSUMED TO BE THE SAFE ONE HERE. It is the
+ * least safe of all: "Everything" is the only view that includes CANCELLED
+ * invoices, and that assumption is what shipped a wrong number to production.
+ * The wording is now only half the guard — `bookMoneyPanel` chooses which
+ * money is counted and this chooses what to call it, and the two must agree.
  */
 const TOTAL_LINE: Readonly<Record<string, { some: string; none: string }>> = {
   overdue: { some: "overdue across", none: "Nothing overdue in" },
   due_today: { some: "due today, across", none: "Nothing due today in" },
   due_soon: { some: "due soon, across", none: "Nothing due soon in" },
   draft: { some: "in drafts, across", none: "No drafts in" },
+  /* Reachable by typing `?status=cancelled` — the filters live in the URL on
+     purpose. With no words of its own it fell through to "outstanding", which
+     is the precise sentence that overstated the founder's book. */
+  cancelled: { some: "in cancelled invoices, across", none: "No cancelled invoices in" },
 };
 
 const TOTAL_LINE_DEFAULT = { some: "outstanding across", none: "Nothing outstanding in" };

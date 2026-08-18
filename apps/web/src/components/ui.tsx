@@ -226,15 +226,57 @@ export function EmptyState({
   );
 }
 
+/**
+ * The ink of a primary control at dashboard size.
+ *
+ * ⚠️ SHARED BY THE LINK AND THE BUTTON BELOW ON PURPOSE. A screen whose two
+ * actions are one link and one button — Invoices is exactly that — puts them
+ * side by side, and two hand-written class lists drift by a pixel of padding
+ * or a step of type and read as a mistake. `GhostLink` is the secondary half
+ * of this pair and carries the same box.
+ */
+const PRIMARY_CONTROL =
+  "rounded-[var(--radius-control)] bg-primary px-4 py-2 text-[13px] font-semibold text-primary-foreground shadow-[var(--shadow-primary)] hover:opacity-90";
+
 /** The one primary action on a screen. */
 export function PrimaryLink({ href, children }: { href: string; children: React.ReactNode }) {
   return (
-    <Link
-      href={href}
-      className="rounded-[var(--radius-control)] bg-primary px-4 py-2 text-[13px] font-semibold text-primary-foreground shadow-[var(--shadow-primary)] hover:opacity-90"
-    >
+    <Link href={href} className={PRIMARY_CONTROL}>
       {children}
     </Link>
+  );
+}
+
+/**
+ * The same primary action when it opens something in place rather than
+ * navigating.
+ *
+ * ⚠️ `expanded` IS NOT DECORATION. This button is a disclosure — it reveals a
+ * form below itself — and a sighted person can see that happen. Without
+ * `aria-expanded` somebody using a screen reader is told only "button", clicks
+ * it, and is given no reason to believe anything happened.
+ *
+ * ⚠️ `type="button"` IS LOAD-BEARING. This sits in the same row as controls
+ * that belong to forms; the HTML default of "submit" would make it submit one.
+ */
+export function PrimaryAction({
+  onClick,
+  expanded,
+  children,
+}: {
+  onClick: () => void;
+  expanded?: boolean | undefined;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      {...(expanded === undefined ? {} : { "aria-expanded": expanded })}
+      className={`cursor-pointer ${PRIMARY_CONTROL}`}
+    >
+      {children}
+    </button>
   );
 }
 
@@ -276,6 +318,32 @@ export function PrimaryButton({
     >
       {children}
     </button>
+  );
+}
+
+/**
+ * The way back out of a screen you stepped into.
+ *
+ * ⚠️ A CHIP, NOT A SENTENCE (founder, 2026-08-18: the upload screen's
+ * *"Back to your invoices"* — muted grey text at the very bottom of the page —
+ * *"looks like a write up not prominent"*). It was already a chip on the auth
+ * pages and on onboarding, both of which hand-rolled the same class list. This
+ * is that chip, in one place, so the third copy is an import rather than a
+ * paste that drifts.
+ *
+ * ⚠️ IT BELONGS AT THE TOP OF THE SCREEN. Every other back control in the
+ * product sits above the heading, which is where somebody looks when they want
+ * out — not after the thing they were reading.
+ */
+export function BackChip({ href, children }: { href: string; children: React.ReactNode }) {
+  return (
+    <Link
+      href={href}
+      className="inline-flex w-fit items-center gap-1.5 rounded-[var(--radius-pill)] border border-input-border bg-surface px-3.5 py-[7px] text-[12.5px] font-semibold text-label hover:bg-chip-hover"
+    >
+      <span aria-hidden>←</span>
+      {children}
+    </Link>
   );
 }
 

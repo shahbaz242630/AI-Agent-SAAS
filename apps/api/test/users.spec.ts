@@ -155,4 +155,112 @@ describe("GET /users/me", () => {
       expect(response.body.authUserId).toBe(sub);
     });
   });
+
+  /**
+   * The two-day idle sign-out (founder's request, 2026-08-12).
+   *
+   * ⚠️ ENFORCED HERE AND NOT ONLY IN THE BROWSER, WHICH IS THE ENTIRE POINT.
+   * The proxy's cookie gives the customer a page that explains itself; it
+   * cannot be the rule, because a stolen session carries that cookie with it
+   * and vouches for whoever holds it. These tests speak to the API directly,
+   * exactly as a thief with a lifted token would.
+   */
+  describe("a session left idle", () => {
+    const DAY_MS = 24 * 60 * 60 * 1000;
+
+    /** Signs somebody in, then rewrites when they were last seen. */
+    const userLastSeen = async (email: string, lastSeenAt: Date | null): Promise<string> => {
+      const sub = randomUUID();
+      const token = await signToken({ sub, email });
+      await request(app.getHttpServer())
+        .get("/users/me")
+        .set("Authorization", `Bearer ${token}`)
+        .expect(200);
+      await owner.user.update({ where: { authUserId: sub }, data: { lastSeenAt } });
+      return token;
+    };
+
+    it("stamps the first sign-in, so the clock starts", async () => {
+      const sub = randomUUID();
+      await request(app.getHttpServer())
+        .get("/users/me")
+        .set("Authorization", `Bearer ${await signToken({ sub, email: "stamped@test.eva.local" })}`)
+        .expect(200);
+
+      const stored = await owner.user.findUniqueOrThrow({ where: { authUserId: sub } });
+      expect(stored.lastSeenAt).toBeInstanceOf(Date);
+    });
+
+    it("lets yesterday's session straight back in", async () => {
+      const token = await userLastSeen(
+        "yesterday@test.eva.local",
+        new Date(Date.now() - 1 * DAY_MS),
+      );
+      await request(app.getHttpServer())
+        .get("/users/me")
+        .set("Authorization", `Bearer ${token}`)
+        .expect(200);
+    });
+
+    /**
+     * ⚠️ THE CODE IS LOAD-BEARING, NOT DECORATION. A bare 401 sends the web app
+     * to /sign-in, where the Supabase cookie is still valid — so the proxy
+     * sends them back to /app, which 401s again, forever. The browser needs to
+     * tell "stale session" from "bad token" to know it must END the session.
+     */
+    it("refuses one left for more than two days, and says why in a code", async () => {
+      const token = await userLastSeen("idle@test.eva.local", new Date(Date.now() - 3 * DAY_MS));
+
+      const response = await request(app.getHttpServer())
+        .get("/users/me")
+        .set("Authorization", `Bearer ${token}`)
+        .expect(401);
+
+      expect(response.body.code).toBe("session_idle_timeout");
+      expect(response.body.message).toMatch(/idle for two days/i);
+    });
+
+    /**
+     * ⚠️ THE ONE THAT WOULD HAVE SIGNED OUT THE ENTIRE CUSTOMER BASE ON DEPLOY.
+     * Every row has a null `last_seen_at` the moment the column ships. Reading
+     * that as "idle since the epoch" ends every live session at once — from a
+     * change meant to be invisible to anyone actually using the product.
+     */
+    it("treats a row it has never seen as fresh, and starts its clock", async () => {
+      const token = await userLastSeen("never.seen@test.eva.local", null);
+
+      await request(app.getHttpServer())
+        .get("/users/me")
+        .set("Authorization", `Bearer ${token}`)
+        .expect(200);
+
+      const stored = await owner.user.findFirstOrThrow({
+        where: { email: "never.seen@test.eva.local" },
+      });
+      expect(stored.lastSeenAt).toBeInstanceOf(Date);
+    });
+
+    /**
+     * ⚠️ NOT A WRITE PER REQUEST. The dashboard asks five questions to draw
+     * itself, so stamping on every call is five writes per screen, per person,
+     * forever — on a free-tier database. Five minutes of imprecision is nothing
+     * against a two-day window.
+     */
+    it("does not rewrite the stamp on every single request", async () => {
+      const sub = randomUUID();
+      const token = await signToken({ sub, email: "throttled@test.eva.local" });
+      const call = () =>
+        request(app.getHttpServer())
+          .get("/users/me")
+          .set("Authorization", `Bearer ${token}`)
+          .expect(200);
+
+      await call();
+      const first = await owner.user.findUniqueOrThrow({ where: { authUserId: sub } });
+      await call();
+      const second = await owner.user.findUniqueOrThrow({ where: { authUserId: sub } });
+
+      expect(second.lastSeenAt?.toISOString()).toBe(first.lastSeenAt?.toISOString());
+    });
+  });
 });

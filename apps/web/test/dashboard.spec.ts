@@ -133,7 +133,7 @@ describe("dashboard", () => {
   });
 
   describe("what needs a human", () => {
-    const quiet = { sentLast7Days: 0, waiting: 0, failedLast7Days: 0 };
+    const quiet = { sentLast7Days: 0, waiting: 0, failedLast7Days: 0, scheduled: 0 };
 
     it("says nothing at all when there is nothing to do", () => {
       expect(
@@ -155,7 +155,7 @@ describe("dashboard", () => {
     it("colours a stopped thing red and a pending thing amber", () => {
       const items = attentionItems({
         mailboxConnected: false,
-        counts: { sentLast7Days: 0, waiting: 4, failedLast7Days: 2 },
+        counts: { sentLast7Days: 0, waiting: 4, failedLast7Days: 2, scheduled: 0 },
         waitingReason: "unknown",
       });
       const tone = (kind: string) => items.find((i) => i.kind === kind)?.tone;
@@ -169,7 +169,7 @@ describe("dashboard", () => {
     it("puts a disconnected mailbox above everything else", () => {
       const items = attentionItems({
         mailboxConnected: false,
-        counts: { sentLast7Days: 0, waiting: 4, failedLast7Days: 2 },
+        counts: { sentLast7Days: 0, waiting: 4, failedLast7Days: 2, scheduled: 0 },
         waitingReason: "unknown",
       });
       expect(items[0]?.kind).toBe("no_mailbox");
@@ -183,7 +183,7 @@ describe("dashboard", () => {
     it("does not repeat the mailbox as a separate 'waiting' item", () => {
       const items = attentionItems({
         mailboxConnected: false,
-        counts: { sentLast7Days: 0, waiting: 4, failedLast7Days: 0 },
+        counts: { sentLast7Days: 0, waiting: 4, failedLast7Days: 0, scheduled: 0 },
         waitingReason: "no_working_mailbox",
       });
       expect(items.map((i) => i.kind)).toEqual(["no_mailbox"]);
@@ -205,7 +205,7 @@ describe("dashboard", () => {
     it("reports failures and waiting reminders with a way to look at them", () => {
       const items = attentionItems({
         mailboxConnected: true,
-        counts: { sentLast7Days: 3, waiting: 1, failedLast7Days: 1 },
+        counts: { sentLast7Days: 3, waiting: 1, failedLast7Days: 1, scheduled: 0 },
         waitingReason: "unknown",
       });
       expect(items.map((i) => i.kind)).toEqual(["reminders_failed", "reminders_waiting"]);
@@ -217,18 +217,65 @@ describe("dashboard", () => {
   });
 
   describe("Eva's week", () => {
+    /** Dates arrive pre-resolved in the org's timezone; the panel only formats. */
+    const asGiven = (isoDate: string) => isoDate;
+
+    const week = (
+      counts: {
+        sentLast7Days: number;
+        waiting: number;
+        failedLast7Days: number;
+        scheduled: number;
+      },
+      upcoming: { scheduledDate: string }[] = [],
+    ) =>
+      chaseSummary(
+        { counts, upcoming: upcoming as Parameters<typeof chaseSummary>[0]["upcoming"] },
+        asGiven,
+      );
+
     it("says a quiet week is a quiet week, not a problem", () => {
-      const line = chaseSummary({ sentLast7Days: 0, waiting: 0, failedLast7Days: 0 });
+      const line = week({ sentLast7Days: 0, waiting: 0, failedLast7Days: 0, scheduled: 0 });
       expect(line).toContain("hasn't needed to chase");
     });
 
     it("counts what was sent", () => {
-      expect(chaseSummary({ sentLast7Days: 1, waiting: 0, failedLast7Days: 0 })).toContain(
+      expect(week({ sentLast7Days: 1, waiting: 0, failedLast7Days: 0, scheduled: 0 })).toContain(
         "1 reminder sent",
       );
-      expect(chaseSummary({ sentLast7Days: 6, waiting: 0, failedLast7Days: 0 })).toContain(
+      expect(week({ sentLast7Days: 6, waiting: 0, failedLast7Days: 0, scheduled: 0 })).toContain(
         "6 reminders sent",
       );
+    });
+
+    /**
+     * ⚠️ A QUIET WEEK AND AN IDLE PRODUCT ARE NOT THE SAME THING (found by
+     * walking, 2026-08-18). This line said "Eva hasn't needed to chase anyone"
+     * on a Home screen showing £45,711 outstanding with six reminders already
+     * scheduled. The customer's real question is whether Eva is going to do
+     * anything, and only the date answers it.
+     */
+    it("names the next reminder's date when the week was quiet but a plan exists", () => {
+      const line = week({ sentLast7Days: 0, waiting: 0, failedLast7Days: 0, scheduled: 6 }, [
+        { scheduledDate: "2026-09-15" },
+      ]);
+      expect(line).toContain("2026-09-15");
+      expect(line).not.toContain("hasn't needed to chase");
+    });
+
+    /** With nothing scheduled the old sentence is the true one — keep it. */
+    it("falls back to the quiet-week line when there is genuinely no plan", () => {
+      const line = week({ sentLast7Days: 0, waiting: 0, failedLast7Days: 0, scheduled: 0 }, []);
+      expect(line).toContain("hasn't needed to chase");
+    });
+
+    /** A busy week is still reported as a busy week; the plan does not hijack it. */
+    it("still reports what was sent when the week was not quiet", () => {
+      const line = week({ sentLast7Days: 3, waiting: 0, failedLast7Days: 0, scheduled: 6 }, [
+        { scheduledDate: "2026-09-15" },
+      ]);
+      expect(line).toContain("3 reminders sent");
+      expect(line).not.toContain("2026-09-15");
     });
   });
 });

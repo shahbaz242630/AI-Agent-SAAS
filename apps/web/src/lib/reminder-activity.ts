@@ -1,9 +1,4 @@
-import type {
-  ReminderActivityDto,
-  ReminderStepKey,
-  ReminderWaitingReason,
-  ScheduledActionStatus,
-} from "@eva/types";
+import type { ReminderStepKey, ReminderWaitingReason, ScheduledActionStatus } from "@eva/types";
 
 /**
  * How the chase activity screen reads (Slice 1.7).
@@ -106,18 +101,58 @@ export function explainWaiting(
   };
 }
 
+export interface HistoryEmptyState {
+  headline: string;
+  detail: string;
+}
+
 /**
- * The one-line summary at the top.
+ * What to say when Eva has not written to anybody YET.
  *
- * "Nothing yet" is a real answer and must not read as an error: a new customer
- * with no overdue invoices is the healthiest possible state, and telling them
- * something looks wrong would be a lie.
+ * ⚠️ THE OLD COPY WAS A FLAT LIE FOR EVERY NEW CUSTOMER (found by walking,
+ * 2026-08-18). It read "Nothing is wrong — Eva simply has not needed to write
+ * to anybody", unconditionally, while six reminders sat scheduled in the
+ * database for an invoice worth £45,711. "Has not needed to" and "is not due
+ * yet" are different statements, and only one of them was true.
+ *
+ * Three genuinely different situations, and the screen must tell them apart:
+ *
+ * - **Nothing scheduled at all.** The old sentence, and now it is accurate:
+ *   there is no plan because nothing needs one.
+ * - **Something scheduled, and we can send it.** Say when the first one goes.
+ *   That is the whole answer to "is this thing actually working?".
+ * - **Something scheduled and nowhere to send from.** Say that FIRST. A date
+ *   we cannot keep is worse than no date, and it is the one case with an
+ *   action attached.
  */
-export function summarise(counts: ReminderActivityDto["counts"]): string {
-  if (counts.sentLast7Days === 0 && counts.waiting === 0 && counts.failedLast7Days === 0) {
-    return "Eva hasn't needed to chase anyone in the last week.";
+export function describeNoHistoryYet(input: {
+  scheduled: number;
+  noWorkingMailbox: boolean;
+  /** The soonest upcoming reminder's date, `YYYY-MM-DD`; null when none. */
+  nextDate: string | null;
+  /** Formats a calendar date for display — passed in, never re-derived here. */
+  formatDate: (isoDate: string) => string;
+}): HistoryEmptyState {
+  if (input.scheduled === 0 || input.nextDate === null) {
+    return {
+      headline: "Nothing to show yet.",
+      detail:
+        "Reminders appear here once an invoice is overdue enough to chase. Nothing is wrong — Eva simply has not needed to write to anybody.",
+    };
   }
-  const sent =
-    counts.sentLast7Days === 1 ? "1 reminder sent" : `${counts.sentLast7Days} reminders sent`;
-  return `${sent} in the last 7 days.`;
+
+  const count = input.scheduled === 1 ? "1 reminder is" : `${input.scheduled} reminders are`;
+  const when = input.formatDate(input.nextDate);
+
+  if (input.noWorkingMailbox) {
+    return {
+      headline: "Nothing has gone out — there is nowhere to send from.",
+      detail: `${count} lined up, the first on ${when}, but no mailbox is connected. Nothing is lost — connect one and they go on the next run.`,
+    };
+  }
+
+  return {
+    headline: "Nothing has gone out yet.",
+    detail: `That is because nothing is due. ${count} lined up, starting on ${when}.`,
+  };
 }
