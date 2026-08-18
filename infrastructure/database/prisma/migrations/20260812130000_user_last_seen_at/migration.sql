@@ -1,0 +1,13 @@
+-- The two-day idle sign-out (founder's request, 2026-08-12).
+--
+-- Supabase's own inactivity timeout is a Pro-plan feature, so the rule is
+-- enforced in our API against this column. Stored rather than carried in the
+-- browser on purpose: a timestamp the client holds is replayed along with a
+-- stolen session, and this one is not.
+--
+-- NULLABLE WITH NO BACKFILL, DELIBERATELY. Every existing row gets NULL, and
+-- the application reads NULL as "fresh, stamp it on the next request" — see
+-- isSessionIdle in @eva/types. Backfilling a default of now() would work too,
+-- but it would quietly assert an activity time that never happened; leaving it
+-- NULL keeps the column honest about what it knows.
+ALTER TABLE "users" ADD COLUMN "last_seen_at" TIMESTAMPTZ(6);

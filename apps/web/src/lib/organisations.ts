@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
 import { ApiError, apiFetch } from "./api";
+import { sessionFailureDestination } from "./session";
 
 /**
  * The caller's organisations — the first thing eleven of the twelve signed-in
@@ -19,6 +20,13 @@ import { ApiError, apiFetch } from "./api";
  * password on their phone and returns to a laptop tab is exactly the person who
  * would have met a crash page.
  *
+ * ⚠️ NOT EVERY 401 GOES TO THE SAME PLACE (2026-08-12). A session the API ended
+ * for two days of idleness still has a valid Supabase cookie behind it, so
+ * `/sign-in` bounces it back to `/app` and round it goes. Because this call is
+ * the FIRST thing eleven screens make, sending it somewhere that can actually
+ * end the session is what stops that loop for all of them at once — see
+ * `lib/session.ts`.
+ *
  * Everything else is rethrown, deliberately, for `app/app/error.tsx` — one
  * screen that explains the failure and shows the reference, rather than eleven
  * copies of a try/catch that will drift apart.
@@ -27,7 +35,9 @@ export async function fetchOrganisations<T>(accessToken: string): Promise<T[]> {
   try {
     return (await (await apiFetch("/organisations", accessToken)).json()) as T[];
   } catch (error) {
-    if (error instanceof ApiError && error.status === 401) redirect("/sign-in");
+    if (error instanceof ApiError && error.status === 401) {
+      redirect(sessionFailureDestination(error.code));
+    }
     throw error;
   }
 }

@@ -115,8 +115,14 @@ export async function apiFetch(
 
   // 401 keeps our own copy: the API says "Unauthorized", which tells the user
   // nothing about what to do, and "sign in again" is always the right advice.
+  //
+  // ⚠️ THE BODY IS STILL READ, FOR ITS CODE. This branch used to return before
+  // touching it, which threw away the one thing that distinguishes a stale
+  // token from a session the API deliberately ended — and the two need opposite
+  // handling, because only the second still has valid cookies to clear.
   if (response.status === 401) {
-    throw new ApiError("Your session has expired. Please sign in again.", 401);
+    const detail = await readApiError(response);
+    throw new ApiError("Your session has expired. Please sign in again.", 401, detail?.code);
   }
   if (!response.ok) {
     // Defect F4: this used to build a message from the status code alone and

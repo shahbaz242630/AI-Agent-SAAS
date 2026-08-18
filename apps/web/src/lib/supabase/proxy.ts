@@ -1,6 +1,37 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
+import { isSessionIdle } from "@eva/types";
 import { getSupabaseEnv } from "./env";
+
+/**
+ * When this browser last asked for a page, as epoch milliseconds.
+ *
+ * ⚠️ THIS IS THE EXPERIENCE, NOT THE ENFORCEMENT. The rule is enforced in the
+ * API against a stored timestamp, because anything the browser carries travels
+ * with a stolen session and vouches for the thief. This cookie exists so the
+ * customer meets a page that says what happened, instead of an app that 401s
+ * and bounces — and so the check costs no round trip on the common path.
+ *
+ * ⚠️ IT MUST BE CLEARED THE MOMENT THERE IS NO USER. Left behind by a sign-out,
+ * a stale stamp signs the customer out again the instant they sign back in —
+ * and because the sign-in itself succeeds, it looks like the password failed.
+ */
+export const ACTIVITY_COOKIE = "eva_seen";
+
+const ACTIVITY_COOKIE_OPTIONS = {
+  httpOnly: true,
+  sameSite: "lax",
+  path: "/",
+  secure: process.env.NODE_ENV === "production",
+} as const;
+
+/** The stamp this browser is carrying, or null if it has none or nonsense. */
+export function readActivityStamp(raw: string | undefined): Date | null {
+  if (!raw) return null;
+  const millis = Number(raw);
+  if (!Number.isFinite(millis) || millis <= 0) return null;
+  return new Date(millis);
+}
 
 /**
  * Pages that require a signed-in user.
@@ -86,6 +117,13 @@ export async function updateSession(request: NextRequest): Promise<NextResponse>
 
   const kind = routeKind(pathname);
 
+  if (!user) {
+    // No session, so the stamp has nothing to describe. Clearing it here is
+    // what stops a sign-out leaving a two-day-old stamp behind to ambush the
+    // next sign-in.
+    supabaseResponse.cookies.delete(ACTIVITY_COOKIE);
+  }
+
   if (!user && kind === "protected") {
     const redirectUrl = request.nextUrl.clone();
     // A dead recovery link is the one case where sign-in is the wrong door:
@@ -93,7 +131,34 @@ export async function updateSession(request: NextRequest): Promise<NextResponse>
     const recovery = matches(pathname, "/new-password");
     redirectUrl.pathname = recovery ? "/reset-password" : "/sign-in";
     redirectUrl.search = recovery ? "?error=link" : "";
-    return NextResponse.redirect(redirectUrl);
+    const response = NextResponse.redirect(redirectUrl);
+    response.cookies.delete(ACTIVITY_COOKIE);
+    return response;
+  }
+
+  if (user && kind === "protected") {
+    const seenAt = readActivityStamp(request.cookies.get(ACTIVITY_COOKIE)?.value);
+    if (isSessionIdle(seenAt, new Date())) {
+      /**
+       * ⚠️ SCOPE "local", NEVER THE DEFAULT. A global sign-out ends every
+       * session this person has, on every device — so leaving one tab alone for
+       * the weekend would throw them out of the laptop they use daily. The idle
+       * rule is about THIS browser; the API's own check is what covers the
+       * account as a whole.
+       */
+      await supabase.auth.signOut({ scope: "local" });
+      const redirectUrl = request.nextUrl.clone();
+      redirectUrl.pathname = "/signed-out";
+      redirectUrl.search = "?reason=idle";
+      const response = NextResponse.redirect(redirectUrl);
+      // signOut wrote the cleared auth cookies onto `supabaseResponse`; they
+      // have to travel onto the response actually being returned, or the
+      // browser keeps a session we just decided to end.
+      for (const cookie of supabaseResponse.cookies.getAll()) response.cookies.set(cookie);
+      response.cookies.delete(ACTIVITY_COOKIE);
+      return response;
+    }
+    supabaseResponse.cookies.set(ACTIVITY_COOKIE, String(Date.now()), ACTIVITY_COOKIE_OPTIONS);
   }
 
   if (user && kind === "anonymous-only") {

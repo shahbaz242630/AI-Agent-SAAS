@@ -5,6 +5,7 @@ import { ApiError, apiFetch } from "@/lib/api";
 import { attentionItems, owedRows, type CurrencyTotal } from "@/lib/dashboard";
 import { firstNameFrom } from "@/lib/identity";
 import { can } from "@/lib/permissions";
+import { sessionFailureDestination } from "@/lib/session";
 import { createClient } from "@/lib/supabase/server";
 import { greeting, todayLabel } from "@/lib/today";
 import { OwedPanel } from "./owed-panel";
@@ -63,7 +64,12 @@ export default async function AppHomePage() {
       await apiFetch("/organisations", accessToken)
     ).json()) as OrganisationSummary[];
   } catch (error) {
-    if (error instanceof ApiError && error.status === 401) redirect("/sign-in");
+    /* Home asks for organisations itself rather than through
+       `fetchOrganisations`, so it needs the same idle-session handling — the
+       one screen that would otherwise still loop. See `lib/session.ts`. */
+    if (error instanceof ApiError && error.status === 401) {
+      redirect(sessionFailureDestination(error.code));
+    }
     return (
       <main className="flex w-full max-w-[1080px] flex-1 flex-col gap-[26px] px-10 pt-8 pb-9">
         <h1 className="font-display text-[29px] font-semibold">Something went wrong</h1>

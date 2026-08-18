@@ -90,6 +90,10 @@ model User {
   updatedAt   DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
   createdBy   String?   @map("created_by") @db.Uuid
   deletedAt   DateTime? @map("deleted_at") @db.Timestamptz(6)
+  /// Last request this user made, for the two-day idle sign-out. NULL means
+  /// "not seen since the column shipped" and is treated as fresh, never stale —
+  /// see isSessionIdle in @eva/types.
+  lastSeenAt  DateTime? @map("last_seen_at") @db.Timestamptz(6)
   memberships OrganisationMembership[]
   auditLogs   AuditLog[]
 

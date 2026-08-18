@@ -3,10 +3,12 @@ import { ConflictException, Injectable } from "@nestjs/common";
 // eslint-disable-next-line @typescript-eslint/consistent-type-imports
 import { PinoLogger } from "nestjs-pino";
 import { withAuthIdentity, withUser } from "@eva/database";
+import { SESSION_ACTIVITY_WRITE_INTERVAL_MS, isSessionIdle } from "@eva/types";
 import { isUniqueViolationOn } from "../../common/errors/database-fault.js";
 // eslint-disable-next-line @typescript-eslint/consistent-type-imports
 import { PrismaService } from "../../common/database/prisma.service.js";
 import type { AuthUser } from "../authentication/current-auth-user.decorator.js";
+import { SessionIdleTimeoutException } from "../authentication/session-idle-timeout.exception.js";
 
 export interface AppUser {
   id: string;
@@ -14,6 +16,9 @@ export interface AppUser {
   fullName: string | null;
   authUserId: string | null;
 }
+
+/** The stored row — `AppUser` plus the column only this service reads. */
+type StoredUser = AppUser & { lastSeenAt: Date | null };
 
 @Injectable()
 export class UsersService {
@@ -32,21 +37,82 @@ export class UsersService {
    */
   async resolveOrProvision(authUser: AuthUser): Promise<AppUser> {
     const existing = await this.findByAuthUserId(authUser.authUserId);
-    if (existing) return existing;
+    if (existing) return this.admitReturningUser(existing);
 
     const id = randomUUID();
     const email = authUser.email.toLowerCase();
     try {
       return await withUser(this.prisma.db, id, (tx) =>
-        tx.user.create({ data: { id, email, authUserId: authUser.authUserId } }),
+        tx.user.create({
+          data: { id, email, authUserId: authUser.authUserId, lastSeenAt: new Date() },
+        }),
       );
     } catch (error) {
       // Concurrent first login: the other request won the insert — re-read.
       const raced = await this.findByAuthUserId(authUser.authUserId);
-      if (raced) return raced;
+      if (raced) return this.admitReturningUser(raced);
       if (isUniqueViolationOn(error, "email")) throw this.emailAlreadyClaimed(authUser);
       throw error;
     }
+  }
+
+  /**
+   * The two-day idle sign-out (founder's request, 2026-08-12), enforced on the
+   * read every data path already does.
+   *
+   * ⚠️ IT LIVES HERE AND NOT IN THE AUTH GUARD ON PURPOSE. The guard verifies
+   * the JWT against a cached key and touches no database at all — putting the
+   * check there would add a round trip to EVERY request, and our compute is in
+   * Oregon while the database is in London (handoff §6). This method runs after
+   * a read that had to happen anyway, so the rule costs nothing.
+   *
+   * ⚠️ SERVER-SIDE BECAUSE THAT IS THE WHOLE POINT. A timestamp the browser
+   * carries travels with a stolen session and vouches for the thief. This one
+   * is ours.
+   */
+  private async admitReturningUser(user: StoredUser): Promise<AppUser> {
+    const now = new Date();
+    if (isSessionIdle(user.lastSeenAt, now)) throw this.sessionIdledOut(user);
+    if (this.shouldStampActivity(user.lastSeenAt, now)) await this.stampActivity(user.id, now);
+    return user;
+  }
+
+  /** NULL stamps immediately — that is the first request after the column shipped. */
+  private shouldStampActivity(lastSeenAt: Date | null, now: Date): boolean {
+    if (!lastSeenAt) return true;
+    return now.getTime() - lastSeenAt.getTime() > SESSION_ACTIVITY_WRITE_INTERVAL_MS;
+  }
+
+  /**
+   * ⚠️ RAW, SO `updated_at` IS NOT DRAGGED ALONG. Prisma applies `@updatedAt` on
+   * every `update()`, which would make "when did this record last change" mean
+   * "when did this person last click something" — two different questions, and
+   * the second one would overwrite the first every five minutes forever.
+   *
+   * The tenant policy on `users` allows a row to write itself
+   * (`WITH CHECK (id = app.current_user)`), which is exactly this.
+   */
+  private async stampActivity(userId: string, now: Date): Promise<void> {
+    await withUser(
+      this.prisma.db,
+      userId,
+      (tx) => tx.$executeRaw`UPDATE users SET last_seen_at = ${now} WHERE id = ${userId}::uuid`,
+    );
+  }
+
+  /**
+   * ⚠️ THE CODE MATTERS MORE THAN THE MESSAGE. A bare 401 sends the web app to
+   * `/sign-in`, where the Supabase cookie is still perfectly valid — so the
+   * proxy sends them straight back to `/app`, which 401s again. The named code
+   * is what lets the browser tell "your session went stale" apart from "your
+   * token is rubbish" and actually END the session instead of looping.
+   */
+  private sessionIdledOut(user: StoredUser): SessionIdleTimeoutException {
+    this.logger.info(
+      { userId: user.id, lastSeenAt: user.lastSeenAt?.toISOString() ?? null },
+      "session ended: idle longer than the two-day limit",
+    );
+    return new SessionIdleTimeoutException();
   }
 
   /**
@@ -92,7 +158,7 @@ export class UsersService {
     );
   }
 
-  private findByAuthUserId(authUserId: string): Promise<AppUser | null> {
+  private findByAuthUserId(authUserId: string): Promise<StoredUser | null> {
     return withAuthIdentity(this.prisma.db, authUserId, (tx) =>
       tx.user.findFirst({ where: { authUserId } }),
     );
