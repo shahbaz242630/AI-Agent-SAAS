@@ -93,8 +93,26 @@ export const createContactRequestSchema = z.object({
 
 export type CreateContactRequest = z.infer<typeof createContactRequestSchema>;
 
-/** PATCH .../contacts/:contactId payload (Slice 1.1). */
-export const updateContactRequestSchema = createContactRequestSchema.partial();
+/**
+ * PATCH .../contacts/:contactId payload (Slice 1.1).
+ *
+ * ⚠️ THE OPTIONAL FIELDS ARE NULLABLE HERE AND NOT ON CREATE, and the
+ * difference is the same one `updateInvoiceRequestSchema` documents below. On
+ * create, "this contact has no phone" is said by leaving the field out. On
+ * update it cannot be: an absent field means "leave this alone", so without an
+ * explicit null there is no way to REMOVE an address or a number that turned
+ * out to be wrong. A form would clear the box, report success, and keep the old
+ * value — the exact failure this project keeps finding.
+ *
+ * ⚠️ CLEARING `email` IS A REAL DECISION, NOT A TIDY-UP. A contact with no
+ * address cannot be chased — `reminder-eligibility.ts` holds the invoice — so
+ * whatever offers this must say so before it happens.
+ */
+export const updateContactRequestSchema = createContactRequestSchema.partial().extend({
+  email: z.email().max(320).nullable().optional(),
+  phone: z.string().trim().min(1).max(50).nullable().optional(),
+  jobTitle: z.string().trim().min(1).max(100).nullable().optional(),
+});
 
 export type UpdateContactRequest = z.infer<typeof updateContactRequestSchema>;
 
@@ -224,6 +242,21 @@ export type RecordPaymentRequest = z.infer<typeof recordPaymentRequestSchema>;
  */
 export const addBookRowRequestSchema = z
   .object({
+    /**
+     * The client this invoice belongs to, when the person raising it PICKED one
+     * that already exists (founder, 2026-08-18).
+     *
+     * ⚠️ AN IDENTITY BEATS A NAME, AND THAT IS THE WHOLE POINT. `clientName`
+     * alone is resolved by case-insensitive exact match, which cannot tell two
+     * real clients called "Imran Khalid" apart — a freelancer with two
+     * same-named customers had no way to say which one, and the API could only
+     * refuse. When this is present the name is not matched at all.
+     *
+     * ⚠️ `clientName` STAYS REQUIRED even alongside this. It is what a brand new
+     * client is created FROM, and keeping it lets the two paths share one
+     * payload instead of becoming two endpoints that drift.
+     */
+    customerId: z.uuid().optional(),
     clientName: z.string().trim().min(1).max(200),
     clientEmail: z.email().max(320).optional(),
     clientReference: z.string().trim().min(1).max(100).optional(),

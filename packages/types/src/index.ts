@@ -252,6 +252,45 @@ export function isChasedInvoiceStatus(status: string): status is ChasedInvoiceSt
 }
 
 /**
+ * The statuses in which the money is still OWED to the business.
+ *
+ * ⚠️ THIS IS NOT `CHASED_INVOICE_STATUSES`, AND CONFLATING THEM MISSTATES THE
+ * BOOK IN BOTH DIRECTIONS. "Is Eva writing to this debtor" and "does this
+ * debtor still owe us" are different questions. A PAUSED invoice is the plain
+ * case: somebody stopped the chase over a query or a dispute, and the debt did
+ * not stop existing. Totalling only the chased statuses under the word
+ * "outstanding" therefore hides real money — the mistake made while fixing the
+ * opposite mistake on 2026-08-12, when cancelled money was being counted IN.
+ *
+ * Out, and why: `draft` has not been sent to anybody, `cancelled` was voided,
+ * `paid` is settled, and `written_off` is money the business has decided to
+ * stop counting. In: everything else, including `disputed` — a contested
+ * invoice is still a receivable until it is credited, and a credit-control
+ * product that quietly drops disputes understates the very number it exists to
+ * report.
+ *
+ * ⚠️ `promise_to_pay`, `disputed` AND `written_off` HAVE NO API PATH UNTIL
+ * SLICE 1.8, so they cannot occur yet. They are listed now on purpose: this is
+ * the list a future status gets added to, and the whole reason the constant
+ * exists is that the last one was added in three places and forgotten in the
+ * fourth.
+ */
+export const OWED_INVOICE_STATUSES = [
+  "active",
+  "paused",
+  "promise_to_pay",
+  "disputed",
+  "partially_paid",
+] as const;
+
+export type OwedInvoiceStatus = (typeof OWED_INVOICE_STATUSES)[number];
+
+/** Does an invoice in this stored status still represent money owed? */
+export function isOwedInvoiceStatus(status: string): status is OwedInvoiceStatus {
+  return (OWED_INVOICE_STATUSES as readonly string[]).includes(status);
+}
+
+/**
  * Time-derived statuses (plan §7.1): never stored — computed at read time
  * from due_date + the organisation timezone, and only ever applied to Active
  * invoices.
@@ -736,4 +775,51 @@ export interface MailboxAdminConsentDto {
   url: string | null;
   /** The customer's own organisation name, for copy that names them. */
   organisationName: string | null;
+}
+
+// --- Session lifetime (founder's request, 2026-08-12) ---
+
+/**
+ * How long a session survives with NO activity before it is ended.
+ *
+ * ⚠️ SUPABASE CANNOT DO THIS FOR US ON THE FREE PLAN. Their "inactivity
+ * timeout" is a Pro-plan setting, so the rule lives here — which is better
+ * anyway: enforced in our own API against a stored timestamp, it holds against
+ * a stolen token, whereas anything the browser carries can be replayed with it.
+ */
+export const SESSION_IDLE_TIMEOUT_MS = 2 * 24 * 60 * 60 * 1000;
+
+/**
+ * How stale `users.last_seen_at` may get before a request bothers to write it.
+ *
+ * ⚠️ A WRITE ON EVERY REQUEST WOULD BE FIVE WRITES PER SCREEN. The dashboard
+ * asks five questions to draw itself. Five minutes of imprecision costs nothing
+ * against a two-day window and turns that into one write.
+ */
+export const SESSION_ACTIVITY_WRITE_INTERVAL_MS = 5 * 60 * 1000;
+
+/** The code on the 401 an idle session gets, so a caller can branch on it. */
+export const SESSION_IDLE_TIMEOUT_CODE = "session_idle_timeout";
+
+/** The machine-readable body of that 401. */
+export interface SessionIdleTimeoutBody {
+  statusCode: 401;
+  code: typeof SESSION_IDLE_TIMEOUT_CODE;
+  message: string;
+}
+
+/**
+ * Has a session with this last-activity stamp gone idle?
+ *
+ * ⚠️ NULL IS FRESH, NOT ANCIENT, AND GETTING THAT BACKWARDS SIGNS EVERYBODY
+ * OUT. Every existing row has no `last_seen_at` the moment the column ships;
+ * reading "unknown" as "idle since the epoch" would end every live session on
+ * deploy. The first request stamps it instead.
+ *
+ * Shared by the API (which enforces it) and the web proxy (which acts on it) so
+ * one rule cannot drift into two.
+ */
+export function isSessionIdle(lastSeenAt: Date | null | undefined, now: Date): boolean {
+  if (!lastSeenAt) return false;
+  return now.getTime() - lastSeenAt.getTime() > SESSION_IDLE_TIMEOUT_MS;
 }

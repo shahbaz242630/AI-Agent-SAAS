@@ -160,6 +160,37 @@ describe("Contacts: CRUD and permissions", () => {
     expect(audit).toBeDefined();
   });
 
+  /**
+   * ⚠️ ABSENT AND NULL MUST NOT MEAN THE SAME THING. Absent is "leave this
+   * alone"; null is "remove it". Without the second, a form that clears the
+   * email box reports success and keeps the old address — and Eva goes on
+   * chasing a person who is not there. `null` also used to reach
+   * `.toLowerCase()`, which throws, so a deliberate removal 500ed.
+   */
+  it("leaves an email alone when the field is absent, and clears it on null", async () => {
+    const url = `/organisations/${org.id}/customers/${customerId}/contacts/${contactId}`;
+
+    await request(app.getHttpServer())
+      .patch(url)
+      .set("Authorization", `Bearer ${tokens.get("finance")}`)
+      .send({ email: "Accounts@Acme.example" })
+      .expect(200);
+
+    const untouched = await request(app.getHttpServer())
+      .patch(url)
+      .set("Authorization", `Bearer ${tokens.get("finance")}`)
+      .send({ jobTitle: "Finance Manager" })
+      .expect(200);
+    expect(untouched.body.email).toBe("accounts@acme.example");
+
+    const cleared = await request(app.getHttpServer())
+      .patch(url)
+      .set("Authorization", `Bearer ${tokens.get("finance")}`)
+      .send({ email: null })
+      .expect(200);
+    expect(cleared.body.email).toBeNull();
+  });
+
   it("soft-deletes a contact as finance → 200, audit-logged, subsequent reads 404", async () => {
     await request(app.getHttpServer())
       .delete(`/organisations/${org.id}/customers/${customerId}/contacts/${contactId}`)

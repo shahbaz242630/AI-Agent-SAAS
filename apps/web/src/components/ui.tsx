@@ -226,15 +226,57 @@ export function EmptyState({
   );
 }
 
+/**
+ * The ink of a primary control at dashboard size.
+ *
+ * ⚠️ SHARED BY THE LINK AND THE BUTTON BELOW ON PURPOSE. A screen whose two
+ * actions are one link and one button — Invoices is exactly that — puts them
+ * side by side, and two hand-written class lists drift by a pixel of padding
+ * or a step of type and read as a mistake. `GhostLink` is the secondary half
+ * of this pair and carries the same box.
+ */
+const PRIMARY_CONTROL =
+  "rounded-[var(--radius-control)] bg-primary px-4 py-2 text-[13px] font-semibold text-primary-foreground shadow-[var(--shadow-primary)] hover:opacity-90";
+
 /** The one primary action on a screen. */
 export function PrimaryLink({ href, children }: { href: string; children: React.ReactNode }) {
   return (
-    <Link
-      href={href}
-      className="rounded-[var(--radius-control)] bg-primary px-4 py-2 text-[13px] font-semibold text-primary-foreground shadow-[var(--shadow-primary)] hover:opacity-90"
-    >
+    <Link href={href} className={PRIMARY_CONTROL}>
       {children}
     </Link>
+  );
+}
+
+/**
+ * The same primary action when it opens something in place rather than
+ * navigating.
+ *
+ * ⚠️ `expanded` IS NOT DECORATION. This button is a disclosure — it reveals a
+ * form below itself — and a sighted person can see that happen. Without
+ * `aria-expanded` somebody using a screen reader is told only "button", clicks
+ * it, and is given no reason to believe anything happened.
+ *
+ * ⚠️ `type="button"` IS LOAD-BEARING. This sits in the same row as controls
+ * that belong to forms; the HTML default of "submit" would make it submit one.
+ */
+export function PrimaryAction({
+  onClick,
+  expanded,
+  children,
+}: {
+  onClick: () => void;
+  expanded?: boolean | undefined;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      {...(expanded === undefined ? {} : { "aria-expanded": expanded })}
+      className={`cursor-pointer ${PRIMARY_CONTROL}`}
+    >
+      {children}
+    </button>
   );
 }
 

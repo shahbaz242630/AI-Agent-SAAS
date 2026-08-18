@@ -9,6 +9,7 @@ import {
   CHASED_INVOICE_STATUSES,
   INVOICE_COMPUTED_STATUSES,
   INVOICE_STORED_STATUSES,
+  OWED_INVOICE_STATUSES,
   minorUnitsToNumber,
   outstandingBalance,
   type InvoiceDisplayStatus,
@@ -214,6 +215,30 @@ export interface InvoiceBook {
    * other, so it is never "what you are owed" unless the filter says so.
    */
   matchedByCurrency: CurrencyTotal[];
+  /**
+   * The money the request's filters selected that is still OWED —
+   * `matchedByCurrency` narrowed to `OWED_INVOICE_STATUSES`.
+   *
+   * ⚠️ OWED, NOT CHASED, AND THE TWO ARE NOT THE SAME LIST. A paused invoice is
+   * money the business is owed while Eva is deliberately not writing to the
+   * debtor; narrowing this to the chased states hides it and understates the
+   * book. That was the first pass at this fix and it was also wrong.
+   *
+   * ⚠️ THIS IS THE ONLY TOTAL THAT MAY SIT UNDER THE WORD "OUTSTANDING".
+   * `matchedByCurrency` respects the filters, which made it look safe for the
+   * unfiltered view — but the UNFILTERED VIEW IS PRECISELY THE ONE THAT
+   * CONTAINS CANCELLED INVOICES. On 2026-08-12 production said "£4,525.00
+   * outstanding across 1 invoice" about a single CANCELLED invoice, while the
+   * home screen correctly said nothing was outstanding: two screens
+   * disagreeing about money, in the direction that flatters us.
+   *
+   * ⚠️ NOT INTERCHANGEABLE WITH `chasedByCurrency`. That one is computed from
+   * the organisation id alone, so it puts whole-book money above a searched or
+   * filtered list — the disagreement this screen already fixed once. This one
+   * starts from the caller's own filters and only removes what nobody is
+   * collecting, so it is right under BOTH kinds of heading.
+   */
+  collectableByCurrency: CurrencyTotal[];
 }
 
 /** One currency's slice of a book — never added to another's (trap 3b). */
@@ -264,6 +289,34 @@ function dueDateCondition(range: Exclude<BookDueDateRange, null>): Prisma.Sql {
 }
 
 type BookDueDateRange = ReturnType<typeof computedStatusDueDateRange>;
+
+/**
+ * A book filter narrowed to a set of stored statuses.
+ *
+ * ⚠️ THE CALLER'S CONDITIONS ARE PARENTHESISED. They are a chain of ANDs today,
+ * and a future `OR` inside them would otherwise silently widen what is counted.
+ */
+function withStatuses(conditions: Prisma.Sql, statuses: readonly string[]): Prisma.Sql {
+  return Prisma.sql`(${conditions}) AND i.status IN (${Prisma.join([...statuses])})`;
+}
+
+/** Narrowed to what Eva is WRITING TO — the currency picker's list. */
+function onlyChased(conditions: Prisma.Sql): Prisma.Sql {
+  return withStatuses(conditions, CHASED_INVOICE_STATUSES);
+}
+
+/**
+ * Narrowed to what is still OWED — the only total the word "outstanding" may
+ * sit on.
+ *
+ * ⚠️ WIDER THAN `onlyChased`, AND THE DIFFERENCE IS THE POINT. A PAUSED invoice
+ * is not being written to and is still owed; the first pass at the 2026-08-12
+ * fix used the chased set here and hid it, replacing an overstatement with an
+ * understatement. See `OWED_INVOICE_STATUSES` for what is in and out, and why.
+ */
+function onlyOwed(conditions: Prisma.Sql): Prisma.Sql {
+  return withStatuses(conditions, OWED_INVOICE_STATUSES);
+}
 
 /**
  * The book's filters, written BOTH ways: as Prisma's `where` for the rows and
@@ -456,9 +509,10 @@ export class InvoicesService {
         rows.map((row) => row.id),
       );
 
-      const [chasedByCurrency, matchedByCurrency] = await Promise.all([
+      const [chasedByCurrency, matchedByCurrency, collectableByCurrency] = await Promise.all([
         this.chasedByCurrency(tx, organisationId),
         this.moneyByCurrency(tx, organisationId, sql),
+        this.moneyByCurrency(tx, organisationId, onlyOwed(sql)),
       ]);
 
       return {
@@ -483,6 +537,7 @@ export class InvoicesService {
         totalCount,
         chasedByCurrency,
         matchedByCurrency,
+        collectableByCurrency,
       };
     });
   }
@@ -542,13 +597,7 @@ export class InvoicesService {
    * same rule as `outstandingBalance` in `@eva/types`.
    */
   private async chasedByCurrency(tx: TenantTx, organisationId: string): Promise<CurrencyTotal[]> {
-    return this.moneyByCurrency(
-      tx,
-      organisationId,
-      Prisma.sql`i.deleted_at IS NULL AND i.status IN (${Prisma.join([
-        ...CHASED_INVOICE_STATUSES,
-      ])})`,
-    );
+    return this.moneyByCurrency(tx, organisationId, onlyChased(Prisma.sql`i.deleted_at IS NULL`));
   }
 
   /**
@@ -696,16 +745,41 @@ export class InvoicesService {
         ...(input.contactEmail ? { contactEmail: input.contactEmail } : {}),
       };
 
-      const resolution = resolveCustomer(canonical, await listLiveCustomers(tx));
-      if (resolution.kind === "ambiguous") {
-        throw new ConflictException(
-          `More than one client is called '${input.clientName}'. Open the client you mean and add the invoice there.`,
-        );
+      /**
+       * ⚠️ A PICKED CLIENT SHORT-CIRCUITS NAME MATCHING ENTIRELY. When the
+       * screen says which client this is, there is nothing to resolve and
+       * nothing that can be ambiguous — two clients called "Imran Khalid" stop
+       * being a problem the moment the answer is an id rather than a string.
+       *
+       * ⚠️ IT IS STILL LOOKED UP, NEVER TRUSTED. The id arrives from a browser
+       * and `withTenant` scopes the read to this organisation, so a stolen id
+       * from another tenant finds nothing. `deletedAt: null` matters too: a
+       * client removed in another tab must refuse rather than resurrect.
+       */
+      let customerId: string;
+      if (input.customerId !== undefined) {
+        const picked = await tx.customer.findFirst({
+          where: { id: input.customerId, deletedAt: null },
+          select: { id: true },
+        });
+        if (picked === null) {
+          throw new NotFoundException(
+            "That client no longer exists. Pick another one, or add it as a new client.",
+          );
+        }
+        customerId = picked.id;
+      } else {
+        const resolution = resolveCustomer(canonical, await listLiveCustomers(tx));
+        if (resolution.kind === "ambiguous") {
+          throw new ConflictException(
+            `More than one client is called '${input.clientName}'. Pick the one you mean from the client list instead of typing the name.`,
+          );
+        }
+        customerId =
+          resolution.kind === "matched"
+            ? resolution.customerId
+            : (await createCustomerFromCanonical(tx, organisationId, user.id, canonical)).id;
       }
-      const customerId =
-        resolution.kind === "matched"
-          ? resolution.customerId
-          : (await createCustomerFromCanonical(tx, organisationId, user.id, canonical)).id;
 
       const contactId = await resolveOrCreateContact(
         tx,
