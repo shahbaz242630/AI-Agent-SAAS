@@ -120,7 +120,12 @@ export default async function AppHomePage() {
   const rows = owedRows(book?.chasedByCurrency ?? [], overdue?.matchedByCurrency ?? []);
   const attention = attentionItems({
     mailboxConnected,
-    counts: activity?.counts ?? { sentLast7Days: 0, waiting: 0, failedLast7Days: 0 },
+    counts: activity?.counts ?? {
+      sentLast7Days: 0,
+      waiting: 0,
+      failedLast7Days: 0,
+      scheduled: 0,
+    },
     waitingReason: activity?.waitingReason ?? null,
   });
   // An empty book is the first-run state, not an error — and it is the very

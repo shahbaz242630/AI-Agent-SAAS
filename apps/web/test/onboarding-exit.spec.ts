@@ -63,7 +63,7 @@ describe("onboarding step two", () => {
  * a choice.
  */
 describe("what Home tells someone who skipped", () => {
-  const noActivity = { sentLast7Days: 0, waiting: 0, failedLast7Days: 0 };
+  const noActivity = { sentLast7Days: 0, waiting: 0, failedLast7Days: 0, scheduled: 0 };
 
   it("warns that nothing will send, and offers the way back", () => {
     const items = attentionItems({

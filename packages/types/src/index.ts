@@ -638,10 +638,41 @@ export interface ReminderActivityDto {
     /** Due, still `ready` — should have gone out and has not. */
     waiting: number;
     failedLast7Days: number;
+    /**
+     * Still to come: every `pending` action Eva holds.
+     *
+     * ⚠️ NOT DATE-FILTERED, DELIBERATELY. A `pending` row dated in the PAST
+     * means the scheduler did not promote it, which is a fault worth seeing
+     * rather than a row worth hiding. Filtering to the future would make the
+     * one state that indicates something is broken the one state nothing
+     * counts.
+     */
+    scheduled: number;
   };
   /** Null when nothing is waiting; otherwise why, as far as we can tell. */
   waitingReason: ReminderWaitingReason | null;
+  /**
+   * Whether the organisation has NO healthy mailbox right now.
+   *
+   * ⚠️ THE PLAN IS A PROMISE, AND THIS IS WHETHER WE CAN KEEP IT. Listing what
+   * Eva will send next without saying there is nowhere to send it from is the
+   * same defect as an upload preview that disagrees with the upload: a screen
+   * stating an outcome that will not happen.
+   */
+  noWorkingMailbox: boolean;
   recent: ReminderActivityRowDto[];
+  /**
+   * What Eva will do next, soonest first — the near horizon, not the whole
+   * plan. `counts.scheduled` is the whole plan.
+   *
+   * ⚠️ THIS EXISTS BECAUSE EVA'S FUTURE WORK WAS INVISIBLE (found by walking,
+   * 2026-08-18). Slice 1.7 made the PAST visible and stopped there, so a book
+   * whose invoices were not due yet — which is every new customer for their
+   * first weeks — showed three zeroes and "Eva simply has not needed to write
+   * to anybody", with six reminders sitting scheduled in the database. A
+   * product that has a plan and a product that has none looked identical.
+   */
+  upcoming: ReminderActivityRowDto[];
 }
 
 /** One human escalation as the API exposes it (plan §3). */

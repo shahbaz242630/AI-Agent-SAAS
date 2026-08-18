@@ -22,7 +22,9 @@ export function WeekPanel({ activity }: { activity: ReminderActivityDto }) {
   return (
     <Card className="flex flex-col gap-4 px-6 py-4.5">
       <div className="flex flex-wrap items-center gap-7">
-        <p className="flex-1 text-[13px] text-muted-foreground">{chaseSummary(counts)}</p>
+        <p className="flex-1 text-[13px] text-muted-foreground">
+          {chaseSummary(activity, dayMonth)}
+        </p>
         <Counter value={counts.sentLast7Days} label="sent" />
         <Counter value={counts.waiting} label="waiting" tone="warn" />
         <Counter value={counts.failedLast7Days} label="didn't send" tone="bad" />

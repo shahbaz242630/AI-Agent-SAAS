@@ -156,6 +156,48 @@ describe("Reminder sender (Slice 1.7)", () => {
   }
 
   /**
+   * An invoice that is NOT due yet, so `reconcile` schedules the whole sequence
+   * and leaves every row `pending`.
+   *
+   * ⚠️ NOTHING IS CANCELLED HERE, unlike `createDueReminder`. The point of this
+   * fixture is the shape of the plan — six steps in date order — so trimming it
+   * to one row would remove the thing under test.
+   */
+  async function createFutureReminder() {
+    const suffix = randomUUID().slice(0, 8);
+    const customer = await owner.customer.create({
+      data: { organisationId: org.id, name: `Future Customer ${suffix}` },
+    });
+    const contact = await owner.contact.create({
+      data: {
+        organisationId: org.id,
+        customerId: customer.id,
+        name: "Imran Khalid",
+        email: `future-${suffix}@example.test`,
+      },
+    });
+    const invoice = await owner.invoice.create({
+      data: {
+        organisationId: org.id,
+        customerId: customer.id,
+        contactId: contact.id,
+        invoiceNumber: `FUT-${suffix}`,
+        amountMinorUnits: 4_571_100,
+        currency: "GBP",
+        issueDate: new Date(),
+        // Far enough out that even `pre_due_3` is still in the future, or the
+        // first step would be `ready` and the fixture would be testing the
+        // waiting path instead.
+        dueDate: new Date(Date.now() + 30 * DAY_MS),
+        status: "active",
+      },
+    });
+
+    await reconcile();
+    return { invoiceId: invoice.id, customerId: customer.id };
+  }
+
+  /**
    * ⚠️ ASSERT ON THIS ROW, NEVER ON THE RUN'S TOTALS.
    *
    * `/internal/reminders/send` sweeps EVERY organisation, and the whole api
@@ -592,6 +634,74 @@ describe("Reminder sender (Slice 1.7)", () => {
 
       expect(result.counts.waiting).toBe(0);
       expect(result.waitingReason).toBeNull();
+    });
+
+    /**
+     * ⚠️ EVA'S FUTURE WORK WAS INVISIBLE, AND SLICE 1.7 IS WHY (found by
+     * walking, 2026-08-18). This screen was built to answer "has Eva chased
+     * anybody" and answered it by reading only `sent`, `failed`, `ready` and
+     * `claimed`. `pending` — the whole plan — was in none of them. So a book
+     * whose invoices were not due yet, which is EVERY new customer for their
+     * first weeks, showed three zeroes and "Eva simply has not needed to write
+     * to anybody" while six reminders sat scheduled in the database.
+     *
+     * A product that has a plan and a product that has none looked identical,
+     * which is the same sentence this screen's own header comment uses about
+     * the bug it was created to fix.
+     */
+    describe("what Eva will do next", () => {
+      it("shows the plan for an invoice that is not due yet", async () => {
+        const { invoiceId } = await createFutureReminder();
+
+        const result = await activity();
+
+        expect(result.counts.scheduled).toBeGreaterThanOrEqual(1);
+        const mine = result.upcoming.filter((row) => row.invoiceId === invoiceId);
+        expect(mine.length).toBeGreaterThan(0);
+        // The invoice a human recognises, not a database id.
+        expect(mine[0]?.invoiceNumber).toMatch(/^FUT-/);
+        expect(mine[0]?.customerName).toMatch(/^Future Customer/);
+        expect(mine[0]?.status).toBe("pending");
+      });
+
+      /**
+       * ⚠️ SOONEST FIRST, NOT NEWEST FIRST. `recent` sorts on `updatedAt`
+       * because history reads newest-first; a plan reads soonest-first. Reusing
+       * the history ordering would put the furthest-away reminder at the top of
+       * a list headed "what Eva will do next".
+       */
+      it("orders the plan by the day it will happen", async () => {
+        await createFutureReminder();
+
+        const dates = (await activity()).upcoming.map((row) => row.scheduledDate);
+
+        expect(dates.length).toBeGreaterThan(1);
+        expect([...dates].sort()).toEqual(dates);
+      });
+
+      /**
+       * ⚠️ THE PLAN IS A PROMISE AND THIS IS WHETHER WE CAN KEEP IT. Listing
+       * future sends for an organisation with no mailbox is the upload-preview
+       * defect again: a screen stating an outcome that will not happen. The old
+       * code only asked about mailbox health when something was already
+       * WAITING, which is never true for a book that is not due yet.
+       */
+      it("admits there is nowhere to send from, even with nothing waiting", async () => {
+        await createFutureReminder();
+
+        const result = await activity();
+
+        expect(result.counts.waiting).toBe(0);
+        expect(result.waitingReason).toBeNull();
+        expect(result.noWorkingMailbox).toBe(true);
+      });
+
+      it("stops saying so once a mailbox is connected", async () => {
+        await createMailbox();
+        await createFutureReminder();
+
+        expect((await activity()).noWorkingMailbox).toBe(false);
+      });
     });
   });
 

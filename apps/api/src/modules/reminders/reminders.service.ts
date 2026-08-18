@@ -32,6 +32,16 @@ import {
 
 const DEFAULT_TIMEZONE = "Europe/London";
 
+/**
+ * How many upcoming reminders the activity screen carries.
+ *
+ * ⚠️ THE NEAR HORIZON, NOT THE WHOLE PLAN. A 500-invoice book holds ~3,000
+ * pending actions and no customer reads three thousand rows; `counts.scheduled`
+ * is how they see the size of it. Ten is roughly a fortnight of a working book,
+ * which is the distance somebody can actually act on.
+ */
+const UPCOMING_LIMIT = 10;
+
 /** POST /internal/reminders/reconcile response (plan §7.8). */
 export interface ReconcileResult {
   processed: number;
@@ -268,45 +278,80 @@ export class RemindersService {
       const today = todayInTimezone(timezone);
       const weekAgo = new Date(today.getTime() - 7 * 86_400_000);
 
-      const [sentLast7Days, waiting, failedLast7Days, recent] = await Promise.all([
-        tx.scheduledAction.count({ where: { status: "sent", updatedAt: { gte: weekAgo } } }),
-        tx.scheduledAction.count({
-          where: { status: "ready", actionType: "email", scheduledDate: { lte: today } },
-        }),
-        tx.scheduledAction.count({ where: { status: "failed", updatedAt: { gte: weekAgo } } }),
-        tx.scheduledAction.findMany({
-          where: { status: { in: ["sent", "failed", "ready", "claimed"] } },
-          include: { reminderStep: true, invoice: { include: { customer: true } } },
-          orderBy: [{ updatedAt: "desc" }],
-          take: 50,
-        }),
-      ]);
+      const [sentLast7Days, waiting, failedLast7Days, scheduled, recent, upcoming] =
+        await Promise.all([
+          tx.scheduledAction.count({ where: { status: "sent", updatedAt: { gte: weekAgo } } }),
+          tx.scheduledAction.count({
+            where: { status: "ready", actionType: "email", scheduledDate: { lte: today } },
+          }),
+          tx.scheduledAction.count({ where: { status: "failed", updatedAt: { gte: weekAgo } } }),
+          // Every pending row, not just the future ones — see the note on
+          // `counts.scheduled`. A pending row dated in the past is a fault to
+          // surface, not one to filter away.
+          tx.scheduledAction.count({ where: { status: "pending" } }),
+          tx.scheduledAction.findMany({
+            where: { status: { in: ["sent", "failed", "ready", "claimed"] } },
+            include: { reminderStep: true, invoice: { include: { customer: true } } },
+            orderBy: [{ updatedAt: "desc" }],
+            take: 50,
+          }),
+          /**
+           * ⚠️ ORDERED BY THE DAY IT WILL HAPPEN, NOT BY WHEN THE ROW WAS
+           * WRITTEN. `recent` sorts on `updatedAt` because history is read
+           * newest-first; a plan is read soonest-first, and the two orderings
+           * are not interchangeable. A tie on the date is broken by `id` so
+           * the list is stable between two loads of the same screen.
+           */
+          tx.scheduledAction.findMany({
+            where: { status: "pending" },
+            include: { reminderStep: true, invoice: { include: { customer: true } } },
+            orderBy: [{ scheduledDate: "asc" }, { id: "asc" }],
+            take: UPCOMING_LIMIT,
+          }),
+        ]);
 
-      // The reason is the ORGANISATION's mailbox health, not the row's — one
-      // dead-mailbox problem explains every waiting row at once.
+      /**
+       * The ORGANISATION's mailbox health, not the row's — one dead-mailbox
+       * problem explains every waiting row at once.
+       *
+       * ⚠️ NOW ALSO READ WHEN NOTHING IS WAITING BUT SOMETHING IS SCHEDULED.
+       * A book whose invoices are not due yet has `waiting === 0`, so the old
+       * condition never asked — and that is exactly the customer we would show
+       * a list of future sends to without mentioning that there is nowhere to
+       * send them from.
+       */
+      const healthyMailboxes =
+        waiting > 0 || scheduled > 0
+          ? await tx.emailAccount.count({ where: { deletedAt: null, healthStatus: "active" } })
+          : null;
+
       let waitingReason: ReminderWaitingReason | null = null;
       if (waiting > 0) {
-        const healthy = await tx.emailAccount.count({
-          where: { deletedAt: null, healthStatus: "active" },
-        });
-        waitingReason = healthy === 0 ? "no_working_mailbox" : "unknown";
+        waitingReason = healthyMailboxes === 0 ? "no_working_mailbox" : "unknown";
       }
 
+      const describe = (row: (typeof recent)[number]) => ({
+        id: row.id,
+        invoiceId: row.invoiceId,
+        customerId: row.invoice.customerId,
+        invoiceNumber: row.invoice.invoiceNumber,
+        customerName: row.invoice.customer.name,
+        stageKey: row.reminderStep.key as ReminderStepKey,
+        actionType: row.actionType as ReminderActionType,
+        scheduledDate: row.scheduledDate.toISOString().slice(0, 10),
+        status: row.status as ScheduledActionStatus,
+        updatedAt: row.updatedAt.toISOString(),
+      });
+
       return {
-        counts: { sentLast7Days, waiting, failedLast7Days },
+        counts: { sentLast7Days, waiting, failedLast7Days, scheduled },
         waitingReason,
-        recent: recent.map((row) => ({
-          id: row.id,
-          invoiceId: row.invoiceId,
-          customerId: row.invoice.customerId,
-          invoiceNumber: row.invoice.invoiceNumber,
-          customerName: row.invoice.customer.name,
-          stageKey: row.reminderStep.key as ReminderStepKey,
-          actionType: row.actionType as ReminderActionType,
-          scheduledDate: row.scheduledDate.toISOString().slice(0, 10),
-          status: row.status as ScheduledActionStatus,
-          updatedAt: row.updatedAt.toISOString(),
-        })),
+        // `false` when nothing is scheduled and nothing waits: we did not ask,
+        // and claiming a mailbox problem we never checked for would be worse
+        // than saying nothing.
+        noWorkingMailbox: healthyMailboxes === 0,
+        recent: recent.map(describe),
+        upcoming: upcoming.map(describe),
       };
     });
   }

@@ -195,10 +195,25 @@ export function attentionItems(input: {
  * "Eva hasn't needed to chase anyone" is a real and good answer — a customer
  * whose clients all pay on time should not see a screen that implies something
  * is broken.
+ *
+ * ⚠️ BUT A QUIET WEEK AND AN IDLE PRODUCT ARE NOT THE SAME THING (found by
+ * walking, 2026-08-18). This said "Eva hasn't needed to chase anyone" on a Home
+ * screen showing £45,711 outstanding, with six reminders already scheduled and
+ * the first three weeks away. True about the week, and useless as an answer to
+ * the question the customer is actually asking — is this thing going to do
+ * anything? Naming the next date is what turns it into one.
  */
-export function chaseSummary(counts: ReminderActivityDto["counts"]): string {
+export function chaseSummary(
+  activity: Pick<ReminderActivityDto, "counts" | "upcoming">,
+  /* Passed in, never derived here — the API already resolved the calendar day
+     in the ORG's timezone and re-parsing it can only lose that. */
+  formatDate: (isoDate: string) => string,
+): string {
+  const { counts } = activity;
   if (counts.sentLast7Days === 0 && counts.waiting === 0 && counts.failedLast7Days === 0) {
-    return "Eva hasn't needed to chase anyone this week.";
+    const next = activity.upcoming[0];
+    if (!next) return "Eva hasn't needed to chase anyone this week.";
+    return `Nothing needed chasing this week. Eva's next reminder goes out on ${formatDate(next.scheduledDate)}.`;
   }
   const sent =
     counts.sentLast7Days === 1 ? "1 reminder sent" : `${counts.sentLast7Days} reminders sent`;
