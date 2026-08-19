@@ -11,9 +11,9 @@ import type { SendingMailboxResolution } from "../../../capabilities/mailbox/mai
 import {
   MailboxUnusableError,
   MailDeliveryDeferredError,
-  REMINDER_MAIL_SENDER,
-} from "../../../capabilities/mailbox/reminder-mail-sender.js";
-import type { ReminderMailSender } from "../../../capabilities/mailbox/reminder-mail-sender.js";
+  OUTBOUND_MAIL,
+} from "../../../capabilities/mailbox/outbound-mail.js";
+import type { OutboundMail } from "../../../capabilities/mailbox/outbound-mail.js";
 import type { TenantTx } from "../../../platform/permissions/permissions.js";
 import { writeAuditLog } from "../../../platform/audit/audit-log.js";
 import { todayInTimezone } from "../invoices/invoice-status.js";
@@ -188,7 +188,7 @@ export class ReminderSenderService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly mailboxes: MailboxesService,
-    @Inject(REMINDER_MAIL_SENDER) private readonly mail: ReminderMailSender,
+    @Inject(OUTBOUND_MAIL) private readonly mail: OutboundMail,
     private readonly logger: PinoLogger,
   ) {}
 

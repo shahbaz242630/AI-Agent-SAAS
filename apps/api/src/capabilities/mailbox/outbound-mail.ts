@@ -10,7 +10,15 @@ import {
 } from "./microsoft-graph/microsoft-graph-provider.js";
 
 /**
- * The seam the reminders module sends through (Slice 1.7).
+ * The seam ANY product sends mail through, from the organisation's own mailbox.
+ *
+ * ⚠️ IT WAS CALLED `reminder-mail-sender` UNTIL 2026-08-19, AND THE NAME WAS A
+ * TRAP. This is shared machinery in the mailbox capability, but it was named
+ * after its first and only consumer — invoice follow-up's reminders. Lead
+ * follow-up needs exactly this seam: a resolved mailbox and some words, sent.
+ * Under the old name whoever built it would reasonably have concluded it was
+ * somebody else's and written a second one, which is how a capability quietly
+ * becomes two. Renamed while the split was being made, before that could happen.
  *
  * ⚠️ THIS EXISTS BECAUSE OF A TEST, AND THE TEST WAS RIGHT. Slice 1.5 left a
  * structural guard (`reminders.spec.ts`, plan §8 risk 7) asserting that no file
@@ -19,14 +27,14 @@ import {
  * direct provider calls"*. The first cut of the sender called
  * `graph.sendMail` directly and tripped it.
  *
- * So the reminders module knows only this port: give it a resolved mailbox and
+ * So a product knows only this port: give it a resolved mailbox and
  * some words, and it delivers them. Which provider, how a token is refreshed,
  * and what Microsoft calls its errors all stay on this side of the line — the
  * day a second provider arrives, the chase logic does not learn about it.
  */
-export const REMINDER_MAIL_SENDER = Symbol("REMINDER_MAIL_SENDER");
+export const OUTBOUND_MAIL = Symbol("OUTBOUND_MAIL");
 
-export interface ReminderMailDelivery {
+export interface OutboundMailDelivery {
   organisationId: string;
   /** The mailbox `resolveSendingMailbox` chose. */
   account: SendingMailboxResolution["account"];
@@ -83,19 +91,19 @@ function isTransient(status: number): boolean {
   return status === 429 || status >= 500;
 }
 
-export interface ReminderMailSender {
-  deliver(delivery: ReminderMailDelivery): Promise<void>;
+export interface OutboundMail {
+  deliver(delivery: OutboundMailDelivery): Promise<void>;
 }
 
 /** The Microsoft 365 implementation of the port. */
 @Injectable()
-export class GraphReminderMailSender implements ReminderMailSender {
+export class GraphOutboundMail implements OutboundMail {
   constructor(
     private readonly mailboxes: MailboxesService,
     @Inject(MICROSOFT_GRAPH_PROVIDER) private readonly graph: MicrosoftGraphProvider,
   ) {}
 
-  async deliver(delivery: ReminderMailDelivery): Promise<void> {
+  async deliver(delivery: OutboundMailDelivery): Promise<void> {
     let accessToken: string;
     try {
       // Refresh-on-use, and deliberately OUTSIDE any caller transaction: the

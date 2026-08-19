@@ -7,7 +7,7 @@ import { MicrosoftDiscoveryService } from "./microsoft-graph/microsoft-discovery
 import { MailboxesController } from "./mailboxes.controller.js";
 import { MailboxesService } from "./mailboxes.service.js";
 import { MicrosoftOAuthController } from "./microsoft-oauth.controller.js";
-import { GraphReminderMailSender, REMINDER_MAIL_SENDER } from "./reminder-mail-sender.js";
+import { GraphOutboundMail, OUTBOUND_MAIL } from "./outbound-mail.js";
 
 @Module({
   imports: [UsersModule],
@@ -16,19 +16,19 @@ import { GraphReminderMailSender, REMINDER_MAIL_SENDER } from "./reminder-mail-s
     MailboxesService,
     { provide: MICROSOFT_GRAPH_PROVIDER, useClass: GraphMailProvider },
     { provide: MICROSOFT_DISCOVERY, useClass: MicrosoftDiscoveryService },
-    { provide: REMINDER_MAIL_SENDER, useClass: GraphReminderMailSender },
+    { provide: OUTBOUND_MAIL, useClass: GraphOutboundMail },
   ],
   /**
    * Exported for 1.7's sender:
    * - `MailboxesService` for `resolveSendingMailbox` (which mailbox chases this
    *   client, and whether any of them still works).
-   * - `REMINDER_MAIL_SENDER` for the delivery itself.
+   * - `OUTBOUND_MAIL` for the delivery itself.
    *
    * ⚠️ The GRAPH PROVIDER IS DELIBERATELY NOT EXPORTED. Slice 1.5's structural
    * guard (plan §8 risk 7) requires sending to sit behind an adapter rather
    * than as direct provider calls inside the reminders module, and exporting
    * the provider is exactly how that rule would be quietly lost.
    */
-  exports: [MailboxesService, REMINDER_MAIL_SENDER],
+  exports: [MailboxesService, OUTBOUND_MAIL],
 })
 export class MailboxesModule {}
