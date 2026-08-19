@@ -2,7 +2,8 @@ import { ForbiddenException, NotFoundException } from "@nestjs/common";
 import {
   DEFAULT_ROLE_PERMISSIONS,
   PERMISSION_KEYS,
-  PERMISSION_MODULE,
+  PERMISSION_MODULES,
+  type ModuleKey,
   type OrganisationRole,
   type PermissionKey,
 } from "@eva/types";
@@ -125,12 +126,19 @@ export async function requirePermission(
       `Role '${membership.role.key}' lacks permission '${permissionKey}' in this organisation`,
     );
   }
-  const requiredModule = PERMISSION_MODULE[permissionKey];
-  if (requiredModule !== "core") {
+  const requiredModules = PERMISSION_MODULES[permissionKey];
+  if (requiredModules !== "core") {
+    /**
+     * ⚠️ ANY ONE OF THEM, NOT ALL OF THEM. `some` over the org's enabled rows
+     * rather than over the requirement, because the question is "does this
+     * organisation hold at least one product that carries this permission" —
+     * `every` here would silently force a customer to buy both products to
+     * connect a single mailbox.
+     */
     const entitled = membership.organisation.modules.some(
-      (module) => module.moduleKey === requiredModule && module.enabled,
+      (module) => module.enabled && requiredModules.includes(module.moduleKey as ModuleKey),
     );
-    if (!entitled) throw new ModuleNotEntitledException(requiredModule);
+    if (!entitled) throw new ModuleNotEntitledException(requiredModules);
   }
   return membership;
 }

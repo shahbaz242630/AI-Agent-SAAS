@@ -15,13 +15,28 @@ import { StructuredHttpException } from "../errors/structured-http.exception.js"
  * `code` is stable, the message is not.
  */
 export class ModuleNotEntitledException extends StructuredHttpException {
-  constructor(module: ModuleKey) {
+  /**
+   * `modules` is every product that would satisfy the permission, and holding
+   * **any one** of them is enough. Naming only the first would tell a customer
+   * to buy something they do not need, and telling them what to buy is the
+   * entire job of a 402.
+   */
+  constructor(modules: readonly [ModuleKey, ...ModuleKey[]]) {
+    const names = modules.map(moduleName);
+    // "A", or "A or B", or "A, B or C" — the last join is the one that has to
+    // be "or", because ANY of them unlocks this and "and" would read as all.
+    const listed =
+      names.length === 1
+        ? names[0]
+        : `${names.slice(0, -1).join(", ")} or ${names[names.length - 1]}`;
     super(
       {
         statusCode: HttpStatus.PAYMENT_REQUIRED,
         code: "module_not_entitled",
-        module,
-        message: `Your organisation doesn't have ${moduleName(module)}. Add it to use this.`,
+        modules,
+        message: `Your organisation doesn't have ${listed}. Add ${
+          names.length === 1 ? "it" : "one"
+        } to use this.`,
       },
       HttpStatus.PAYMENT_REQUIRED,
     );

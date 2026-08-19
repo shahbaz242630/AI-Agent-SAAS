@@ -4,7 +4,14 @@ import request from "supertest";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { signOAuthState } from "../src/modules/mailboxes/oauth-state.js";
 import type { EvaPrismaClient } from "@eva/database";
-import { PERMISSION_KEYS, PERMISSION_MODULE, MODULE_KEYS, type ModuleKey } from "@eva/types";
+import {
+  PERMISSION_KEYS,
+  PERMISSION_MODULES,
+  MODULE_CAPABILITIES,
+  MODULE_DEPENDENCIES,
+  MODULE_KEYS,
+  CAPABILITIES,
+} from "@eva/types";
 import {
   createOrgWithMembers,
   createOwnerClient,
@@ -80,11 +87,65 @@ describe("Module entitlements (Slice 1.6a)", () => {
    */
   it("every permission key is assigned to a module or to core", () => {
     for (const key of PERMISSION_KEYS) {
-      expect(PERMISSION_MODULE[key], `${key} has no module`).toBeDefined();
+      const requirement = PERMISSION_MODULES[key];
+      expect(requirement, `${key} has no module`).toBeDefined();
+      if (requirement === "core") continue;
+      /**
+       * ⚠️ AN EMPTY LIST WOULD MEAN "NOBODY MAY EVER DO THIS" and would read
+       * as a mapping rather than a lockout. The tuple type refuses it at
+       * compile time; this is the runtime echo, for the same reason the
+       * exhaustiveness check has one — a build error is easy to silence with a
+       * cast, and this failure is silent and permanent.
+       */
+      expect(requirement.length, `${key} is satisfied by no product`).toBeGreaterThan(0);
+      for (const moduleKey of requirement) expect(MODULE_KEYS).toContain(moduleKey);
     }
-    const owners = new Set(Object.values(PERMISSION_MODULE));
-    for (const value of owners) {
-      if (value !== "core") expect(MODULE_KEYS).toContain(value as ModuleKey);
+  });
+
+  /**
+   * ⚠️ THE DEFECT THIS SLICE EXISTS FOR (founder, 2026-08-19).
+   *
+   * `MODULE_DEPENDENCIES` used to read `lead_follow_up_agent:
+   * ["voice_credit_controller"]` and `voice_credit_controller:
+   * ["email_credit_controller"]`, and `assertDependenciesMet` refuses to enable
+   * a product whose dependencies are not already on. That made **three of the
+   * six packages in the BRD's own price list unsellable** — "Lead Assistant"
+   * (lead follow-up alone), "AI Receptionist" (receptionist alone) and "Sales
+   * Desk" (the two together) — while BRD §4.3 says in as many words that the
+   * lead agent "does not require the Voice Credit Controller module".
+   *
+   * The price list and the rule lived in different files with nothing between
+   * them. This is the thing between them.
+   */
+  it("no product requires another — they are separate purchases", () => {
+    for (const moduleKey of MODULE_KEYS) {
+      expect(
+        MODULE_DEPENDENCIES[moduleKey],
+        `${moduleKey} forces a customer to buy something else`,
+      ).toEqual([]);
+    }
+  });
+
+  /**
+   * The rule survives its own emptying. `MODULE_DEPENDENCIES` stays as the one
+   * place a genuine product-to-product prerequisite would go, so this asserts
+   * the SHAPE rather than today's contents — a typo in a key added later would
+   * otherwise refuse a product forever, naming a prerequisite nobody can buy.
+   */
+  it("any prerequisite ever added must name a real product", () => {
+    for (const moduleKey of MODULE_KEYS) {
+      for (const dependency of MODULE_DEPENDENCIES[moduleKey]) {
+        expect(MODULE_KEYS).toContain(dependency);
+        expect(dependency, `${moduleKey} depends on itself`).not.toBe(moduleKey);
+      }
+    }
+  });
+
+  it("every product's machinery is real, and every product needs some", () => {
+    for (const moduleKey of MODULE_KEYS) {
+      const needed = MODULE_CAPABILITIES[moduleKey];
+      expect(needed.length, `${moduleKey} needs no machinery at all`).toBeGreaterThan(0);
+      for (const capability of needed) expect(CAPABILITIES).toContain(capability);
     }
   });
 
@@ -100,7 +161,7 @@ describe("Module entitlements (Slice 1.6a)", () => {
         // The code is what the web app branches on to show an upgrade prompt
         // rather than a dead end. Prose is not an API.
         expect(response.body.code).toBe("module_not_entitled");
-        expect(response.body.module).toBe("email_credit_controller");
+        expect(response.body.modules).toContain("email_credit_controller");
         expect(response.body.statusCode).toBe(402);
         expect(response.body.message).toBeTruthy();
       },
@@ -310,14 +371,43 @@ describe("Module entitlements (Slice 1.6a)", () => {
       await put(entitled, "email_credit_controller").send({ enabled: true, seats: 1 }).expect(200);
     });
 
-    /** Dependencies are validated on the WRITE. A stored invalid combination
-     *  would otherwise have to be re-derived on every permission check. */
-    it("refuses a product whose prerequisite is missing, and NAMES it", async () => {
+    /**
+     * ⚠️ THIS TEST USED TO ASSERT THE DEFECT. It sent the same request and
+     * expected the message to contain "voice_credit_controller" — proving that
+     * buying the lead agent required buying voice credit control first, which
+     * is exactly what made "Lead Assistant" unsellable.
+     *
+     * The refusal must still happen, because the lead agent is not built yet.
+     * What changed is the REASON, and the reason is the whole point: "we have
+     * not finished it" is a wait, "buy two other products first" is a wall.
+     */
+    it("refuses the lead agent for being unbuilt, NOT for a prerequisite", async () => {
       const response = await put(entitled, "lead_follow_up_agent")
         .send({ enabled: true })
         .expect(400);
-      // The customer can only act on this if we say what to buy first.
-      expect(response.body.message).toContain("voice_credit_controller");
+      expect(response.body.message).toContain("isn't built yet");
+      expect(response.body.message).not.toContain("voice_credit_controller");
+      expect(response.body.message).not.toContain("Voice Credit Control");
+    });
+
+    /**
+     * The other half of the same ruling, on an organisation that holds NOTHING.
+     * A bare org enabling the one built product must not be told to buy
+     * anything first — that is the "Email Credit Controller only" package, and
+     * it is the shape every other package now follows.
+     */
+    it("sells the built product to an organisation that holds nothing", async () => {
+      const response = await put(bare, "email_credit_controller")
+        .send({ enabled: true })
+        .expect(200);
+      const invoiceFollowUp = response.body.find(
+        (row: { moduleKey: string }) => row.moduleKey === "email_credit_controller",
+      );
+      expect(invoiceFollowUp.enabled).toBe(true);
+      expect(invoiceFollowUp.missingDependencies).toEqual([]);
+
+      // Restore the baseline the rest of this file expects of `bare`.
+      await put(bare, "email_credit_controller").send({ enabled: false }).expect(200);
     });
 
     /**
@@ -380,7 +470,15 @@ describe("Module entitlements (Slice 1.6a)", () => {
       expect(voice.enabled).toBe(false);
     });
 
-    it("reports what a locked product is still waiting for", async () => {
+    /**
+     * ⚠️ WHAT A PRODUCT IS WAITING FOR IS MACHINERY, NOT A PURCHASE.
+     *
+     * This asserted `missingDependencies` contained "voice_credit_controller" —
+     * i.e. "buy another product first". The receptionist is waiting for the
+     * voice stack, which we have not built; that is ours to finish, not the
+     * customer's to buy, and the two must never read the same on a screen.
+     */
+    it("reports MACHINERY a product is waiting for, and demands no purchase", async () => {
       const response = await request(app.getHttpServer())
         .get(`/organisations/${bare.id}/modules`)
         .set("Authorization", `Bearer ${tokenFor(bare, "owner")}`)
@@ -391,7 +489,74 @@ describe("Module entitlements (Slice 1.6a)", () => {
         (row: { moduleKey: string }) => row.moduleKey === "ai_receptionist",
       );
       expect(receptionist.enabled).toBe(false);
-      expect(receptionist.missingDependencies).toContain("voice_credit_controller");
+      expect(receptionist.missingDependencies).toEqual([]);
+      expect(receptionist.missingCapabilities).toContain("voice");
+
+      /**
+       * The lead agent on a mailbox-less org is the case that matters
+       * commercially: it is missing the mailbox, and that is a thing to SAY,
+       * never a reason to refuse the sale.
+       */
+      const leadAgent = response.body.find(
+        (row: { moduleKey: string }) => row.moduleKey === "lead_follow_up_agent",
+      );
+      expect(leadAgent.missingDependencies).toEqual([]);
+      expect(leadAgent.missingCapabilities).toContain("mailbox");
+    });
+
+    /**
+     * ⚠️ THE MAILBOX IS SHARED MACHINERY, AND THIS IS THE PROOF.
+     *
+     * `mailbox:read` belonged to `email_credit_controller` alone until
+     * 2026-08-19, so an organisation holding ONLY the lead agent could not
+     * reach its own mailbox — the single thing that product needs. The row is
+     * seeded directly because the lead agent is not built yet and the API
+     * rightly refuses to enable it; the permission rule under test is
+     * independent of that.
+     */
+    it("lets an organisation holding ONLY the lead agent reach the mailbox", async () => {
+      const leadOnly = await createOrgWithMembers(
+        owner,
+        "ent-lead-only",
+        ["owner"],
+        "Lead Only Ltd",
+        [],
+      );
+      const member = leadOnly.members[0]!;
+      const token = await signToken({ sub: member.authUserId, email: member.email });
+      await owner.organisationModule.create({
+        data: {
+          organisationId: leadOnly.id,
+          moduleKey: "lead_follow_up_agent",
+          enabled: true,
+          seats: 1,
+          source: "manual",
+        },
+      });
+
+      await request(app.getHttpServer())
+        .get(`/organisations/${leadOnly.id}/mailboxes`)
+        .set("Authorization", `Bearer ${token}`)
+        .expect(200);
+
+      // ...and the invoice routes stay refused, because holding one product
+      // must not quietly hand over another's.
+      await request(app.getHttpServer())
+        .get(`/organisations/${leadOnly.id}/imports`)
+        .set("Authorization", `Bearer ${token}`)
+        .expect(402);
+    });
+
+    /** A 402 names every product that would unlock the route, because holding
+     *  ANY ONE of them is enough and naming one would misdirect the purchase. */
+    it("names both products when the mailbox is refused", async () => {
+      const response = await request(app.getHttpServer())
+        .get(`/organisations/${bare.id}/mailboxes`)
+        .set("Authorization", `Bearer ${tokenFor(bare, "owner")}`)
+        .expect(402);
+
+      expect(response.body.modules).toEqual(["email_credit_controller", "lead_follow_up_agent"]);
+      expect(response.body.message).toContain(" or ");
     });
 
     it("rejects a product that does not exist rather than 500ing on the CHECK", async () => {

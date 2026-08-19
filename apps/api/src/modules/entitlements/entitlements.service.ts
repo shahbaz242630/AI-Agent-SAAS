@@ -6,9 +6,11 @@ import { PinoLogger } from "nestjs-pino";
 import { withTenant } from "@eva/database";
 import {
   isModuleLive,
+  MODULE_CAPABILITIES,
   MODULE_DEPENDENCIES,
   MODULE_KEYS,
   moduleName,
+  type Capability,
   type ModuleKey,
   type ModuleStatusDto,
 } from "@eva/types";
@@ -82,9 +84,26 @@ export class EntitlementsService {
       const seats = await this.resolveSeats(tx, moduleKey, input, existing?.seats ?? 1);
 
       const now = new Date();
+      /**
+       * `endsAt: null` on BOTH branches, for two different reasons.
+       *
+       * **Enabling** clears any scheduled end: turning a product back on before
+       * the period runs out cancels the cancellation. No new charge, no
+       * interruption, no panic after a mis-click — the customer simply carries
+       * on. Leaving it set would stop the product days later for somebody who
+       * had already changed their mind.
+       *
+       * **Disabling** sets it to null because there is no billing period to
+       * compute an end from yet — Paddle is not wired up, so switching off is
+       * immediate and honest rather than promising a date nothing can keep. The
+       * column and the CHECK (migration 0024) are the shape Paddle's period end
+       * will land in; when it does, THIS is the line that changes, and the
+       * screen already reads `endsAt` to word itself.
+       */
       const data = {
         enabled: input.enabled,
         seats,
+        endsAt: null,
         ...(input.enabled ? { enabledAt: now, disabledAt: null } : { disabledAt: now }),
       };
       const account = existing
@@ -133,8 +152,9 @@ export class EntitlementsService {
    * 2026-08-18).
    *
    * ⚠️ THE SCREEN HIDING THE BUTTON IS NOT WHAT STOPS THIS. Three of the four
-   * products are unbuilt — they own no permissions in `PERMISSION_MODULE`, so
-   * enabling one wrote an entitlement row, showed "On", and delivered nothing.
+   * products are unbuilt — they carry no permissions in `PERMISSION_MODULES`,
+   * so enabling one wrote an entitlement row, showed "On", and delivered
+   * nothing.
    * A customer would have been told they had bought something they had not.
    *
    * ⚠️ ONLY ENABLING IS REFUSED. If an unbuilt product is somehow already on —
@@ -225,11 +245,38 @@ export class EntitlementsService {
     return tx.emailAccount.count({ where: { deletedAt: null } });
   }
 
+  /**
+   * Which machinery is actually set up for this organisation right now.
+   *
+   * ⚠️ READINESS IS NOT ENTITLEMENT, AND THE TWO MUST NOT MERGE AGAIN. A
+   * customer who owns the lead agent but has connected no mailbox owns it —
+   * they simply cannot use it yet. Refusing the sale over a missing
+   * prerequisite is what stopped three of the BRD's six packages being
+   * sellable; saying what is missing and linking the fix is the 1.13
+   * `noWorkingMailbox` pattern.
+   */
+  private async resolveCapabilities(tx: TenantTx): Promise<Set<Capability>> {
+    const held = new Set<Capability>();
+    /**
+     * The invoice ledger is our own schema — it ships with the code, so every
+     * organisation has it. It is listed rather than assumed because the BRD
+     * names it ("Email Credit Controller data model present") as what voice
+     * credit control needs, and writing it down is what stops somebody
+     * re-reading that line as "must buy invoice follow-up" a second time.
+     */
+    held.add("invoice_ledger");
+    if ((await tx.emailAccount.count({ where: { deletedAt: null } })) > 0) held.add("mailbox");
+    // `voice` is deliberately absent: there is no voice stack yet, so both
+    // voice products correctly report it missing rather than claiming readiness.
+    return held;
+  }
+
   private async describeAll(tx: TenantTx): Promise<ModuleStatusDto[]> {
     const rows = await tx.organisationModule.findMany({ where: { deletedAt: null } });
     const byKey = new Map(rows.map((row) => [row.moduleKey, row]));
     const enabled = new Set(rows.filter((row) => row.enabled).map((row) => row.moduleKey));
     const seatsUsed = await this.countSeatsUsed(tx, "email_credit_controller");
+    const capabilities = await this.resolveCapabilities(tx);
 
     return Promise.all(
       MODULE_KEYS.map(async (moduleKey) => {
@@ -242,8 +289,17 @@ export class EntitlementsService {
           seatsUsed: moduleKey === "email_credit_controller" ? seatsUsed : null,
           enabledAt: row?.enabledAt?.toISOString() ?? null,
           disabledAt: row?.disabledAt?.toISOString() ?? null,
+          endsAt: row?.endsAt?.toISOString() ?? null,
           missingDependencies: MODULE_DEPENDENCIES[moduleKey].filter(
             (dependency) => !enabled.has(dependency),
+          ),
+          /**
+           * Reported for products the organisation does NOT hold as well, and
+           * that is the point: it is what lets the screen say "you'll need to
+           * connect a mailbox" BEFORE the sale rather than refusing it.
+           */
+          missingCapabilities: MODULE_CAPABILITIES[moduleKey].filter(
+            (capability) => !capabilities.has(capability),
           ),
         };
       }),

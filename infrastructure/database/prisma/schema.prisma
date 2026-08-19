@@ -613,6 +613,14 @@ model OrganisationModule {
   seats          Int          @default(1)
   enabledAt      DateTime?    @map("enabled_at") @db.Timestamptz(6)
   disabledAt     DateTime?    @map("disabled_at") @db.Timestamptz(6)
+  /// When a product switched off mid-period actually stops — the end of the
+  /// period already paid for (founder ruling 2026-08-19). `enabled = true`
+  /// WITH `ends_at` set is the normal cancelled state, not a contradiction:
+  /// the customer has cancelled and is still using what they bought.
+  /// `disabled_at` records when it stopped; this is only ever about the future.
+  /// The CHECK in migration 0024 (`ends_at IS NULL OR enabled`) is what forces
+  /// "the end arrived" to be one statement rather than two.
+  endsAt         DateTime?    @map("ends_at") @db.Timestamptz(6)
   createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt      DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
   createdBy      String?      @map("created_by") @db.Uuid
