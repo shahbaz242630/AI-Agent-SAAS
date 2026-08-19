@@ -11,7 +11,7 @@ import {
   type InvoiceActionState,
   type PaymentActionState,
 } from "../../clients/[customerId]/invoices/actions";
-import { ageingBucketLabel, chaseTimingLine } from "@/lib/invoice-book";
+import { ageingBucketLabel, chaseTimingLine } from "@/products/invoice-follow-up/invoice-book";
 import {
   availableInvoiceActions,
   canRecordPayment,
@@ -23,19 +23,19 @@ import {
   isBeingChased,
   isInvoiceActionIrreversible,
   type InvoiceLifecycleAction,
-} from "@/lib/invoice-lifecycle";
+} from "@/products/invoice-follow-up/invoice-lifecycle";
 import {
   invoiceStatusLabel,
   invoiceStatusTone,
   type InvoiceStatusTone,
-} from "@/lib/invoice-status";
+} from "@/products/invoice-follow-up/invoice-status";
 import { amountInputValue, dateInputValue, formatDueDate, formatMoney } from "@/lib/money";
 
 /**
  * The book's rows, and what you can do to one without leaving the screen
  * (slice 1.6c).
  *
- * ⚠️ THE RULES AND THE WORDS COME FROM `lib/invoice-lifecycle.ts`, and the
+ * ⚠️ THE RULES AND THE WORDS COME FROM `products/invoice-follow-up/invoice-lifecycle.ts`, and the
  * writes from the SAME server actions the per-client screen uses. Only the
  * layout differs — this table needs a full-width panel under the row, the
  * client's page puts one under the table. **Never restate a rule or a sentence

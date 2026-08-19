@@ -2,7 +2,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { ApiError, apiFetch } from "@/lib/api";
 import { fetchOrganisations } from "@/lib/organisations";
-import { importFieldLabel } from "@/lib/import-messages";
+import { importFieldLabel } from "@/products/invoice-follow-up/import-messages";
 import { can, readOnlyImportsLine } from "@/lib/permissions";
 import { createClient } from "@/lib/supabase/server";
 import { BackChip } from "@/components/ui";

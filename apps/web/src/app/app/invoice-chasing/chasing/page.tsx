@@ -11,7 +11,7 @@ import {
   stageLabel,
   statusLabel,
   statusTone,
-} from "@/lib/reminder-activity";
+} from "@/products/invoice-follow-up/reminder-activity";
 import { createClient } from "@/lib/supabase/server";
 import { dayMonth } from "../week-panel";
 

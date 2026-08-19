@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { InvoiceLifecycleAction } from "../src/lib/invoice-lifecycle";
+import type { InvoiceLifecycleAction } from "../src/products/invoice-follow-up/invoice-lifecycle";
 import {
   availableInvoiceActions,
   canRecordPayment,
@@ -14,7 +14,7 @@ import {
   isInvoiceActionIrreversible,
   isInvoiceLifecycleAction,
   storedStatusOf,
-} from "../src/lib/invoice-lifecycle";
+} from "../src/products/invoice-follow-up/invoice-lifecycle";
 
 /**
  * The four lifecycle actions (slice 1.6c, task 4).

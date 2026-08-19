@@ -9,7 +9,7 @@ import {
   toOffsetDays,
   validateOffset,
   type OffsetDirection,
-} from "@/lib/reminder-sequence";
+} from "@/products/invoice-follow-up/reminder-sequence";
 import { createClient } from "@/lib/supabase/server";
 
 /**
@@ -17,7 +17,7 @@ import { createClient } from "@/lib/supabase/server";
  *
  * ⚠️ A "use server" FILE MAY ONLY EXPORT ASYNC FUNCTIONS — types are erased, so
  * they are fine; a plain exported constant is a runtime 500 that typecheck and
- * lint both pass. The constants this file needs live in `lib/reminder-sequence`.
+ * lint both pass. The constants this file needs live in `products/invoice-follow-up/reminder-sequence`.
  */
 
 export interface ReminderStepActionState {

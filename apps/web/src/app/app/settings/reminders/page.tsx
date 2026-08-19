@@ -3,7 +3,7 @@ import type { ReminderSequenceDto } from "@eva/types";
 import { ApiError, apiFetch } from "@/lib/api";
 import { fetchOrganisations } from "@/lib/organisations";
 import { can } from "@/lib/permissions";
-import { MIN_DAYS_BETWEEN_REMINDERS } from "@/lib/reminder-sequence";
+import { MIN_DAYS_BETWEEN_REMINDERS } from "@/products/invoice-follow-up/reminder-sequence";
 import { createClient } from "@/lib/supabase/server";
 import { ReminderStepList } from "./reminder-step-list";
 import { StepControls } from "./step-controls";

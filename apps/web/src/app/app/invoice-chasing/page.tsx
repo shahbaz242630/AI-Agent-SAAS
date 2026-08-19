@@ -2,7 +2,11 @@ import { redirect } from "next/navigation";
 import type { ReminderActivityDto } from "@eva/types";
 import { AlertCard, EmptyState, GhostLink, PrimaryLink, SectionHeading } from "@/components/ui";
 import { ApiError, apiFetch } from "@/lib/api";
-import { attentionItems, owedRows, type CurrencyTotal } from "@/lib/dashboard";
+import {
+  attentionItems,
+  owedRows,
+  type CurrencyTotal,
+} from "@/products/invoice-follow-up/dashboard";
 import { firstNameFrom } from "@/lib/identity";
 import { can } from "@/lib/permissions";
 import { sessionFailureDestination } from "@/lib/session";
@@ -21,7 +25,7 @@ import { WeekPanel } from "./week-panel";
  *
  * ⚠️ NO SINGLE "YOU ARE OWED" FIGURE, EVER. Minor units are not comparable
  * across currencies, so one big number is a confident lie for any business
- * trading in more than one. Totals are per currency; `lib/dashboard.ts` carries
+ * trading in more than one. Totals are per currency; `products/invoice-follow-up/dashboard.ts` carries
  * the reasoning and the tests.
  *
  * ⚠️ OVERDUE MONEY COMES FROM `matchedByCurrency`, NEVER `chasedByCurrency`.

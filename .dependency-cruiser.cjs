@@ -74,6 +74,30 @@ module.exports = {
       to: { path: `${SRC}/(platform|capabilities|products)/` },
     },
     {
+      name: "no-unresolvable",
+      comment:
+        "⚠️ THIS RULE IS WHAT STOPS THE WALL LYING. dependency-cruiser silently ignores an import " +
+        "it cannot resolve, so every rule above can only be broken by a path that RESOLVES. A " +
+        "folder move that leaves a stale path behind therefore reports CLEAN. That happened in the " +
+        "web app on 2026-08-19 (see the twin config) and it is the same hazard the four hardcoded " +
+        "`src/modules/…` strings were during the platform split.",
+      severity: "error",
+      from: {},
+      to: {
+        couldNotResolve: true,
+        /**
+         * INTERNAL paths only — anything starting with `.`. Bare package
+         * specifiers are deliberately out of scope: `import type { Request }
+         * from "express"` is type-only, erased at compile time and satisfied by
+         * the declared `@types/express`, but the runtime package is a
+         * transitive dep of `@nestjs/platform-express` and so does not resolve
+         * here. Six of those would fail this rule for no defect. Missing real
+         * packages are already caught by `typecheck` and by the build.
+         */
+        path: "^\\.",
+      },
+    },
+    {
       name: "no-circular",
       comment:
         "A cycle means neither file can be understood, tested or moved on its own — and it is how " +

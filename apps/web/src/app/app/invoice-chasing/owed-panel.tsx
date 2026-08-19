@@ -1,5 +1,5 @@
 import { Card } from "@/components/ui";
-import { overdueLine, owedHeadline, type OwedRow } from "@/lib/dashboard";
+import { overdueLine, owedHeadline, type OwedRow } from "@/products/invoice-follow-up/dashboard";
 import { formatMoney } from "@/lib/money";
 
 /**

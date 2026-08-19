@@ -13,7 +13,7 @@ import {
   stepPurpose,
   toOffsetDays,
   validateOffset,
-} from "@/lib/reminder-sequence";
+} from "@/products/invoice-follow-up/reminder-sequence";
 
 /**
  * The reminder-timing screen (Slice 1.8).

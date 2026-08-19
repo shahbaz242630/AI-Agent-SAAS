@@ -1,7 +1,11 @@
 import type { ReminderActivityDto } from "@eva/types";
 import { Card, StatusPill } from "@/components/ui";
-import { chaseSummary } from "@/lib/dashboard";
-import { stageLabel, statusLabel, statusTone } from "@/lib/reminder-activity";
+import { chaseSummary } from "@/products/invoice-follow-up/dashboard";
+import {
+  stageLabel,
+  statusLabel,
+  statusTone,
+} from "@/products/invoice-follow-up/reminder-activity";
 
 /**
  * Eva's week: the summary, the three counters, and the last few rows

@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { ApiError, apiFetch } from "@/lib/api";
 import { humanRefusal } from "@/lib/permissions";
-import { MAX_UPLOAD_BYTES } from "@/lib/import-messages";
+import { MAX_UPLOAD_BYTES } from "@/products/invoice-follow-up/import-messages";
 import { createClient } from "@/lib/supabase/server";
 
 /**

@@ -7,7 +7,7 @@ import {
   bookMoneyPanel,
   bookTotalLine,
   otherCurrenciesLine,
-} from "@/lib/invoice-book";
+} from "@/products/invoice-follow-up/invoice-book";
 import { defaultInvoiceCurrency } from "@/lib/currencies";
 import { formatMoney } from "@/lib/money";
 import { can, readOnlyInvoicesLine } from "@/lib/permissions";
@@ -392,7 +392,7 @@ export default async function InvoiceBookPage({
               {/* Rows are a client component because acting on one — paying it,
                   pausing it, cancelling it — opens a panel underneath, and the
                   rules and words for all of that come from
-                  `lib/invoice-lifecycle.ts` rather than being restated here. */}
+                  `products/invoice-follow-up/invoice-lifecycle.ts` rather than being restated here. */}
               <BookRows
                 organisationId={organisation.id}
                 rows={book.rows}

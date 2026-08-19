@@ -1,6 +1,10 @@
 import type { ReminderStepDto } from "@eva/types";
-import { stageLabel } from "@/lib/reminder-activity";
-import { describeOffset, isHandover, stepPurpose } from "@/lib/reminder-sequence";
+import { stageLabel } from "@/products/invoice-follow-up/reminder-activity";
+import {
+  describeOffset,
+  isHandover,
+  stepPurpose,
+} from "@/products/invoice-follow-up/reminder-sequence";
 
 /**
  * The sequence, read-only (Slice 1.8).

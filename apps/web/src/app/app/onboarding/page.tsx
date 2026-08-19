@@ -4,7 +4,7 @@ import { MailboxCard, type MailboxSummary } from "@/components/mailbox-card";
 import { GhostLink, PrimaryLink } from "@/components/ui";
 import { ApiError, apiFetch } from "@/lib/api";
 import { fetchOrganisations } from "@/lib/organisations";
-import { mailboxErrorMessage, needsConsentHelp } from "@/lib/mailbox-errors";
+import { mailboxErrorMessage, needsConsentHelp } from "@/capabilities/mailbox/mailbox-errors";
 import { createClient } from "@/lib/supabase/server";
 import { signOut } from "../actions";
 import { MailboxStep } from "./mailbox-step";

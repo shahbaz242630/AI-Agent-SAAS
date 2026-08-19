@@ -8,7 +8,7 @@ import {
   importReadLine,
   importRowStatusLabel,
   isImportableRowStatus,
-} from "../src/lib/import-messages";
+} from "../src/products/invoice-follow-up/import-messages";
 
 describe("what the file turned out to contain", () => {
   /**

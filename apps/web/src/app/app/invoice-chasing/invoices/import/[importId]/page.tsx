@@ -8,7 +8,7 @@ import {
   importReadLine,
   importRowStatusLabel,
   isImportableRowStatus,
-} from "@/lib/import-messages";
+} from "@/products/invoice-follow-up/import-messages";
 import { can, readOnlyImportsLine } from "@/lib/permissions";
 import { createClient } from "@/lib/supabase/server";
 import { BackChip } from "@/components/ui";

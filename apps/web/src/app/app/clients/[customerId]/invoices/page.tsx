@@ -3,7 +3,7 @@ import { redirect } from "next/navigation";
 import { ApiError, apiFetch } from "@/lib/api";
 import { fetchOrganisations } from "@/lib/organisations";
 import { defaultInvoiceCurrency } from "@/lib/currencies";
-import { invoiceCountLine, noInvoicesLine } from "@/lib/invoice-messages";
+import { invoiceCountLine, noInvoicesLine } from "@/products/invoice-follow-up/invoice-messages";
 import { can, readOnlyInvoicesLine } from "@/lib/permissions";
 import { createClient } from "@/lib/supabase/server";
 import { AddInvoiceForm, InvoiceTable, type InvoiceRow } from "./invoice-controls";

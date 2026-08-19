@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { invoiceCountLine, noInvoicesLine } from "../src/lib/invoice-messages";
+import {
+  invoiceCountLine,
+  noInvoicesLine,
+} from "../src/products/invoice-follow-up/invoice-messages";
 
 describe("invoiceCountLine", () => {
   it("agrees in number — the branch this project has shipped wrong before", () => {
