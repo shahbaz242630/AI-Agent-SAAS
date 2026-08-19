@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { MODULE_CATALOGUE, MODULE_KEYS } from "@eva/types";
+import { MODULE_CATALOGUE, MODULE_KEYS, moduleHref } from "@eva/types";
 import { SidebarBody, type SidebarIdentity } from "@/app/app/sidebar-body";
 
 /**
@@ -239,6 +239,37 @@ describe("the sidebar, rendered", () => {
     const html = render("/app", IDENTITY, HOLDS_EVERYTHING);
     expect(html).toContain("bg-module-live");
     expect(html).not.toContain(">off<");
+  });
+
+  /**
+   * ⚠️ THE GUARD FOR A 404 THAT REACHED PRODUCTION (walked 2026-08-19).
+   *
+   * There is a FOURTH state — held AND not built — and this branch asked
+   * `held === true` alone, so holding a product outranked our having built it.
+   * The founder's organisation holds `voice_credit_controller` (a row from
+   * before the phantom-products fix, when the screen still offered unbuilt
+   * products), so the sidebar rendered a live dot linking to
+   * `/app/voice-credit-control`. That is not a route: a bare Next 404, no
+   * shell, no way back — while the Products screen on the same page load
+   * called the same product "Coming soon".
+   *
+   * The assertion is on the HREF, not the dot, because the href is the part
+   * that took somebody nowhere.
+   */
+  it("does not offer a way into a product it holds but we have not built", () => {
+    const unbuilt = MODULE_KEYS.filter((key) => !MODULE_CATALOGUE[key].live);
+    // Holds everything in the catalogue — including the products that do not exist yet.
+    const html = render("/app", IDENTITY, MODULE_KEYS);
+
+    for (const key of unbuilt) {
+      expect(html).not.toContain(`href="${moduleHref(key)}"`);
+      // Still named, and still honest about why there is nowhere to go.
+      expect(html).toContain(MODULE_CATALOGUE[key].name);
+    }
+    // Every unbuilt product still carries "soon" — holding one changes nothing.
+    expect(html.match(/soon/g) ?? []).toHaveLength(unbuilt.length);
+    // ...and the one product that IS built and held is still reachable.
+    expect(html).toContain(`href="${moduleHref("email_credit_controller")}"`);
   });
 
   /**

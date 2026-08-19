@@ -175,22 +175,42 @@ export function SidebarBody({
         <ul className="flex flex-col gap-2">
           {MODULES.map((module) => {
             /**
-             * Three states, and they are three different sentences:
-             *   not built    → "soon"  (ours to finish; nothing to buy)
-             *   built, held  → dot     (you have this, it is running)
-             *   built, not held → "off" (you could have this; you have not)
+             * Four states, and they are four different sentences:
+             *   not built, not held → "soon" (ours to finish; nothing to buy)
+             *   not built, HELD     → "soon" (you have it; it does not exist
+             *                                 yet, so there is nowhere to go)
+             *   built, held         → dot    (you have this, it is running)
+             *   built, not held     → "off"  (you could have this; you have not)
              * Unknown (`heldModules === null`) renders as none of them.
              */
             const held = heldModules === null ? null : heldModules.includes(module.key);
+            /**
+             * ⚠️ THERE ARE FOUR STATES, NOT THREE — the list above missed
+             * "HELD AND NOT BUILT", and that gap was a 404 on production.
+             *
+             * This branch used to ask `held === true` alone, so holding a
+             * product outranked our having built it. The founder's own
+             * organisation holds `voice_credit_controller` — a row left over
+             * from before the phantom-products fix, when the screen still
+             * offered unbuilt products — and the sidebar therefore rendered a
+             * live dot linking to `/app/voice-credit-control`, which is not a
+             * route. Not our error page: a bare Next 404, no sidebar, no way
+             * back. Walked and reproduced on production 2026-08-19.
+             *
+             * Entering a product needs BOTH: they hold it, and it exists.
+             * The badge keeps saying "soon", which is what the Products screen
+             * says about the same product on the same page load.
+             */
+            const enterable = held === true && module.live;
             const badge = !module.live ? "soon" : held === false ? "off" : null;
             return (
               <li
                 key={module.key}
                 className={`flex items-center gap-2 px-2.5 py-[3px] text-[12.5px] ${
-                  held === true ? "text-sidebar-body" : "justify-between text-sidebar-fainter"
+                  enterable ? "text-sidebar-body" : "justify-between text-sidebar-fainter"
                 }`}
               >
-                {held === true ? (
+                {enterable ? (
                   /* Held products are the way INTO them — the list was inert
                      text before the hub existed, which meant the only route to
                      a product you owned was a nav item three inches above. */
