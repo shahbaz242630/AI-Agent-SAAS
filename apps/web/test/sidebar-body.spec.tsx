@@ -13,13 +13,26 @@ import { SidebarBody, type SidebarIdentity } from "@/app/app/sidebar-body";
  */
 
 const IDENTITY: SidebarIdentity = {
+  organisationId: "11111111-1111-4111-8111-111111111111",
   organisation: { name: "Northgate Plumbing", initials: "NP", roleLabel: "Owner" },
   user: { name: "Sam Okafor", email: "sam.okafor@northgate.co.uk", initials: "SO" },
 };
 
-const render = (pathname: string, identity: SidebarIdentity = IDENTITY) =>
+/** Everything built, and held — the ordinary paying customer. */
+const HOLDS_EVERYTHING = MODULE_KEYS.filter((key) => MODULE_CATALOGUE[key].live);
+
+const render = (
+  pathname: string,
+  identity: SidebarIdentity = IDENTITY,
+  heldModules: readonly string[] | null = HOLDS_EVERYTHING,
+) =>
   renderToStaticMarkup(
-    <SidebarBody pathname={pathname} identity={identity} signOutSlot={<span>sign out</span>} />,
+    <SidebarBody
+      pathname={pathname}
+      identity={identity}
+      heldModules={heldModules}
+      signOutSlot={<span>sign out</span>}
+    />,
   );
 
 /**
@@ -151,5 +164,46 @@ describe("the sidebar, rendered", () => {
     for (const key of MODULE_KEYS) {
       expect(html).toContain(MODULE_CATALOGUE[key].name);
     }
+  });
+
+  /**
+   * ⚠️ THE GUARD FOR A DEFECT FOUND BY WALKING, 2026-08-19.
+   *
+   * The dot was rendered from `MODULE_CATALOGUE[key].live` — "we have built
+   * this" — and never asked what the organisation actually holds. So with
+   * Invoice Chasing switched OFF, the sidebar showed it lit while
+   * `/app/invoices` said "…doesn't have Invoice Chasing". One screen, two
+   * statements: the money-bug family.
+   *
+   * Three states, three sentences, and the test asserts all three because the
+   * dangerous one is the middle: "built but not bought" used to be
+   * indistinguishable from "running".
+   */
+  it("marks a built product the organisation does NOT hold as off, not live", () => {
+    const html = render("/app", IDENTITY, []);
+    // Every built product is off, so there is one "off" badge per built product.
+    expect(html.match(/>off</g) ?? []).toHaveLength(HOLDS_EVERYTHING.length);
+    // ...and no live dot anywhere.
+    expect(html).not.toContain("bg-module-live");
+  });
+
+  it("marks a product the organisation DOES hold as live", () => {
+    const html = render("/app", IDENTITY, HOLDS_EVERYTHING);
+    expect(html).toContain("bg-module-live");
+    expect(html).not.toContain(">off<");
+  });
+
+  /**
+   * ⚠️ UNKNOWN IS NOT "OWNS NOTHING". The shell swallows its own fetch
+   * failures, so a modules call that fails arrives here as `null`. Rendering
+   * that as "off" would replace one confident lie with another — this time
+   * telling a paying customer they do not have what they pay for.
+   */
+  it("claims nothing when it could not find out what the organisation holds", () => {
+    const html = render("/app", IDENTITY, null);
+    expect(html).not.toContain("bg-module-live");
+    expect(html).not.toContain(">off<");
+    // The products are still named — hiding them would be a third wrong answer.
+    for (const key of MODULE_KEYS) expect(html).toContain(MODULE_CATALOGUE[key].name);
   });
 });

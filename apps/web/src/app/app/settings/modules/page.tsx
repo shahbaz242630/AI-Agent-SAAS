@@ -183,7 +183,13 @@ export default async function ModulesPage() {
                 </div>
                 <p className="text-sm text-muted-foreground">{product?.blurb}</p>
 
-                {module.enabled && module.seatsUsed !== null && (
+                {/* ⚠️ ONLY WHEN THERE IS SOMETHING IN USE (found by walking,
+                    2026-08-19). At 0 of 1 this line sat directly above "Eva
+                    needs a mailbox to send from · Connect a mailbox" — two
+                    lines, two links, one subject, and the seat count adding
+                    nothing a customer could act on. The readiness line below is
+                    the one with the fix attached, so it wins the space. */}
+                {module.enabled && module.seatsUsed !== null && module.seatsUsed > 0 && (
                   <p className="text-sm text-muted-foreground">
                     {module.seatsUsed} of {module.seats} {module.seats === 1 ? "seat" : "seats"} in
                     use ·{" "}
@@ -247,7 +253,9 @@ export default async function ModulesPage() {
                   <ModuleControls
                     organisationId={organisation.id}
                     moduleKey={module.moduleKey}
+                    productName={product?.name ?? module.moduleKey}
                     enabled={module.enabled}
+                    endsAt={module.endsAt ? formatEndDate(module.endsAt) : null}
                     seats={module.seats}
                     seatsUsed={module.seatsUsed}
                     blocked={blocked}
