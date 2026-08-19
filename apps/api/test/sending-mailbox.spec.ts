@@ -3,7 +3,7 @@ import type { INestApplication } from "@nestjs/common";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { withTenant, type EvaPrismaClient } from "@eva/database";
 import { PrismaService } from "../src/common/database/prisma.service.js";
-import { MailboxesService } from "../src/modules/mailboxes/mailboxes.service.js";
+import { MailboxesService } from "../src/capabilities/mailbox/mailboxes.service.js";
 import {
   createOrgWithMembers,
   createOwnerClient,

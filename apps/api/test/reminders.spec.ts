@@ -4,8 +4,8 @@ import request from "supertest";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { EvaPrismaClient } from "@eva/database";
 import type { ReminderActionType, ReminderStepKey, ScheduledActionStatus } from "@eva/types";
-import { todayInTimezone } from "../src/modules/invoices/invoice-status.js";
-import type { scheduleInvoiceReminders } from "../src/modules/reminders/reminder-actions.js";
+import { todayInTimezone } from "../src/products/invoice-follow-up/invoices/invoice-status.js";
+import type { scheduleInvoiceReminders } from "../src/products/invoice-follow-up/reminders/reminder-actions.js";
 import {
   createOrgWithMembers,
   createOwnerClient,
@@ -25,23 +25,26 @@ import {
  */
 const reminderActionsMock = vi.hoisted(() => ({ failForOrganisationId: "" }));
 
-vi.mock("../src/modules/reminders/reminder-actions.js", async (importOriginal) => {
-  const actual = await importOriginal<{
-    scheduleInvoiceReminders: typeof scheduleInvoiceReminders;
-  }>();
-  return {
-    ...actual,
-    scheduleInvoiceReminders: (
-      tx: Parameters<typeof scheduleInvoiceReminders>[0],
-      input: Parameters<typeof scheduleInvoiceReminders>[1],
-    ): ReturnType<typeof scheduleInvoiceReminders> => {
-      if (reminderActionsMock.failForOrganisationId === input.organisationId) {
-        return Promise.reject(new Error("forced reconcile failure (test double)"));
-      }
-      return actual.scheduleInvoiceReminders(tx, input);
-    },
-  };
-});
+vi.mock(
+  "../src/products/invoice-follow-up/reminders/reminder-actions.js",
+  async (importOriginal) => {
+    const actual = await importOriginal<{
+      scheduleInvoiceReminders: typeof scheduleInvoiceReminders;
+    }>();
+    return {
+      ...actual,
+      scheduleInvoiceReminders: (
+        tx: Parameters<typeof scheduleInvoiceReminders>[0],
+        input: Parameters<typeof scheduleInvoiceReminders>[1],
+      ): ReturnType<typeof scheduleInvoiceReminders> => {
+        if (reminderActionsMock.failForOrganisationId === input.organisationId) {
+          return Promise.reject(new Error("forced reconcile failure (test double)"));
+        }
+        return actual.scheduleInvoiceReminders(tx, input);
+      },
+    };
+  },
+);
 
 /**
  * Reminder sequence (Slice 1.5; plan §3/§6): lazy default-sequence
@@ -731,7 +734,7 @@ describe("Reminders module: structural no-send guard (plan §8 risk 7)", () => {
   it("no module file imports or references any email-sending/provider path", async () => {
     const { readdirSync, readFileSync } = await import("node:fs");
     const path = await import("node:path");
-    const moduleDir = path.resolve(__dirname, "../src/modules/reminders");
+    const moduleDir = path.resolve(__dirname, "../src/products/invoice-follow-up/reminders");
     for (const file of readdirSync(moduleDir)) {
       if (!file.endsWith(".ts")) continue;
       const source = readFileSync(path.join(moduleDir, file), "utf8");

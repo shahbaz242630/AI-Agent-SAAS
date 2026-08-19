@@ -3,7 +3,7 @@ import type { INestApplication } from "@nestjs/common";
 import request from "supertest";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { EvaPrismaClient } from "@eva/database";
-import type { scheduleInvoiceReminders } from "../src/modules/reminders/reminder-actions.js";
+import type { scheduleInvoiceReminders } from "../src/products/invoice-follow-up/reminders/reminder-actions.js";
 import {
   createOrgWithMembers,
   createOwnerClient,
@@ -23,23 +23,26 @@ import {
  */
 const reminderActionsMock = vi.hoisted(() => ({ failScheduling: false }));
 
-vi.mock("../src/modules/reminders/reminder-actions.js", async (importOriginal) => {
-  const actual = await importOriginal<{
-    scheduleInvoiceReminders: typeof scheduleInvoiceReminders;
-  }>();
-  return {
-    ...actual,
-    scheduleInvoiceReminders: (
-      tx: Parameters<typeof scheduleInvoiceReminders>[0],
-      input: Parameters<typeof scheduleInvoiceReminders>[1],
-    ): ReturnType<typeof scheduleInvoiceReminders> => {
-      if (reminderActionsMock.failScheduling) {
-        return Promise.reject(new Error("forced scheduling failure (test double)"));
-      }
-      return actual.scheduleInvoiceReminders(tx, input);
-    },
-  };
-});
+vi.mock(
+  "../src/products/invoice-follow-up/reminders/reminder-actions.js",
+  async (importOriginal) => {
+    const actual = await importOriginal<{
+      scheduleInvoiceReminders: typeof scheduleInvoiceReminders;
+    }>();
+    return {
+      ...actual,
+      scheduleInvoiceReminders: (
+        tx: Parameters<typeof scheduleInvoiceReminders>[0],
+        input: Parameters<typeof scheduleInvoiceReminders>[1],
+      ): ReturnType<typeof scheduleInvoiceReminders> => {
+        if (reminderActionsMock.failScheduling) {
+          return Promise.reject(new Error("forced scheduling failure (test double)"));
+        }
+        return actual.scheduleInvoiceReminders(tx, input);
+      },
+    };
+  },
+);
 
 /**
  * Invoice records (Slice 1.2). Routes are nested under
@@ -692,7 +695,7 @@ describe("Invoices: state machine (BRD 4.1 — the only status code path)", () =
   it("update schema is structurally status-free: no module file changes status outside the state machine", async () => {
     const { readdirSync, readFileSync } = await import("node:fs");
     const path = await import("node:path");
-    const moduleDir = path.resolve(__dirname, "../src/modules/invoices");
+    const moduleDir = path.resolve(__dirname, "../src/products/invoice-follow-up/invoices");
     for (const file of readdirSync(moduleDir)) {
       if (!file.endsWith(".ts") || file === "invoice-state-machine.ts") continue;
       const source = readFileSync(path.join(moduleDir, file), "utf8");
@@ -876,7 +879,8 @@ describe("Invoices: due-date derivation unit boundaries (BRD 13 — DST)", () =>
   // The pure derivation function is exercised with fixed `now` values so DST
   // boundaries are deterministic regardless of when the suite runs.
   it("derives against the org calendar day at the BST start (2026-03-29)", async () => {
-    const { deriveDisplayStatus } = await import("../src/modules/invoices/invoice-status.js");
+    const { deriveDisplayStatus } =
+      await import("../src/products/invoice-follow-up/invoices/invoice-status.js");
     // 2026-03-29 00:30 UTC = 00:30 Europe/London (still GMT) — today is the 29th.
     const now = new Date("2026-03-29T00:30:00Z");
     const due = (day: string) => ({ status: "active", dueDate: new Date(`${day}T00:00:00Z`) });
@@ -887,7 +891,8 @@ describe("Invoices: due-date derivation unit boundaries (BRD 13 — DST)", () =>
   });
 
   it("derives against the org calendar day at the GMT return (2026-10-25)", async () => {
-    const { deriveDisplayStatus } = await import("../src/modules/invoices/invoice-status.js");
+    const { deriveDisplayStatus } =
+      await import("../src/products/invoice-follow-up/invoices/invoice-status.js");
     // 2026-10-25 00:30 UTC = 01:30 Europe/London (still BST) — today is the 25th.
     const now = new Date("2026-10-25T00:30:00Z");
     const due = (day: string) => ({ status: "active", dueDate: new Date(`${day}T00:00:00Z`) });
@@ -898,7 +903,8 @@ describe("Invoices: due-date derivation unit boundaries (BRD 13 — DST)", () =>
   });
 
   it("a UTC instant can be different calendar days in different org timezones", async () => {
-    const { deriveDisplayStatus } = await import("../src/modules/invoices/invoice-status.js");
+    const { deriveDisplayStatus } =
+      await import("../src/products/invoice-follow-up/invoices/invoice-status.js");
     // 2026-07-01 05:00 UTC: still 2026-07-01 in London, already 2026-07-01 15:00
     // in Sydney (same day), but 2026-06-30 22:00 in Los Angeles (previous day).
     const now = new Date("2026-07-01T05:00:00Z");
@@ -909,7 +915,8 @@ describe("Invoices: due-date derivation unit boundaries (BRD 13 — DST)", () =>
   });
 
   it("never derives for non-Active statuses", async () => {
-    const { deriveDisplayStatus } = await import("../src/modules/invoices/invoice-status.js");
+    const { deriveDisplayStatus } =
+      await import("../src/products/invoice-follow-up/invoices/invoice-status.js");
     const now = new Date("2026-07-25T12:00:00Z");
     const overdue = new Date("2026-07-01T00:00:00Z");
     for (const status of ["draft", "paused", "cancelled", "paid", "disputed"]) {

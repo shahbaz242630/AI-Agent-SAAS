@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { INestApplication } from "@nestjs/common";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { withTenant, type EvaPrismaClient } from "@eva/database";
-import { auditReassignedByMailbox, writeAuditLog } from "../src/common/audit/audit-log.js";
+import { auditReassignedByMailbox, writeAuditLog } from "../src/platform/audit/audit-log.js";
 import { PrismaService } from "../src/common/database/prisma.service.js";
 import {
   createOrgWithMembers,

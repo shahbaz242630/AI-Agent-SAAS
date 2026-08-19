@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { INestApplication } from "@nestjs/common";
 import request from "supertest";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { signOAuthState } from "../src/modules/mailboxes/oauth-state.js";
+import { signOAuthState } from "../src/capabilities/mailbox/oauth-state.js";
 import type { EvaPrismaClient } from "@eva/database";
 import {
   PERMISSION_KEYS,

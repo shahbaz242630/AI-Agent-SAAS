@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createPrismaClient, withTenant, type EvaPrismaClient } from "@eva/database";
 import { seed } from "@eva/database";
-import { addSuppression, isSuppressed } from "../src/common/suppression/suppression.js";
+import { addSuppression, isSuppressed } from "../src/platform/suppression/suppression.js";
 import { createOwnerClient } from "./support.js";
 
 /**

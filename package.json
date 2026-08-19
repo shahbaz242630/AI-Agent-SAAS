@@ -12,6 +12,8 @@
     "dev": "pnpm -r --parallel run dev",
     "build": "pnpm -r run build",
     "lint": "pnpm -r --if-present run lint",
+    "boundaries": "depcruise apps/api/src apps/api/test --config .dependency-cruiser.cjs",
+    "boundaries:graph": "depcruise apps/api/src apps/api/test --config .dependency-cruiser.cjs --output-type dot",
     "typecheck": "pnpm -r --if-present run typecheck",
     "test": "pnpm -r --if-present run test",
     "format": "prettier --write .",
@@ -48,6 +50,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.0.0",
+    "dependency-cruiser": "^18.2.0",
     "eslint": "^9.0.0",
     "eslint-config-prettier": "^10.0.0",
     "prettier": "^3.5.0",
