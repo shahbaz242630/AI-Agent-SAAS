@@ -6,7 +6,14 @@
 name: CI
 
 on:
+  # ⚠️ `ready_for_review` IS LISTED BECAUSE IT IS NOT A DEFAULT, AND THE GAP IS
+  # REAL. Without `types`, GitHub uses [opened, synchronize, reopened]. Draft
+  # PR #89 opened with no CI run at all, and taking a draft out of draft fires
+  # only `ready_for_review` — so a draft could be marked ready and merged having
+  # never run the verify gate. Listing the defaults explicitly alongside it is
+  # required: naming any type replaces the default set rather than adding to it.
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
   push:
     branches: [main]
 
