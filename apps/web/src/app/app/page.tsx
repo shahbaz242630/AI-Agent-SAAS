@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { MODULE_CATALOGUE, MODULE_KEYS, moduleHref, type ModuleKey } from "@eva/types";
 import { ApiError, apiFetch } from "@/lib/api";
 import { fetchOrganisations } from "@/lib/organisations";
+import { hubGroups, hubSkipTarget } from "@/lib/product-hub";
 import { createClient } from "@/lib/supabase/server";
 
 /**
@@ -74,11 +75,16 @@ export default async function AppHubPage() {
    * know. `unreadable` deliberately does not redirect: bouncing somebody into a
    * product on a guess is worse than showing them the choice.
    */
-  if (!unreadable && held.length === 1) redirect(moduleHref(held[0]!));
+  /**
+   * ⚠️ THE SKIP GOES ONLY INTO A PRODUCT THAT EXISTS — see `hubSkipTarget`,
+   * where the rule lives and is tested. Skipping on the COUNT alone sent
+   * somebody holding one unbuilt product into a bare 404.
+   */
+  const skipTo = unreadable ? null : hubSkipTarget(held);
+  if (skipTo) redirect(moduleHref(skipTo));
 
-  const live = MODULE_KEYS.filter((key) => MODULE_CATALOGUE[key].live);
-  const yours = live.filter((key) => held.includes(key));
-  const available = MODULE_KEYS.filter((key) => !held.includes(key));
+  /** Three groups, and every key in the catalogue lands in exactly one. */
+  const { yours, heldNotReady, available } = hubGroups(held);
 
   return (
     <main className="flex w-full max-w-[1080px] flex-1 flex-col gap-[26px] px-10 pt-8 pb-9">
@@ -91,7 +97,13 @@ export default async function AppHubPage() {
             ? "We couldn't load your products just now. Nothing has changed — try again in a moment."
             : yours.length > 0
               ? "Pick what you want to work on."
-              : "You haven't switched any products on yet."}
+              : /* ⚠️ `held`, NOT `yours`. Somebody holding only products we have
+                   not built yet HAS switched something on, and telling them
+                   they have not is the screen calling them a liar about their
+                   own bill. */
+                held.length > 0
+                ? "Everything you have switched on is still being built."
+                : "You haven't switched any products on yet."}
         </p>
       </section>
 
@@ -106,6 +118,31 @@ export default async function AppHubPage() {
               <span className="text-base font-semibold">{MODULE_CATALOGUE[key].name}</span>
               <span className="text-sm text-muted-foreground">{MODULE_CATALOGUE[key].blurb}</span>
             </Link>
+          ))}
+        </section>
+      )}
+
+      {heldNotReady.length > 0 && (
+        <section className="flex w-full max-w-2xl flex-col gap-3">
+          <h2 className="text-[10.5px] font-bold tracking-[0.08em] text-muted-foreground uppercase">
+            Switched on · still being built
+          </h2>
+          {/* ⚠️ NOT A LINK, DELIBERATELY. There is no route behind an unbuilt
+              product, and a card that looks clickable and answers with a 404 is
+              the defect this section exists to fix. Named and flat: the
+              customer can see what they are holding without being invited into
+              nothing. */}
+          {heldNotReady.map((key) => (
+            <div
+              key={key}
+              className="flex flex-wrap items-center justify-between gap-2 rounded-[var(--radius-card)] border border-border px-6 py-4"
+            >
+              <span className="flex flex-col gap-0.5">
+                <span className="text-sm font-semibold">{MODULE_CATALOGUE[key].name}</span>
+                <span className="text-sm text-muted-foreground">{MODULE_CATALOGUE[key].blurb}</span>
+              </span>
+              <span className="text-xs font-semibold text-muted-foreground">Coming soon</span>
+            </div>
           ))}
         </section>
       )}
