@@ -1,6 +1,6 @@
 import Link from "next/link";
-import { MODULE_CATALOGUE, MODULE_KEYS } from "@eva/types";
-import { NAV_ITEMS, isActiveSection } from "@/lib/navigation";
+import { MODULE_CATALOGUE, MODULE_KEYS, moduleHref, type ModuleKey } from "@eva/types";
+import { NAV_ITEMS, PRODUCT_NAV, isActiveSection, productForPath } from "@/lib/navigation";
 import { NAV_ICONS } from "./nav-icons";
 import { UserMenu } from "./user-menu";
 
@@ -37,7 +37,7 @@ export interface SidebarIdentity {
  * `MODULE_CATALOGUE` now, so a product cannot exist in one place and not the
  * other and cannot be called two things.
  */
-const MODULES: readonly { key: string; label: string; live: boolean }[] = MODULE_KEYS.map(
+const MODULES: readonly { key: ModuleKey; label: string; live: boolean }[] = MODULE_KEYS.map(
   (key) => ({
     key,
     label: MODULE_CATALOGUE[key].name,
@@ -78,6 +78,9 @@ export function SidebarBody({
    */
   signOutSlot: React.ReactNode;
 }) {
+  /** Null on a platform screen (the hub, Clients, Settings). */
+  const currentProduct = productForPath(pathname);
+
   return (
     <nav
       aria-label="Sections"
@@ -110,8 +113,33 @@ export function SidebarBody({
         </div>
       )}
 
+      {/**
+       * ⚠️ THE SECTIONS DEPEND ON WHERE YOU ARE, not on a single flat list.
+       * Inside a product you get that product's screens; everywhere you get the
+       * platform's. Before 2026-08-19 one list held Home, Invoices, Clients and
+       * Chasing — three of which belong to invoice chasing — so a customer who
+       * bought only a lead product would have been offered three dead ends.
+       */}
       <ul className="mt-5 flex flex-col gap-0.5">
-        {NAV_ITEMS.map((item) => {
+        {[
+          ...(currentProduct ? (PRODUCT_NAV[currentProduct] ?? []) : []),
+          /**
+           * ⚠️ NO "ALL PRODUCTS" LINK WHEN THERE IS NOTHING TO CHOOSE BETWEEN
+           * (found by walking, 2026-08-19, minutes after the hub landed).
+           *
+           * `/app` sends a customer holding ONE product straight into it, which
+           * is the whole design — so the link bounced them back to the screen
+           * they were already on. A control that cannot change anything is
+           * worse than a missing one: it reads as broken.
+           *
+           * Kept when they hold none (the hub explains how to switch one on)
+           * and when we could not find out (`null` — claiming nothing beats
+           * hiding a real door).
+           */
+          ...NAV_ITEMS.filter(
+            (item) => item.href !== "/app" || heldModules === null || heldModules.length !== 1,
+          ),
+        ].map((item) => {
           const active = isActiveSection(pathname, item.href);
           const Icon = NAV_ICONS[item.href];
           return (
@@ -163,10 +191,13 @@ export function SidebarBody({
                 }`}
               >
                 {held === true ? (
-                  <>
+                  /* Held products are the way INTO them — the list was inert
+                     text before the hub existed, which meant the only route to
+                     a product you owned was a nav item three inches above. */
+                  <Link href={moduleHref(module.key)} className="flex items-center gap-2">
                     <span aria-hidden className="size-[7px] rounded-full bg-module-live" />
                     {module.label}
-                  </>
+                  </Link>
                 ) : (
                   <>
                     {module.label}

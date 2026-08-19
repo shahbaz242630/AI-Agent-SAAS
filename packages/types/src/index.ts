@@ -285,6 +285,17 @@ export const MODULE_CAPABILITIES: Record<ModuleKey, readonly Capability[]> = {
 export interface ModuleDescriptor {
   /** The product's name, as a customer reads it. Never the database key. */
   readonly name: string;
+  /**
+   * The product's own path segment, under `/app`.
+   *
+   * ⚠️ IT LIVES HERE BECAUSE THIS PRODUCT ALREADY HAD THREE NAMES. The key is
+   * `email_credit_controller`, the code folder is `invoice-follow-up`, and a
+   * customer reads "Invoice Chasing". A URL invented at the call site would be
+   * a fourth, and four names for one product is precisely how the sidebar came
+   * to disagree with the settings screen. Build every product link with
+   * `moduleHref`; never write `/app/invoice-chasing` by hand.
+   */
+  readonly slug: string;
   /** One honest line about what it does. */
   readonly blurb: string;
   /** Whether the product is BUILT. `false` means it cannot be turned on. */
@@ -294,11 +305,13 @@ export interface ModuleDescriptor {
 export const MODULE_CATALOGUE: Record<ModuleKey, ModuleDescriptor> = {
   email_credit_controller: {
     name: "Invoice Chasing",
+    slug: "invoice-chasing",
     blurb: "Chases your unpaid invoices by email, from your own mailbox.",
     live: true,
   },
   voice_credit_controller: {
     name: "Voice Credit Control",
+    slug: "voice-credit-control",
     blurb: "Follows up overdue invoices by phone when email has not worked.",
     live: false,
   },
@@ -312,16 +325,19 @@ export const MODULE_CATALOGUE: Record<ModuleKey, ModuleDescriptor> = {
    */
   lead_follow_up_email: {
     name: "Lead Follow-up by Email",
+    slug: "lead-follow-up-email",
     blurb: "Answers new enquiries from your mailbox, usually within minutes.",
     live: false,
   },
   lead_follow_up_voice: {
     name: "Lead Follow-up by Call",
+    slug: "lead-follow-up-call",
     blurb: "Calls new enquiries back before they go cold.",
     live: false,
   },
   ai_receptionist: {
     name: "AI Receptionist",
+    slug: "ai-receptionist",
     blurb: "Answers the phone when you cannot get to it.",
     live: false,
   },
@@ -330,6 +346,18 @@ export const MODULE_CATALOGUE: Record<ModuleKey, ModuleDescriptor> = {
 /** A product's name, for a sentence a person will read. */
 export function moduleName(moduleKey: ModuleKey): string {
   return MODULE_CATALOGUE[moduleKey].name;
+}
+
+/**
+ * Where a product's screens live. The ONLY way to build a product link.
+ *
+ * ⚠️ NEVER HAND-WRITE `/app/<slug>`. A literal path is a second copy of the
+ * slug, and the moment one of them changes the other is a dead link nothing
+ * fails on — `moduleHref` is what makes renaming a product a one-line edit.
+ */
+export function moduleHref(moduleKey: ModuleKey, section?: string): string {
+  const base = `/app/${MODULE_CATALOGUE[moduleKey].slug}`;
+  return section ? `${base}/${section}` : base;
 }
 
 /** Whether the product behind this key actually exists yet. */

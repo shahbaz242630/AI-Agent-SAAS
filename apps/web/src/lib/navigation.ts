@@ -1,3 +1,5 @@
+import { MODULE_KEYS, moduleHref, type ModuleKey } from "@eva/types";
+
 /**
  * The signed-in app's navigation (Slice 1.9).
  *
@@ -30,11 +32,55 @@ export interface NavItem {
  * enforcement — the API refuses regardless (`lib/permissions.ts`).
  */
 export const NAV_ITEMS: readonly NavItem[] = [
-  { href: "/app", label: "Home", description: "What you are owed and what Eva is doing" },
-  { href: "/app/invoices", label: "Invoices", description: "Every invoice on one screen" },
+  { href: "/app", label: "All products", description: "Everything Eva does for you" },
   { href: "/app/clients", label: "Clients", description: "Who owes you" },
-  { href: "/app/reminders", label: "Chasing", description: "What Eva has actually sent" },
 ];
+
+/**
+ * The sections INSIDE a product, keyed by the product that owns them.
+ *
+ * ⚠️ THIS IS THE NAV HALF OF THE PLATFORM/PRODUCT SPLIT. `NAV_ITEMS` above is
+ * the platform: the hub, and Clients — which stays outside every product
+ * because there is **one client record** (BRD §3.1.3), and a customer who holds
+ * only a lead product must still reach their own contacts.
+ *
+ * ⚠️ HREFS ARE BUILT WITH `moduleHref`, NEVER WRITTEN OUT. The product's path
+ * segment lives in `MODULE_CATALOGUE.slug` and nowhere else; a literal
+ * "/app/invoice-chasing" here would be a second copy that goes stale silently
+ * the day a product is renamed.
+ */
+export const PRODUCT_NAV: Partial<Record<ModuleKey, readonly NavItem[]>> = {
+  email_credit_controller: [
+    {
+      href: moduleHref("email_credit_controller"),
+      label: "Home",
+      description: "What you are owed and what Eva is doing",
+    },
+    {
+      href: moduleHref("email_credit_controller", "invoices"),
+      label: "Invoices",
+      description: "Every invoice on one screen",
+    },
+    {
+      href: moduleHref("email_credit_controller", "chasing"),
+      label: "Chasing",
+      description: "What Eva has actually sent",
+    },
+  ],
+};
+
+/**
+ * Which product's screens the current path belongs to, or null on a platform
+ * screen. Drives which sections the sidebar shows.
+ */
+export function productForPath(pathname: string): ModuleKey | null {
+  const path = normalise(pathname);
+  for (const key of MODULE_KEYS) {
+    const base = moduleHref(key);
+    if (path === base || path.startsWith(`${base}/`)) return key;
+  }
+  return null;
+}
 
 /**
  * The account menu at the foot of the sidebar (founder, 2026-08-18).
@@ -76,8 +122,24 @@ export const ACCOUNT_MENU_ITEMS: readonly NavItem[] = [
 export function isActiveSection(pathname: string, href: string): boolean {
   const path = normalise(pathname);
   const target = normalise(href);
-  if (target === "/app") return path === "/app";
+  /**
+   * ⚠️ A PRODUCT'S HOME NEEDS THE SAME EXACT-MATCH RULE AS `/app`, AND THIS WAS
+   * A LIVE BUG FOR ABOUT A MINUTE (2026-08-19).
+   *
+   * `/app` was special-cased because every path begins with it. The moment
+   * products got their own routes, each product's home became a prefix of all
+   * of that product's sections too — so on `/app/invoice-chasing/chasing` the
+   * nav lit **Home**, which is the original defect reappearing one level down.
+   * Caught by the test written for the first version of it.
+   */
+  if (target === "/app" || isProductRoot(target)) return path === target;
   return path === target || path.startsWith(`${target}/`);
+}
+
+/** Whether a path is a product's own root — `/app/invoice-chasing`, not one of
+ *  its sections. Derived from the catalogue, never a hand-written list. */
+function isProductRoot(path: string): boolean {
+  return MODULE_KEYS.some((key) => moduleHref(key) === path);
 }
 
 /** Trailing slashes are noise; `/app/invoices/` and `/app/invoices` are one screen. */

@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { OwedPanel } from "@/app/app/owed-panel";
+import { OwedPanel } from "@/app/app/invoice-chasing/owed-panel";
 import { owedRows, type OwedRow } from "@/lib/dashboard";
 
 /**

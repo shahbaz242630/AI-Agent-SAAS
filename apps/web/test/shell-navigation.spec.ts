@@ -49,7 +49,7 @@ const screens = pageFiles(APP_SCREENS).map((file) => ({
 describe("screens inside the app shell", () => {
   it("finds every screen (a guard over an empty list proves nothing)", () => {
     expect(screens.length).toBeGreaterThan(8);
-    expect(screens.map((s) => s.route)).toContain("/app/invoices");
+    expect(screens.map((s) => s.route)).toContain("/app/invoice-chasing/invoices");
   });
 
   /**

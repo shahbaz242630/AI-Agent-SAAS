@@ -10,7 +10,7 @@ import {
   type ContactActionState,
   type InvoiceActionState,
   type PaymentActionState,
-} from "../clients/[customerId]/invoices/actions";
+} from "../../clients/[customerId]/invoices/actions";
 import { ageingBucketLabel, chaseTimingLine } from "@/lib/invoice-book";
 import {
   availableInvoiceActions,
