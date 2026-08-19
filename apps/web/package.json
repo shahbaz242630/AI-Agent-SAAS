@@ -14,7 +14,6 @@
     "@eva/configuration": "workspace:*",
     "@eva/design-system": "workspace:*",
     "@eva/types": "workspace:*",
-    "@eva/ui": "workspace:*",
     "@sentry/nextjs": "^10.69.0",
     "@supabase/ssr": "^0.12.4",
     "@supabase/supabase-js": "^2.111.0",
