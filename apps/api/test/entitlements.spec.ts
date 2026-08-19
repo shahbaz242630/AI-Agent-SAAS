@@ -381,8 +381,8 @@ describe("Module entitlements (Slice 1.6a)", () => {
      * What changed is the REASON, and the reason is the whole point: "we have
      * not finished it" is a wait, "buy two other products first" is a wall.
      */
-    it("refuses the lead agent for being unbuilt, NOT for a prerequisite", async () => {
-      const response = await put(entitled, "lead_follow_up_agent")
+    it("refuses lead follow-up for being unbuilt, NOT for a prerequisite", async () => {
+      const response = await put(entitled, "lead_follow_up_email")
         .send({ enabled: true })
         .expect(400);
       expect(response.body.message).toContain("isn't built yet");
@@ -415,7 +415,7 @@ describe("Module entitlements (Slice 1.6a)", () => {
      *
      * It enabled Voice Credit Control, then Lead Follow-up, and checked both
      * came back `enabled: true` — which they did, and which was exactly the
-     * bug. Three of the four products are not built: they own no permissions in
+     * bug. Four of the five products are not built: they own no permissions in
      * `PERMISSION_MODULE`, so turning one on wrote a row, printed "On" and
      * delivered nothing. The screen no longer offers the button, but the button
      * was never what stopped it — this is.
@@ -484,7 +484,10 @@ describe("Module entitlements (Slice 1.6a)", () => {
         .set("Authorization", `Bearer ${tokenFor(bare, "owner")}`)
         .expect(200);
 
-      expect(response.body).toHaveLength(4);
+      // Derived, never a literal: this said `4` and broke the day lead
+      // follow-up became two products (2026-08-19). A hardcoded count is one
+      // more copy of the catalogue that has to be remembered.
+      expect(response.body).toHaveLength(MODULE_KEYS.length);
       const receptionist = response.body.find(
         (row: { moduleKey: string }) => row.moduleKey === "ai_receptionist",
       );
@@ -498,7 +501,7 @@ describe("Module entitlements (Slice 1.6a)", () => {
        * never a reason to refuse the sale.
        */
       const leadAgent = response.body.find(
-        (row: { moduleKey: string }) => row.moduleKey === "lead_follow_up_agent",
+        (row: { moduleKey: string }) => row.moduleKey === "lead_follow_up_email",
       );
       expect(leadAgent.missingDependencies).toEqual([]);
       expect(leadAgent.missingCapabilities).toContain("mailbox");
@@ -514,7 +517,7 @@ describe("Module entitlements (Slice 1.6a)", () => {
      * rightly refuses to enable it; the permission rule under test is
      * independent of that.
      */
-    it("lets an organisation holding ONLY the lead agent reach the mailbox", async () => {
+    it("lets an organisation holding ONLY lead follow-up by email reach the mailbox", async () => {
       const leadOnly = await createOrgWithMembers(
         owner,
         "ent-lead-only",
@@ -527,7 +530,7 @@ describe("Module entitlements (Slice 1.6a)", () => {
       await owner.organisationModule.create({
         data: {
           organisationId: leadOnly.id,
-          moduleKey: "lead_follow_up_agent",
+          moduleKey: "lead_follow_up_email",
           enabled: true,
           seats: 1,
           source: "manual",
@@ -555,7 +558,7 @@ describe("Module entitlements (Slice 1.6a)", () => {
         .set("Authorization", `Bearer ${tokenFor(bare, "owner")}`)
         .expect(402);
 
-      expect(response.body.modules).toEqual(["email_credit_controller", "lead_follow_up_agent"]);
+      expect(response.body.modules).toEqual(["email_credit_controller", "lead_follow_up_email"]);
       expect(response.body.message).toContain(" or ");
     });
 

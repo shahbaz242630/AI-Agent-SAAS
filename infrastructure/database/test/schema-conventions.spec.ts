@@ -878,7 +878,7 @@ describe("Schema conventions (BRD 10)", () => {
     });
 
     it("one live row per (organisation, module), and a soft-deleted one does not block re-enabling", async () => {
-      const data = { organisationId: DEMO_ORGANISATION_ID, moduleKey: "lead_follow_up_agent" };
+      const data = { organisationId: DEMO_ORGANISATION_ID, moduleKey: "lead_follow_up_email" };
       await prisma.organisationModule.deleteMany({ where: data });
       const first = await prisma.organisationModule.create({ data });
       await expect(prisma.organisationModule.create({ data })).rejects.toThrow();

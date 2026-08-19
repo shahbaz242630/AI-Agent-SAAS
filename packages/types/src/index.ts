@@ -113,11 +113,24 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<OrganisationRole, readonly Permiss
 
 // --- Slice 1.6a: module entitlements ---
 
-/** The four products an organisation can hold (BRD entitlement model). */
+/**
+ * The products an organisation can hold (BRD entitlement model).
+ *
+ * ⚠️ FIVE, NOT FOUR, SINCE 2026-08-19. Founder ruling: chasing a new enquiry by
+ * EMAIL and chasing one by PHONE are two products a customer buys separately,
+ * not one product with two settings. They need different machinery (a mailbox
+ * versus a voice stack), they will not cost the same, and a plumber who wants
+ * his enquiries emailed back should not be sold a telephony bill.
+ *
+ * `lead_follow_up_agent` was the single placeholder key and is retired —
+ * migration 0025 maps any surviving row onto the email variant. Nothing was
+ * ever built behind it.
+ */
 export const MODULE_KEYS = [
   "email_credit_controller",
   "voice_credit_controller",
-  "lead_follow_up_agent",
+  "lead_follow_up_email",
+  "lead_follow_up_voice",
   "ai_receptionist",
 ] as const;
 
@@ -175,8 +188,8 @@ export const PERMISSION_MODULES: Record<
    * capability is `mailbox` (see `MODULE_CAPABILITIES`); these are the products
    * that carry it.
    */
-  "mailbox:read": ["email_credit_controller", "lead_follow_up_agent"],
-  "mailbox:manage": ["email_credit_controller", "lead_follow_up_agent"],
+  "mailbox:read": ["email_credit_controller", "lead_follow_up_email"],
+  "mailbox:manage": ["email_credit_controller", "lead_follow_up_email"],
 };
 
 /**
@@ -201,7 +214,8 @@ export const PERMISSION_MODULES: Record<
 export const MODULE_DEPENDENCIES: Record<ModuleKey, readonly ModuleKey[]> = {
   email_credit_controller: [],
   voice_credit_controller: [],
-  lead_follow_up_agent: [],
+  lead_follow_up_email: [],
+  lead_follow_up_voice: [],
   ai_receptionist: [],
 };
 
@@ -236,7 +250,15 @@ export type Capability = (typeof CAPABILITIES)[number];
  */
 export const MODULE_CAPABILITIES: Record<ModuleKey, readonly Capability[]> = {
   email_credit_controller: ["mailbox", "invoice_ledger"],
-  lead_follow_up_agent: ["mailbox"],
+  /**
+   * ⚠️ THIS PAIR IS WHY THE SPLIT IS REAL, NOT COSMETIC. The two lead products
+   * need entirely different machinery — one a connected mailbox, the other a
+   * voice stack we have not built. As one product it would have been "ready"
+   * and "not ready" at the same time, and no honest answer existed for the
+   * readiness line on its card.
+   */
+  lead_follow_up_email: ["mailbox"],
+  lead_follow_up_voice: ["voice"],
   voice_credit_controller: ["voice", "invoice_ledger"],
   ai_receptionist: ["voice"],
 };
@@ -280,17 +302,22 @@ export const MODULE_CATALOGUE: Record<ModuleKey, ModuleDescriptor> = {
     blurb: "Follows up overdue invoices by phone when email has not worked.",
     live: false,
   },
-  lead_follow_up_agent: {
-    name: "Lead Follow-up",
-    /**
-     * ⚠️ IT WILL NOT CALL ANYONE. Said "Calls back new enquiries before they go
-     * cold" until 2026-08-19, when the founder ruled this product ships
-     * email-first (voice is a later upgrade, not a prerequisite). A blurb
-     * promising a phone call on the screen that SELLS it is the same defect as
-     * the money bug and the three phantom products: the screen claiming an
-     * outcome that does not happen.
-     */
+  /**
+   * ⚠️ ONE ENTRY BECAME TWO (founder ruling 2026-08-19). It read "Lead
+   * Follow-up" with the blurb "Calls back new enquiries before they go cold" —
+   * which was false twice over: the first version will not call anyone, and
+   * "Lead Follow-up" named two products a customer buys separately. A blurb
+   * promising a phone call on the screen that SELLS it is the money-bug family:
+   * the screen claiming an outcome that does not happen.
+   */
+  lead_follow_up_email: {
+    name: "Lead Follow-up by Email",
     blurb: "Answers new enquiries from your mailbox, usually within minutes.",
+    live: false,
+  },
+  lead_follow_up_voice: {
+    name: "Lead Follow-up by Call",
+    blurb: "Calls new enquiries back before they go cold.",
     live: false,
   },
   ai_receptionist: {
@@ -601,15 +628,18 @@ export interface InvoiceDocumentDetail extends InvoiceDocumentSummary {
   extractionNotes: string[];
 }
 
-/** Product module identifiers (BRD Section 4) — used by entitlements from Slice 0.3. */
-export const MODULE_IDS = [
-  "email_credit_controller",
-  "voice_credit_controller",
-  "lead_follow_up_agent",
-  "ai_receptionist",
-] as const;
-
-export type ModuleId = (typeof MODULE_IDS)[number];
+/**
+ * ⚠️ `MODULE_IDS` / `ModuleId` LIVED HERE AND WERE DELETED 2026-08-19.
+ *
+ * A second enumeration of the same four products, declared in Slice 0.3 and
+ * referenced by **nothing** — `grep` found the declaration and the type alias,
+ * and no other file in the workspace. `MODULE_KEYS` above is the authoritative
+ * list; this one had already fallen behind it.
+ *
+ * Two lists of the same thing is how the sidebar came to name products
+ * differently from the settings screen. An unused copy is not harmless: it is
+ * the copy somebody imports next, precisely because it looks official.
+ */
 
 // --- Slice 1.5: reminder sequence ---
 

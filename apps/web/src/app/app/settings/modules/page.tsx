@@ -142,6 +142,24 @@ export default async function ModulesPage() {
           {modules.map((module) => {
             const product = productOf(module.moduleKey);
             /**
+             * ⚠️ A PRODUCT THIS BUILD HAS NEVER HEARD OF IS SKIPPED, NOT
+             * PRINTED RAW (found by walking, 2026-08-19).
+             *
+             * The card fell back to `module.moduleKey`, so an unrecognised key
+             * rendered as `lead_follow_up_agent` with an empty description —
+             * database jargon on the screen that sells the product. And it is
+             * a REACHABLE state, not a theoretical one: the deploy order is
+             * migration → api → web, so the API is deliberately ahead of the
+             * web app for the minutes between the two deploys, returning
+             * products this build cannot name.
+             *
+             * Skipped rather than guessed at: the catalogue is the only place
+             * that knows what a product is called and what it does, so without
+             * an entry there is nothing true to say. The next web deploy shows
+             * it properly.
+             */
+            if (!product) return null;
+            /**
              * ⚠️ "NOT BUILT" OUTRANKS EVERYTHING ELSE ON THE CARD. When a
              * product does not exist yet, that is the only thing worth saying
              * about it — listing what it would still need reads as a shopping
@@ -152,7 +170,7 @@ export default async function ModulesPage() {
              * dependency defect (founder ruling 2026-08-19) which made three of
              * our own six packages unsellable.
              */
-            const comingSoon = product ? !product.live : false;
+            const comingSoon = !product.live;
             const blocked = !comingSoon && module.missingDependencies.length > 0 && !module.enabled;
             return (
               <article
@@ -160,7 +178,7 @@ export default async function ModulesPage() {
                 className="flex flex-col gap-3 rounded-[var(--radius-card)] border border-border bg-surface px-6 py-5"
               >
                 <div className="flex flex-wrap items-center justify-between gap-2">
-                  <h2 className="text-base font-semibold">{product?.name ?? module.moduleKey}</h2>
+                  <h2 className="text-base font-semibold">{product.name}</h2>
                   {comingSoon ? (
                     <span className="rounded-[var(--radius-pill)] border border-border px-2.5 py-0.5 text-xs font-semibold text-muted-foreground">
                       Coming soon
@@ -253,7 +271,7 @@ export default async function ModulesPage() {
                   <ModuleControls
                     organisationId={organisation.id}
                     moduleKey={module.moduleKey}
-                    productName={product?.name ?? module.moduleKey}
+                    productName={product.name}
                     enabled={module.enabled}
                     endsAt={module.endsAt ? formatEndDate(module.endsAt) : null}
                     seats={module.seats}
