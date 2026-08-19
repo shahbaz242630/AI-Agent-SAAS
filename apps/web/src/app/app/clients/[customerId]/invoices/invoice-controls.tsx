@@ -12,14 +12,14 @@ import {
   isBeingChased,
   isInvoiceActionIrreversible,
   type InvoiceLifecycleAction,
-} from "@/lib/invoice-lifecycle";
+} from "@/products/invoice-follow-up/invoice-lifecycle";
 import {
   invoiceEditBlockedReason,
   invoiceStatusLabel,
   invoiceStatusTone,
   isInvoiceEditable,
   type InvoiceStatusTone,
-} from "@/lib/invoice-status";
+} from "@/products/invoice-follow-up/invoice-status";
 import { amountInputValue, dateInputValue, formatDueDate, formatMoney } from "@/lib/money";
 import {
   createInvoice,

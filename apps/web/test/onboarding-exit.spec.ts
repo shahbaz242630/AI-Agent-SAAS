@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { attentionItems } from "@/lib/dashboard";
+import { attentionItems } from "@/products/invoice-follow-up/dashboard";
 
 /**
  * ⚠️ SETUP MUST HAVE A WAY OUT, AND UNTIL 2026-08-11 IT DID NOT.

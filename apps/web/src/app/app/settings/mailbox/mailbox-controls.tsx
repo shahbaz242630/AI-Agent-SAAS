@@ -2,7 +2,7 @@
 
 import { useActionState, useState } from "react";
 import type { MailboxSummary } from "@/components/mailbox-card";
-import { replaceMessage } from "@/lib/mailbox-messages";
+import { replaceMessage } from "@/capabilities/mailbox/mailbox-messages";
 import {
   connectMailbox,
   disconnectMailbox,

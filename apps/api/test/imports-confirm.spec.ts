@@ -11,7 +11,7 @@ import {
   signToken,
   type FixtureOrg,
 } from "./support.js";
-import { ImportsService } from "../src/modules/imports/imports.service.js";
+import { ImportsService } from "../src/products/invoice-follow-up/imports/imports.service.js";
 
 /**
  * Import confirm + cancel (Slice 1.3 plan §3/§7): synchronous confirm in one

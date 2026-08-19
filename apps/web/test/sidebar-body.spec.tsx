@@ -13,13 +13,30 @@ import { SidebarBody, type SidebarIdentity } from "@/app/app/sidebar-body";
  */
 
 const IDENTITY: SidebarIdentity = {
+  organisationId: "11111111-1111-4111-8111-111111111111",
   organisation: { name: "Northgate Plumbing", initials: "NP", roleLabel: "Owner" },
   user: { name: "Sam Okafor", email: "sam.okafor@northgate.co.uk", initials: "SO" },
 };
 
-const render = (pathname: string, identity: SidebarIdentity = IDENTITY) =>
+/** Everything built, and held — the ordinary paying customer. Exactly one
+ *  product today, which is why the hub link is hidden by default. */
+const HOLDS_EVERYTHING = MODULE_KEYS.filter((key) => MODULE_CATALOGUE[key].live);
+
+/** A customer with a real choice — the only state in which the hub is useful. */
+const HOLDS_TWO = [...HOLDS_EVERYTHING, "ai_receptionist"];
+
+const render = (
+  pathname: string,
+  identity: SidebarIdentity = IDENTITY,
+  heldModules: readonly string[] | null = HOLDS_EVERYTHING,
+) =>
   renderToStaticMarkup(
-    <SidebarBody pathname={pathname} identity={identity} signOutSlot={<span>sign out</span>} />,
+    <SidebarBody
+      pathname={pathname}
+      identity={identity}
+      heldModules={heldModules}
+      signOutSlot={<span>sign out</span>}
+    />,
   );
 
 /**
@@ -34,13 +51,52 @@ const currentLink = (html: string): string =>
   html.match(/<a[^>]*aria-current="page"[^>]*>/)?.[0] ?? "";
 
 describe("the sidebar, rendered", () => {
-  it("offers every section", () => {
-    const html = render("/app");
-    // ⚠️ FOUR, NOT FIVE. Settings left the nav on 2026-08-18 for the account
-    // menu below — see the next test, which is where it is covered now.
-    for (const label of ["Home", "Invoices", "Clients", "Chasing"]) {
+  /**
+   * ⚠️ THE SECTIONS DEPEND ON WHERE YOU ARE (2026-08-19). One flat list held
+   * Home, Invoices, Clients and Chasing — three of which belong to invoice
+   * chasing — so a customer who bought only a lead product would have been
+   * offered three dead ends. Inside a product you get that product's screens
+   * plus the platform's; on a platform screen you get the platform's only.
+   */
+  it("offers the platform's sections everywhere", () => {
+    // Two products, so the hub is a real destination rather than a bounce.
+    const html = render("/app", IDENTITY, HOLDS_TWO);
+    for (const label of ["All products", "Clients"]) expect(html).toContain(label);
+  });
+
+  it("offers a product's own sections while inside it", () => {
+    const html = render("/app/invoice-chasing");
+    for (const label of ["Home", "Invoices", "Chasing", "Clients"]) {
       expect(html).toContain(label);
     }
+  });
+
+  /**
+   * ⚠️ THE GUARD FOR A CONTROL THAT COULD NOT DO ANYTHING (walked 2026-08-19).
+   *
+   * `/app` sends a customer holding ONE product straight into it. The sidebar
+   * still offered "All products", so clicking it bounced them back to the
+   * screen they were already on — a link that reads as broken. It survives when
+   * they hold none (the hub explains how to switch one on) and when we could
+   * not find out.
+   */
+  it("hides 'All products' when there is only one product to choose", () => {
+    expect(render("/app/invoice-chasing", IDENTITY, ["email_credit_controller"])).not.toContain(
+      "All products",
+    );
+  });
+
+  it("keeps 'All products' when there is a real choice, or none at all", () => {
+    expect(render("/app", IDENTITY, HOLDS_TWO)).toContain("All products");
+    expect(render("/app", IDENTITY, [])).toContain("All products");
+    expect(render("/app", IDENTITY, null)).toContain("All products");
+  });
+
+  it("does NOT offer a product's sections from a platform screen", () => {
+    const html = render("/app/clients");
+    // The invoice book belongs to invoice chasing; from Clients it is not a
+    // section, and offering it would be the dead end this split removes.
+    expect(html).not.toContain('href="/app/invoice-chasing/invoices"');
   });
 
   /**
@@ -73,16 +129,19 @@ describe("the sidebar, rendered", () => {
    * rule, because the rule was already right and the wiring is what is new.
    */
   it("marks exactly one section as current, and the right one", () => {
-    const html = render("/app/invoices");
+    const html = render("/app/invoice-chasing/invoices");
     expect(html.match(/aria-current="page"/g)).toHaveLength(1);
-    // The marked link is Invoices, not Home.
-    expect(currentLink(html)).toContain('href="/app/invoices"');
+    // The marked link is Invoices, not the product's Home — which is now a
+    // PREFIX of this path, so a careless `startsWith` lights the wrong one.
+    expect(currentLink(html)).toContain('href="/app/invoice-chasing/invoices"');
   });
 
-  it("marks Home only on Home itself", () => {
-    expect(render("/app").match(/aria-current="page"/g)).toHaveLength(1);
-    expect(currentLink(render("/app"))).toContain('href="/app"');
-    expect(currentLink(render("/app/reminders"))).toContain('href="/app/reminders"');
+  it("marks the hub only on the hub itself", () => {
+    expect(render("/app", IDENTITY, HOLDS_TWO).match(/aria-current="page"/g)).toHaveLength(1);
+    expect(currentLink(render("/app", IDENTITY, HOLDS_TWO))).toContain('href="/app"');
+    expect(currentLink(render("/app/invoice-chasing/chasing"))).toContain(
+      'href="/app/invoice-chasing/chasing"',
+    );
     /**
      * ⚠️ NOTHING IS CURRENT ON A SETTINGS SCREEN, and that is the state after
      * 2026-08-18 rather than a gap: settings is no longer a section of the nav.
@@ -111,7 +170,9 @@ describe("the sidebar, rendered", () => {
     expect(html).not.toContain("Northgate Plumbing");
     expect(html).not.toContain("Owner");
     // The rest of the shell still renders — no organisation is not no app.
-    expect(html).toContain("Invoices");
+    // Checked against a PLATFORM section: "Invoices" belongs to a product and
+    // is legitimately absent from `/app` since the hub landed.
+    expect(html).toContain("Clients");
     expect(html).toContain("Sam Okafor");
   });
 
@@ -151,5 +212,46 @@ describe("the sidebar, rendered", () => {
     for (const key of MODULE_KEYS) {
       expect(html).toContain(MODULE_CATALOGUE[key].name);
     }
+  });
+
+  /**
+   * ⚠️ THE GUARD FOR A DEFECT FOUND BY WALKING, 2026-08-19.
+   *
+   * The dot was rendered from `MODULE_CATALOGUE[key].live` — "we have built
+   * this" — and never asked what the organisation actually holds. So with
+   * Invoice Chasing switched OFF, the sidebar showed it lit while
+   * `/app/invoices` said "…doesn't have Invoice Chasing". One screen, two
+   * statements: the money-bug family.
+   *
+   * Three states, three sentences, and the test asserts all three because the
+   * dangerous one is the middle: "built but not bought" used to be
+   * indistinguishable from "running".
+   */
+  it("marks a built product the organisation does NOT hold as off, not live", () => {
+    const html = render("/app", IDENTITY, []);
+    // Every built product is off, so there is one "off" badge per built product.
+    expect(html.match(/>off</g) ?? []).toHaveLength(HOLDS_EVERYTHING.length);
+    // ...and no live dot anywhere.
+    expect(html).not.toContain("bg-module-live");
+  });
+
+  it("marks a product the organisation DOES hold as live", () => {
+    const html = render("/app", IDENTITY, HOLDS_EVERYTHING);
+    expect(html).toContain("bg-module-live");
+    expect(html).not.toContain(">off<");
+  });
+
+  /**
+   * ⚠️ UNKNOWN IS NOT "OWNS NOTHING". The shell swallows its own fetch
+   * failures, so a modules call that fails arrives here as `null`. Rendering
+   * that as "off" would replace one confident lie with another — this time
+   * telling a paying customer they do not have what they pay for.
+   */
+  it("claims nothing when it could not find out what the organisation holds", () => {
+    const html = render("/app", IDENTITY, null);
+    expect(html).not.toContain("bg-module-live");
+    expect(html).not.toContain(">off<");
+    // The products are still named — hiding them would be a third wrong answer.
+    for (const key of MODULE_KEYS) expect(html).toContain(MODULE_CATALOGUE[key].name);
   });
 });

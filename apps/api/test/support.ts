@@ -6,16 +6,16 @@ import { createPrismaClient, seed, type EvaPrismaClient } from "@eva/database";
 import { AppModule } from "../src/app.module.js";
 import { API_ENV } from "../src/config/config.module.js";
 import type { ApiEnv } from "../src/config/env.js";
-import { JwksService } from "../src/modules/authentication/jwks.service.js";
+import { JwksService } from "../src/platform/authentication/jwks.service.js";
 import {
   MICROSOFT_GRAPH_PROVIDER,
   type MicrosoftGraphProvider,
-} from "../src/modules/integrations/microsoft-graph/microsoft-graph-provider.js";
+} from "../src/capabilities/mailbox/microsoft-graph/microsoft-graph-provider.js";
 import {
   MICROSOFT_DISCOVERY,
   UNKNOWN_DOMAIN,
   type MicrosoftDiscovery,
-} from "../src/modules/integrations/microsoft-graph/microsoft-discovery.js";
+} from "../src/capabilities/mailbox/microsoft-graph/microsoft-discovery.js";
 
 /**
  * Shared API test support (BRD 13): the app boots for real against the real

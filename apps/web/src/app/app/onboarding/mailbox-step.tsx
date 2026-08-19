@@ -197,7 +197,7 @@ export function MailboxStep({
        *
        * ⚠️ AND THE DESTINATION WAS ALREADY BUILT FOR THEM. Home renders a
        * "No mailbox is connected" card whenever the answer is a definite false
-       * — `attentionItems` in `lib/dashboard.ts` — explaining that nothing will
+       * — `attentionItems` in `products/invoice-follow-up/dashboard.ts` — explaining that nothing will
        * send until one is connected, with a link back. So skipping is not a
        * hole in the flow; the flow just had no door to the room that was
        * waiting. That card is why this link does not need to repeat the

@@ -4,8 +4,8 @@ import {
   groupTextItemsIntoLines,
   toIsoDate,
   type PositionedText,
-} from "../src/modules/integrations/extraction/rule-based-extraction.provider.js";
-import { parseImportAmount } from "../src/common/ledger/values.js";
+} from "../src/capabilities/extraction/rule-based-extraction.provider.js";
+import { parseImportAmount } from "../src/common/parsing/values.js";
 
 /**
  * Rule-based extraction, against the shapes REAL invoices produce.

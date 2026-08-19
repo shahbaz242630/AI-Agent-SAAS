@@ -1,6 +1,9 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { ClientPicker, type PickableClient } from "@/app/app/invoices/client-picker";
+import {
+  ClientPicker,
+  type PickableClient,
+} from "@/app/app/invoice-chasing/invoices/client-picker";
 
 /**
  * The founder's scenario, 2026-08-18: *"a freelancer made content for Imran

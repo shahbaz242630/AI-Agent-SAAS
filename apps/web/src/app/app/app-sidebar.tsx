@@ -27,9 +27,12 @@ import { ACCOUNT_ITEM_CLASS } from "./user-menu";
  */
 export function AppSidebar({
   identity,
+  heldModules,
   signOut,
 }: {
   identity: SidebarIdentity;
+  /** Products the organisation holds; `null` when the shell could not find out. */
+  heldModules: readonly string[] | null;
   signOut: () => void;
 }) {
   const pathname = usePathname() ?? "/app";
@@ -39,6 +42,7 @@ export function AppSidebar({
     <SidebarBody
       pathname={pathname}
       identity={identity}
+      heldModules={heldModules}
       signOutSlot={
         /* ⚠️ A NAMED MENU ITEM NOW, NOT AN ICON (founder, 2026-08-18). It sat
            beside the user's name as a bare glyph whose meaning you had to know

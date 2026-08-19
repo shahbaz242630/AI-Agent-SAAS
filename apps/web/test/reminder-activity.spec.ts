@@ -6,7 +6,7 @@ import {
   stageLabel,
   statusLabel,
   statusTone,
-} from "@/lib/reminder-activity";
+} from "@/products/invoice-follow-up/reminder-activity";
 
 /**
  * The chase activity screen's copy (Slice 1.7). These matter more than they
@@ -92,7 +92,7 @@ describe("reminder activity copy", () => {
 
   /**
    * ⚠️ `summarise` USED TO LIVE HERE AND WAS DEAD CODE. It was a second,
-   * unused copy of `chaseSummary` in `lib/dashboard.ts` — same sentences, no
+   * unused copy of `chaseSummary` in `products/invoice-follow-up/dashboard.ts` — same sentences, no
    * caller in `src`, covered only by its own tests. Two functions for one job
    * is how the product ends up saying two things; it was deleted rather than
    * updated alongside the live one. Its coverage lives in `dashboard.spec.ts`.

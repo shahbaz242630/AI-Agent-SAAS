@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { OwedPanel } from "@/app/app/owed-panel";
-import { owedRows, type OwedRow } from "@/lib/dashboard";
+import { OwedPanel } from "@/app/app/invoice-chasing/owed-panel";
+import { owedRows, type OwedRow } from "@/products/invoice-follow-up/dashboard";
 
 /**
  * The money on the home screen, actually rendered (Slice 1.9).

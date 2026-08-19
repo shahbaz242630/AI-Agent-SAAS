@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState } from "react";
+import { useActionState, useState } from "react";
 import { setModule, type MailboxActionState } from "../actions";
 
 const INITIAL_STATE: MailboxActionState = {};
@@ -31,14 +31,21 @@ const SECONDARY =
 export function ModuleControls({
   organisationId,
   moduleKey,
+  productName,
   enabled,
+  endsAt,
   seats,
   seatsUsed,
   blocked,
 }: {
   organisationId: string;
   moduleKey: string;
+  /** As a customer reads it — never the database key. */
+  productName: string;
   enabled: boolean;
+  /** When a product switched off mid-period actually stops, already formatted.
+   *  Null today: there is no billing period until Paddle is wired. */
+  endsAt: string | null;
   seats: number;
   /** Units in use, or null for a product with nothing countable yet. */
   seatsUsed: number | null;
@@ -46,6 +53,18 @@ export function ModuleControls({
   blocked: boolean;
 }) {
   const [state, formAction, pending] = useActionState(setModule, INITIAL_STATE);
+  /**
+   * Whether the "are you sure" panel is open.
+   *
+   * ⚠️ RENDERED AS `enabled && confirming`, NOT SYNCED WITH AN EFFECT. The first
+   * cut reset this in a `useEffect` on `enabled`, which lint rightly refused —
+   * setting state inside an effect triggers a cascading render, and it was
+   * solving a problem that only existed because the panel was not gated on
+   * `enabled` in the first place. Deriving costs nothing and cannot get out of
+   * step; the enable button clears the flag so turning a product back on does
+   * not reopen the panel.
+   */
+  const [confirming, setConfirming] = useState(false);
   const showSeats = enabled && seatsUsed !== null;
 
   return (
@@ -100,16 +119,78 @@ export function ModuleControls({
           </button>
         )}
 
-        <button
-          type="submit"
-          name="intent"
-          value={enabled ? "disable" : "enable"}
-          disabled={pending || blocked}
-          className={enabled ? SECONDARY : PRIMARY}
-        >
-          {enabled ? "Turn off" : "Turn on"}
-        </button>
+        {/* Turning ON is one click. Turning OFF is the one that costs
+            something, so it asks — see `confirming` below. */}
+        {!enabled && (
+          <button
+            type="submit"
+            name="intent"
+            value="enable"
+            onClick={() => setConfirming(false)}
+            disabled={pending || blocked}
+            className={PRIMARY}
+          >
+            Turn on
+          </button>
+        )}
+
+        {enabled && !confirming && (
+          <button
+            type="button"
+            onClick={() => setConfirming(true)}
+            disabled={pending}
+            className={SECONDARY}
+          >
+            Turn off
+          </button>
+        )}
       </div>
+
+      {/**
+       * ⚠️ THE SCREEN, NOT THE TERMS PAGE, IS THE CHARGEBACK DEFENCE.
+       *
+       * Founder ruling 2026-08-19: switching a product off stops the bill from
+       * the next cycle. A dispute is won by what the customer was shown AT THE
+       * MOMENT THEY CLICKED — the terms page is blocked on company registration
+       * and nobody reads it anyway.
+       *
+       * ⚠️ THE WORDING FOLLOWS `endsAt`, IT DOES NOT ASSUME IT. There is no
+       * billing period to compute from until Paddle is wired, so today this
+       * says "stops now" — which is exactly what the API does. When Paddle sets
+       * a period end it will say "stays on until <date>". Promising a date
+       * nothing can keep is the defect this whole slice exists to remove.
+       */}
+      {enabled && confirming && (
+        <div className="flex flex-col gap-2 rounded-[var(--radius-card)] border border-border bg-background px-4 py-3">
+          <p className="text-sm">
+            <span className="font-semibold">
+              {productName} stops {endsAt ? "on " : "now"}
+            </span>
+            {endsAt && <span className="font-semibold">{endsAt}</span>}. Eva will not use it again
+            until you turn it back on. <span className="font-semibold">Your records stay</span> —
+            nothing is deleted.
+          </p>
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="submit"
+              name="intent"
+              value="disable"
+              disabled={pending}
+              className={PRIMARY}
+            >
+              {pending ? "Turning off…" : `Turn off ${productName}`}
+            </button>
+            <button
+              type="button"
+              onClick={() => setConfirming(false)}
+              disabled={pending}
+              className={SECONDARY}
+            >
+              Keep it on
+            </button>
+          </div>
+        </div>
+      )}
 
       {(state.error ?? state.success) && (
         <p

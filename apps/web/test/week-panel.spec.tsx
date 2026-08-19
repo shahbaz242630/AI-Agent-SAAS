@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { WeekPanel, dayMonth } from "@/app/app/week-panel";
+import { WeekPanel, dayMonth } from "@/app/app/invoice-chasing/week-panel";
 
 /**
  * Eva's week, rendered (2026-08-09 design handoff).

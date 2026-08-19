@@ -282,7 +282,7 @@ describe("disconnectMailbox", () => {
  */
 describe("disconnectMessage", () => {
   it("names both groups, because they are different people", async () => {
-    const { disconnectMessage } = await import("../src/lib/mailbox-messages");
+    const { disconnectMessage } = await import("../src/capabilities/mailbox/mailbox-messages");
 
     const message = disconnectMessage(3, 120, "default@example.com");
 
@@ -292,7 +292,7 @@ describe("disconnectMessage", () => {
   });
 
   it("says is for exactly one client and are for more", async () => {
-    const { disconnectMessage } = await import("../src/lib/mailbox-messages");
+    const { disconnectMessage } = await import("../src/capabilities/mailbox/mailbox-messages");
 
     expect(disconnectMessage(1, 0, "d@example.com")).toContain("1 client filed there is now");
     expect(disconnectMessage(0, 1, "d@example.com")).toContain("1 client you hadn't filed is now");
@@ -303,7 +303,7 @@ describe("disconnectMessage", () => {
   });
 
   it("omits a group that did not move rather than saying zero", async () => {
-    const { disconnectMessage } = await import("../src/lib/mailbox-messages");
+    const { disconnectMessage } = await import("../src/capabilities/mailbox/mailbox-messages");
 
     const message = disconnectMessage(2, 0, "d@example.com");
     expect(message).not.toContain("0 ");
@@ -311,7 +311,7 @@ describe("disconnectMessage", () => {
   });
 
   it("stays plain when nothing moved at all", async () => {
-    const { disconnectMessage } = await import("../src/lib/mailbox-messages");
+    const { disconnectMessage } = await import("../src/capabilities/mailbox/mailbox-messages");
 
     expect(disconnectMessage(0, 0, "d@example.com")).toBe("Mailbox disconnected.");
   });
@@ -319,7 +319,7 @@ describe("disconnectMessage", () => {
   /** The last mailbox: there is nowhere to fall back to, and saying "chased
    *  from …" would name an address that no longer exists. */
   it("says chasing has STOPPED when that was the last mailbox", async () => {
-    const { disconnectMessage } = await import("../src/lib/mailbox-messages");
+    const { disconnectMessage } = await import("../src/capabilities/mailbox/mailbox-messages");
 
     const message = disconnectMessage(2, 5, null);
     expect(message).toMatch(/no longer being chased/i);
@@ -327,7 +327,7 @@ describe("disconnectMessage", () => {
   });
 
   it("does not claim clients are stranded when there were none", async () => {
-    const { disconnectMessage } = await import("../src/lib/mailbox-messages");
+    const { disconnectMessage } = await import("../src/capabilities/mailbox/mailbox-messages");
 
     expect(disconnectMessage(0, 0, null)).toBe("Mailbox disconnected. Nothing is connected now.");
   });
@@ -344,7 +344,7 @@ describe("disconnectMessage", () => {
  */
 describe("replaceMessage", () => {
   it("does NOT mention default status for a mailbox that is not the default", async () => {
-    const { replaceMessage } = await import("../src/lib/mailbox-messages");
+    const { replaceMessage } = await import("../src/capabilities/mailbox/mailbox-messages");
 
     const message = replaceMessage("second@example.com", 2, false);
 
@@ -353,7 +353,7 @@ describe("replaceMessage", () => {
   });
 
   it("mentions default status only when the mailbox actually holds it", async () => {
-    const { replaceMessage } = await import("../src/lib/mailbox-messages");
+    const { replaceMessage } = await import("../src/capabilities/mailbox/mailbox-messages");
 
     const message = replaceMessage("primary@example.com", 2, true);
 
@@ -364,7 +364,7 @@ describe("replaceMessage", () => {
   /** The two facts are independent: being the default says nothing about
    *  whether anything is filed under it, and vice versa. */
   it("states default status even when nothing is filed under it", async () => {
-    const { replaceMessage } = await import("../src/lib/mailbox-messages");
+    const { replaceMessage } = await import("../src/capabilities/mailbox/mailbox-messages");
 
     const message = replaceMessage("primary@example.com", 0, true);
 
@@ -373,7 +373,7 @@ describe("replaceMessage", () => {
   });
 
   it("says client moves for exactly one and clients move for more", async () => {
-    const { replaceMessage } = await import("../src/lib/mailbox-messages");
+    const { replaceMessage } = await import("../src/capabilities/mailbox/mailbox-messages");
 
     expect(replaceMessage("a@example.com", 1, false)).toContain("Its client moves across.");
     expect(replaceMessage("a@example.com", 3, false)).toContain("Its 3 clients move across.");
@@ -381,7 +381,7 @@ describe("replaceMessage", () => {
   });
 
   it("keeps its spaces — the sentence is built, not assembled from JSX", async () => {
-    const { replaceMessage } = await import("../src/lib/mailbox-messages");
+    const { replaceMessage } = await import("../src/capabilities/mailbox/mailbox-messages");
 
     expect(replaceMessage("a@example.com", 2, true)).toBe(
       "Swap a@example.com for a different address. Its 2 clients move across. It is the default for unfiled clients, and that moves across too.",

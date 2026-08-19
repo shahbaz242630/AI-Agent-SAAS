@@ -113,18 +113,31 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<OrganisationRole, readonly Permiss
 
 // --- Slice 1.6a: module entitlements ---
 
-/** The four products an organisation can hold (BRD entitlement model). */
+/**
+ * The products an organisation can hold (BRD entitlement model).
+ *
+ * ⚠️ FIVE, NOT FOUR, SINCE 2026-08-19. Founder ruling: chasing a new enquiry by
+ * EMAIL and chasing one by PHONE are two products a customer buys separately,
+ * not one product with two settings. They need different machinery (a mailbox
+ * versus a voice stack), they will not cost the same, and a plumber who wants
+ * his enquiries emailed back should not be sold a telephony bill.
+ *
+ * `lead_follow_up_agent` was the single placeholder key and is retired —
+ * migration 0025 maps any surviving row onto the email variant. Nothing was
+ * ever built behind it.
+ */
 export const MODULE_KEYS = [
   "email_credit_controller",
   "voice_credit_controller",
-  "lead_follow_up_agent",
+  "lead_follow_up_email",
+  "lead_follow_up_voice",
   "ai_receptionist",
 ] as const;
 
 export type ModuleKey = (typeof MODULE_KEYS)[number];
 
 /**
- * Which product owns each permission.
+ * Which products carry each permission.
  *
  * The `Record<PermissionKey, …>` type IS the exhaustiveness guarantee: adding a
  * permission key without assigning it a module fails the build. There is no
@@ -136,8 +149,22 @@ export type ModuleKey = (typeof MODULE_KEYS)[number];
  * modules must still reach organisation, member and billing management, or it
  * can never buy anything — the lockout trap. Customers and contacts are shared
  * by all four products, so they are core too.
+ *
+ * ⚠️ A PERMISSION IS SATISFIED BY **ANY ONE** OF THE PRODUCTS THAT NEED IT.
+ *
+ * Always a list, never a bare key, and the shape is deliberate: enforcement
+ * then handles exactly two cases — `core`, or "hold at least one of these" —
+ * instead of three. A non-empty tuple type is what stops `[]` being written,
+ * which would silently mean "nobody may ever do this".
+ *
+ * The single-product entries are lists of one. That is not noise: it is what
+ * makes adding a second owner a one-word edit rather than a shape change, and
+ * a shape change is where somebody would have quietly kept the old branch.
  */
-export const PERMISSION_MODULE: Record<PermissionKey, ModuleKey | "core"> = {
+export const PERMISSION_MODULES: Record<
+  PermissionKey,
+  "core" | readonly [ModuleKey, ...ModuleKey[]]
+> = {
   "customers:read": "core",
   "customers:write": "core",
   "contacts:read": "core",
@@ -146,29 +173,94 @@ export const PERMISSION_MODULE: Record<PermissionKey, ModuleKey | "core"> = {
   "permissions:manage": "core",
   "modules:read": "core",
   "modules:manage": "core",
-  "invoices:read": "email_credit_controller",
-  "invoices:write": "email_credit_controller",
-  "imports:read": "email_credit_controller",
-  "imports:write": "email_credit_controller",
-  "reminders:read": "email_credit_controller",
-  "reminders:write": "email_credit_controller",
-  "mailbox:read": "email_credit_controller",
-  "mailbox:manage": "email_credit_controller",
+  "invoices:read": ["email_credit_controller"],
+  "invoices:write": ["email_credit_controller"],
+  "imports:read": ["email_credit_controller"],
+  "imports:write": ["email_credit_controller"],
+  "reminders:read": ["email_credit_controller"],
+  "reminders:write": ["email_credit_controller"],
+  /**
+   * ⚠️ THE MAILBOX IS SHARED MACHINERY, NOT INVOICE FOLLOW-UP'S PROPERTY.
+   *
+   * It belonged to `email_credit_controller` alone until 2026-08-19, which
+   * meant a customer who bought ONLY the lead agent could not connect a
+   * mailbox — the one thing that product needs to do anything at all. The
+   * capability is `mailbox` (see `MODULE_CAPABILITIES`); these are the products
+   * that carry it.
+   */
+  "mailbox:read": ["email_credit_controller", "lead_follow_up_email"],
+  "mailbox:manage": ["email_credit_controller", "lead_follow_up_email"],
 };
 
 /**
- * What each product needs underneath it (BRD): lead follow-up and the
- * receptionist need the voice platform; voice credit control needs the email
- * credit controller's data model.
+ * Which products a customer must ALREADY OWN before buying this one.
+ *
+ * ⚠️ **DELIBERATELY EMPTY, AND IT MUST STAY THAT WAY UNLESS A REAL ONE APPEARS.**
+ * Founder ruling 2026-08-19: the four products are separate purchases, switched
+ * on and off independently. Buying invoice follow-up must never switch on lead
+ * follow-up, voice or the receptionist. What a product needs in order to WORK is
+ * machinery — see `MODULE_CAPABILITIES`, which is where the entries that used to
+ * be here actually belonged.
+ *
+ * The constant survives its own emptying on purpose. It is the one place a
+ * genuine product-to-product prerequisite would go, and deleting it would mean
+ * the next person invents a second mechanism somewhere else. Its test asserts
+ * the RULE (empty means nothing is refused, a listed prerequisite is enforced),
+ * not today's contents, so it cannot rot while unused.
  *
  * Validated when ENABLING, never re-derived per request — a stored invalid
  * combination is a bug to prevent at the write, not to pay for on every check.
  */
 export const MODULE_DEPENDENCIES: Record<ModuleKey, readonly ModuleKey[]> = {
   email_credit_controller: [],
-  voice_credit_controller: ["email_credit_controller"],
-  lead_follow_up_agent: ["voice_credit_controller"],
-  ai_receptionist: ["voice_credit_controller"],
+  voice_credit_controller: [],
+  lead_follow_up_email: [],
+  lead_follow_up_voice: [],
+  ai_receptionist: [],
+};
+
+/**
+ * Machinery a product needs in order to work. **Never sold, never on a switch,
+ * never chosen by a customer** — it switches itself on for whichever product
+ * needs it and is billed inside that product's price. The BRD's phrase is
+ * "voice platform included".
+ */
+export const CAPABILITIES = ["mailbox", "voice", "invoice_ledger"] as const;
+
+export type Capability = (typeof CAPABILITIES)[number];
+
+/**
+ * ⚠️ THIS MAP IS WHAT `MODULE_DEPENDENCIES` WAS WRONGLY DOING.
+ *
+ * The BRD says the lead agent needs "the voice **platform**", and that voice
+ * credit control needs the "Email Credit Controller **data model** present".
+ * Both are machinery. The code read them as products the customer must buy,
+ * and wrote `lead_follow_up_agent: ["voice_credit_controller"]`.
+ *
+ * The result was not a style problem. `assertDependenciesMet` refuses to enable
+ * a product unless every dependency is already enabled, so **three of the six
+ * packages in the BRD's own price list could not be sold**: "Lead Assistant"
+ * (lead follow-up only), "AI Receptionist" (receptionist only) and "Sales Desk"
+ * (the two together) were all refused, while §4.3 says in as many words that
+ * the lead agent "does not require the Voice Credit Controller module".
+ *
+ * The price list and the rule lived in different files with nothing between
+ * them — the money bug, the lying upload preview and the three phantom
+ * products all over again.
+ */
+export const MODULE_CAPABILITIES: Record<ModuleKey, readonly Capability[]> = {
+  email_credit_controller: ["mailbox", "invoice_ledger"],
+  /**
+   * ⚠️ THIS PAIR IS WHY THE SPLIT IS REAL, NOT COSMETIC. The two lead products
+   * need entirely different machinery — one a connected mailbox, the other a
+   * voice stack we have not built. As one product it would have been "ready"
+   * and "not ready" at the same time, and no honest answer existed for the
+   * readiness line on its card.
+   */
+  lead_follow_up_email: ["mailbox"],
+  lead_follow_up_voice: ["voice"],
+  voice_credit_controller: ["voice", "invoice_ledger"],
+  ai_receptionist: ["voice"],
 };
 
 /**
@@ -193,6 +285,17 @@ export const MODULE_DEPENDENCIES: Record<ModuleKey, readonly ModuleKey[]> = {
 export interface ModuleDescriptor {
   /** The product's name, as a customer reads it. Never the database key. */
   readonly name: string;
+  /**
+   * The product's own path segment, under `/app`.
+   *
+   * ⚠️ IT LIVES HERE BECAUSE THIS PRODUCT ALREADY HAD THREE NAMES. The key is
+   * `email_credit_controller`, the code folder is `invoice-follow-up`, and a
+   * customer reads "Invoice Chasing". A URL invented at the call site would be
+   * a fourth, and four names for one product is precisely how the sidebar came
+   * to disagree with the settings screen. Build every product link with
+   * `moduleHref`; never write `/app/invoice-chasing` by hand.
+   */
+  readonly slug: string;
   /** One honest line about what it does. */
   readonly blurb: string;
   /** Whether the product is BUILT. `false` means it cannot be turned on. */
@@ -202,21 +305,39 @@ export interface ModuleDescriptor {
 export const MODULE_CATALOGUE: Record<ModuleKey, ModuleDescriptor> = {
   email_credit_controller: {
     name: "Invoice Chasing",
+    slug: "invoice-chasing",
     blurb: "Chases your unpaid invoices by email, from your own mailbox.",
     live: true,
   },
   voice_credit_controller: {
     name: "Voice Credit Control",
+    slug: "voice-credit-control",
     blurb: "Follows up overdue invoices by phone when email has not worked.",
     live: false,
   },
-  lead_follow_up_agent: {
-    name: "Lead Follow-up",
-    blurb: "Calls back new enquiries before they go cold.",
+  /**
+   * ⚠️ ONE ENTRY BECAME TWO (founder ruling 2026-08-19). It read "Lead
+   * Follow-up" with the blurb "Calls back new enquiries before they go cold" —
+   * which was false twice over: the first version will not call anyone, and
+   * "Lead Follow-up" named two products a customer buys separately. A blurb
+   * promising a phone call on the screen that SELLS it is the money-bug family:
+   * the screen claiming an outcome that does not happen.
+   */
+  lead_follow_up_email: {
+    name: "Lead Follow-up by Email",
+    slug: "lead-follow-up-email",
+    blurb: "Answers new enquiries from your mailbox, usually within minutes.",
+    live: false,
+  },
+  lead_follow_up_voice: {
+    name: "Lead Follow-up by Call",
+    slug: "lead-follow-up-call",
+    blurb: "Calls new enquiries back before they go cold.",
     live: false,
   },
   ai_receptionist: {
     name: "AI Receptionist",
+    slug: "ai-receptionist",
     blurb: "Answers the phone when you cannot get to it.",
     live: false,
   },
@@ -225,6 +346,18 @@ export const MODULE_CATALOGUE: Record<ModuleKey, ModuleDescriptor> = {
 /** A product's name, for a sentence a person will read. */
 export function moduleName(moduleKey: ModuleKey): string {
   return MODULE_CATALOGUE[moduleKey].name;
+}
+
+/**
+ * Where a product's screens live. The ONLY way to build a product link.
+ *
+ * ⚠️ NEVER HAND-WRITE `/app/<slug>`. A literal path is a second copy of the
+ * slug, and the moment one of them changes the other is a dead link nothing
+ * fails on — `moduleHref` is what makes renaming a product a one-line edit.
+ */
+export function moduleHref(moduleKey: ModuleKey, section?: string): string {
+  const base = `/app/${MODULE_CATALOGUE[moduleKey].slug}`;
+  return section ? `${base}/${section}` : base;
 }
 
 /** Whether the product behind this key actually exists yet. */
@@ -253,8 +386,29 @@ export interface ModuleStatusDto {
   seatsUsed: number | null;
   enabledAt: string | null;
   disabledAt: string | null;
+  /**
+   * When a product switched off mid-period stops working — the end of the
+   * period already paid for. Null when it is not scheduled to end.
+   *
+   * ⚠️ `enabled: true` WITH AN `endsAt` IS A REAL AND COMMON STATE, not a
+   * contradiction: the customer has cancelled and is still using what they
+   * bought. A screen that reads only `enabled` will tell them nothing is
+   * changing. Turning it back on before this date clears it — no new charge,
+   * no interruption.
+   */
+  endsAt: string | null;
   /** Products this one needs first, and which are not currently enabled. */
   missingDependencies: readonly ModuleKey[];
+  /**
+   * Machinery this product needs that is not set up yet.
+   *
+   * ⚠️ **NOT A REASON TO REFUSE THE SALE.** "Not entitled" (402 — you have not
+   * bought it) and "not ready" (you own it, something is unconfigured) were one
+   * code path until 2026-08-19, and collapsing them meant refusing to sell the
+   * lead agent to anyone who had not already connected a mailbox. Sell it, say
+   * what is missing, link the fix — the `noWorkingMailbox` pattern from 1.13.
+   */
+  missingCapabilities: readonly Capability[];
 }
 
 /** The machine-readable body of a 402, so the web app can show an upgrade
@@ -262,7 +416,13 @@ export interface ModuleStatusDto {
 export interface ModuleNotEntitledBody {
   statusCode: 402;
   code: "module_not_entitled";
-  module: ModuleKey;
+  /**
+   * ⚠️ PLURAL, AND HOLDING **ANY ONE** OF THEM IS ENOUGH. Was a single key
+   * until 2026-08-19. Now that the mailbox is carried by two products, naming
+   * only the first would tell a customer to buy something they do not need —
+   * and a 402 exists precisely to say what to buy.
+   */
+  modules: readonly ModuleKey[];
   message: string;
 }
 
@@ -496,15 +656,18 @@ export interface InvoiceDocumentDetail extends InvoiceDocumentSummary {
   extractionNotes: string[];
 }
 
-/** Product module identifiers (BRD Section 4) — used by entitlements from Slice 0.3. */
-export const MODULE_IDS = [
-  "email_credit_controller",
-  "voice_credit_controller",
-  "lead_follow_up_agent",
-  "ai_receptionist",
-] as const;
-
-export type ModuleId = (typeof MODULE_IDS)[number];
+/**
+ * ⚠️ `MODULE_IDS` / `ModuleId` LIVED HERE AND WERE DELETED 2026-08-19.
+ *
+ * A second enumeration of the same four products, declared in Slice 0.3 and
+ * referenced by **nothing** — `grep` found the declaration and the type alias,
+ * and no other file in the workspace. `MODULE_KEYS` above is the authoritative
+ * list; this one had already fallen behind it.
+ *
+ * Two lists of the same thing is how the sidebar came to name products
+ * differently from the settings screen. An unused copy is not harmless: it is
+ * the copy somebody imports next, precisely because it looks official.
+ */
 
 // --- Slice 1.5: reminder sequence ---
 

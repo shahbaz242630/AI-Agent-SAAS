@@ -8,15 +8,15 @@ import {
   GraphRequestError,
   MailboxUnavailableError,
   ReauthRequiredError,
-} from "../src/modules/integrations/microsoft-graph/microsoft-graph-provider.js";
+} from "../src/capabilities/mailbox/microsoft-graph/microsoft-graph-provider.js";
 import type {
   AuthorizeUrlOptions,
   MicrosoftGraphProvider,
   OAuthTokens,
-} from "../src/modules/integrations/microsoft-graph/microsoft-graph-provider.js";
-import { UNKNOWN_DOMAIN } from "../src/modules/integrations/microsoft-graph/microsoft-discovery.js";
-import type { DomainDiscovery } from "../src/modules/integrations/microsoft-graph/microsoft-discovery.js";
-import { signOAuthState, verifyOAuthState } from "../src/modules/mailboxes/oauth-state.js";
+} from "../src/capabilities/mailbox/microsoft-graph/microsoft-graph-provider.js";
+import { UNKNOWN_DOMAIN } from "../src/capabilities/mailbox/microsoft-graph/microsoft-discovery.js";
+import type { DomainDiscovery } from "../src/capabilities/mailbox/microsoft-graph/microsoft-discovery.js";
+import { signOAuthState, verifyOAuthState } from "../src/capabilities/mailbox/oauth-state.js";
 import {
   createOrgWithMembers,
   createOwnerClient,

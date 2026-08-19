@@ -7,7 +7,7 @@ import {
   invoiceActionSuccess,
   isInvoiceLifecycleAction,
   paymentRecordedLine,
-} from "@/lib/invoice-lifecycle";
+} from "@/products/invoice-follow-up/invoice-lifecycle";
 import { formatMoney, parseAmountInput } from "@/lib/money";
 import { humanRefusal, type WriteAction } from "@/lib/permissions";
 import { createClient } from "@/lib/supabase/server";

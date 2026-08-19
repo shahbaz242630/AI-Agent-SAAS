@@ -2,7 +2,7 @@
 
 import { useActionState, useState } from "react";
 import type { ReminderStepDto } from "@eva/types";
-import { stageLabel } from "@/lib/reminder-activity";
+import { stageLabel } from "@/products/invoice-follow-up/reminder-activity";
 import {
   MAX_OFFSET_DAYS,
   describeDisabling,
@@ -11,7 +11,7 @@ import {
   splitOffset,
   stepPurpose,
   type OffsetDirection,
-} from "@/lib/reminder-sequence";
+} from "@/products/invoice-follow-up/reminder-sequence";
 import { updateReminderStep, type ReminderStepActionState } from "./actions";
 
 /**
@@ -41,7 +41,7 @@ import { updateReminderStep, type ReminderStepActionState } from "./actions";
  * Saving a stage at a time makes the cost honest and matches what the API does.
  *
  * ⚠️ NO MINUS SIGNS ANYWHERE. Before/on/after plus a positive number; the sign
- * conversion is `toOffsetDays` in `lib/reminder-sequence`, tested there.
+ * conversion is `toOffsetDays` in `products/invoice-follow-up/reminder-sequence`, tested there.
  */
 
 const FIELD =

@@ -4,18 +4,18 @@ import request from "supertest";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { EvaPrismaClient } from "@eva/database";
 import { encryptToken } from "../src/common/crypto/token-crypto.js";
-import { GraphRequestError } from "../src/modules/integrations/microsoft-graph/microsoft-graph-provider.js";
+import { GraphRequestError } from "../src/capabilities/mailbox/microsoft-graph/microsoft-graph-provider.js";
 import type {
   MicrosoftGraphProvider,
   SendMailInput,
-} from "../src/modules/integrations/microsoft-graph/microsoft-graph-provider.js";
+} from "../src/capabilities/mailbox/microsoft-graph/microsoft-graph-provider.js";
 import {
   claimReadyAction,
   releaseStaleClaims,
   STALE_CLAIM_MS,
-} from "../src/modules/reminders/reminder-sender.service.js";
-import type { SendRemindersResult } from "../src/modules/reminders/reminder-sender.service.js";
-import type { TenantTx } from "../src/common/permissions/permissions.js";
+} from "../src/products/invoice-follow-up/reminders/reminder-sender.service.js";
+import type { SendRemindersResult } from "../src/products/invoice-follow-up/reminders/reminder-sender.service.js";
+import type { TenantTx } from "../src/platform/permissions/permissions.js";
 import {
   createOrgWithMembers,
   createOwnerClient,

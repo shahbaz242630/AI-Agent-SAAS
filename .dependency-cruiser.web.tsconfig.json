@@ -1,0 +1,9 @@
+{
+  "//": "RESOLUTION ONLY — not a build config, and deliberately not apps/web/tsconfig.json. dependency-cruiser runs from the repo root, where that file's `include` globs ('**/*.ts', relative to apps/web) match nothing and TypeScript fails with TS18003. All the cruiser actually needs is the `@/*` alias, so this file carries that and nothing else. Keep the mapping in step with `paths` in apps/web/tsconfig.json.",
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["apps/web/src/*"]
+    }
+  }
+}

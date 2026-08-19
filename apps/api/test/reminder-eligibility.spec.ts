@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { checkReminderEligibility } from "../src/modules/reminders/reminder-eligibility.js";
+import { checkReminderEligibility } from "../src/products/invoice-follow-up/reminders/reminder-eligibility.js";
 
 /**
  * Slice 1.5 schedule-time eligibility (plan §3/§6): Active-only invoices,

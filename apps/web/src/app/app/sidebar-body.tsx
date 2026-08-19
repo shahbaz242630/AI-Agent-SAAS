@@ -1,6 +1,6 @@
 import Link from "next/link";
-import { MODULE_CATALOGUE, MODULE_KEYS } from "@eva/types";
-import { NAV_ITEMS, isActiveSection } from "@/lib/navigation";
+import { MODULE_CATALOGUE, MODULE_KEYS, moduleHref, type ModuleKey } from "@eva/types";
+import { NAV_ITEMS, PRODUCT_NAV, isActiveSection, productForPath } from "@/lib/navigation";
 import { NAV_ICONS } from "./nav-icons";
 import { UserMenu } from "./user-menu";
 
@@ -19,6 +19,8 @@ import { UserMenu } from "./user-menu";
  * so `renderToStaticMarkup` needs no DOM and no new dependency.
  */
 export interface SidebarIdentity {
+  /** Needed to ask which products the organisation holds. `null` when unknown. */
+  organisationId: string | null;
   /** `null` when the fetch failed or the account has no organisation yet. */
   organisation: { name: string; initials: string; roleLabel: string } | null;
   user: { name: string; email: string; initials: string };
@@ -35,18 +37,39 @@ export interface SidebarIdentity {
  * `MODULE_CATALOGUE` now, so a product cannot exist in one place and not the
  * other and cannot be called two things.
  */
-const MODULES: readonly { label: string; live: boolean }[] = MODULE_KEYS.map((key) => ({
-  label: MODULE_CATALOGUE[key].name,
-  live: MODULE_CATALOGUE[key].live,
-}));
+const MODULES: readonly { key: ModuleKey; label: string; live: boolean }[] = MODULE_KEYS.map(
+  (key) => ({
+    key,
+    label: MODULE_CATALOGUE[key].name,
+    live: MODULE_CATALOGUE[key].live,
+  }),
+);
 
 export function SidebarBody({
   pathname,
   identity,
+  heldModules,
   signOutSlot,
 }: {
   pathname: string;
   identity: SidebarIdentity;
+  /**
+   * The products this organisation actually holds.
+   *
+   * ⚠️ THIS PROP EXISTS BECAUSE THE SIDEBAR WAS LYING (found by walking,
+   * 2026-08-19). It rendered a live dot from `MODULE_CATALOGUE[key].live`,
+   * which means "we have built this" — not "you have this". So with Invoice
+   * Chasing switched OFF, the sidebar showed it lit while `/app/invoices` three
+   * inches away said "Outdoor and gardening doesn't have Invoice Chasing". Two
+   * statements, one screen, and the same failure family as the money bug.
+   *
+   * ⚠️ `null` MEANS "WE COULD NOT FIND OUT", AND IT IS NOT THE SAME AS `[]`.
+   * The shell swallows its own fetch failures (a shell that 500s takes every
+   * screen with it), so a failed read must not render as "you own nothing" —
+   * that would be a fresh lie replacing the old one. Unknown shows the product
+   * name with no dot and no badge: we claim nothing we cannot support.
+   */
+  heldModules: readonly string[] | null;
   /**
    * The sign-out control, passed in rather than built here. It is a form bound
    * to a server action, and a server action cannot be constructed inside a
@@ -55,6 +78,9 @@ export function SidebarBody({
    */
   signOutSlot: React.ReactNode;
 }) {
+  /** Null on a platform screen (the hub, Clients, Settings). */
+  const currentProduct = productForPath(pathname);
+
   return (
     <nav
       aria-label="Sections"
@@ -87,8 +113,33 @@ export function SidebarBody({
         </div>
       )}
 
+      {/**
+       * ⚠️ THE SECTIONS DEPEND ON WHERE YOU ARE, not on a single flat list.
+       * Inside a product you get that product's screens; everywhere you get the
+       * platform's. Before 2026-08-19 one list held Home, Invoices, Clients and
+       * Chasing — three of which belong to invoice chasing — so a customer who
+       * bought only a lead product would have been offered three dead ends.
+       */}
       <ul className="mt-5 flex flex-col gap-0.5">
-        {NAV_ITEMS.map((item) => {
+        {[
+          ...(currentProduct ? (PRODUCT_NAV[currentProduct] ?? []) : []),
+          /**
+           * ⚠️ NO "ALL PRODUCTS" LINK WHEN THERE IS NOTHING TO CHOOSE BETWEEN
+           * (found by walking, 2026-08-19, minutes after the hub landed).
+           *
+           * `/app` sends a customer holding ONE product straight into it, which
+           * is the whole design — so the link bounced them back to the screen
+           * they were already on. A control that cannot change anything is
+           * worse than a missing one: it reads as broken.
+           *
+           * Kept when they hold none (the hub explains how to switch one on)
+           * and when we could not find out (`null` — claiming nothing beats
+           * hiding a real door).
+           */
+          ...NAV_ITEMS.filter(
+            (item) => item.href !== "/app" || heldModules === null || heldModules.length !== 1,
+          ),
+        ].map((item) => {
           const active = isActiveSection(pathname, item.href);
           const Icon = NAV_ICONS[item.href];
           return (
@@ -122,30 +173,48 @@ export function SidebarBody({
           Products
         </h2>
         <ul className="flex flex-col gap-2">
-          {MODULES.map((module) => (
-            <li
-              key={module.label}
-              className={`flex items-center gap-2 px-2.5 py-[3px] text-[12.5px] ${
-                module.live ? "text-sidebar-body" : "justify-between text-sidebar-fainter"
-              }`}
-            >
-              {module.live ? (
-                <>
-                  <span aria-hidden className="size-[7px] rounded-full bg-module-live" />
-                  {module.label}
-                </>
-              ) : (
-                <>
-                  {module.label}
-                  {/* "soon" rather than a hidden row: naming what is coming is
-                      honest, and a customer who wants it can ask for it. */}
-                  <span className="rounded-[var(--radius-pill)] border border-sidebar-chip-border px-[7px] py-px text-[10px] font-semibold">
-                    soon
-                  </span>
-                </>
-              )}
-            </li>
-          ))}
+          {MODULES.map((module) => {
+            /**
+             * Three states, and they are three different sentences:
+             *   not built    → "soon"  (ours to finish; nothing to buy)
+             *   built, held  → dot     (you have this, it is running)
+             *   built, not held → "off" (you could have this; you have not)
+             * Unknown (`heldModules === null`) renders as none of them.
+             */
+            const held = heldModules === null ? null : heldModules.includes(module.key);
+            const badge = !module.live ? "soon" : held === false ? "off" : null;
+            return (
+              <li
+                key={module.key}
+                className={`flex items-center gap-2 px-2.5 py-[3px] text-[12.5px] ${
+                  held === true ? "text-sidebar-body" : "justify-between text-sidebar-fainter"
+                }`}
+              >
+                {held === true ? (
+                  /* Held products are the way INTO them — the list was inert
+                     text before the hub existed, which meant the only route to
+                     a product you owned was a nav item three inches above. */
+                  <Link href={moduleHref(module.key)} className="flex items-center gap-2">
+                    <span aria-hidden className="size-[7px] rounded-full bg-module-live" />
+                    {module.label}
+                  </Link>
+                ) : (
+                  <>
+                    {module.label}
+                    {/* A badge rather than a hidden row: naming what is coming —
+                        or what is switched off — is honest, and a customer who
+                        wants it can ask for it. Hiding leaves somebody unable to
+                        tell "not built" from "not bought". */}
+                    {badge && (
+                      <span className="rounded-[var(--radius-pill)] border border-sidebar-chip-border px-[7px] py-px text-[10px] font-semibold">
+                        {badge}
+                      </span>
+                    )}
+                  </>
+                )}
+              </li>
+            );
+          })}
         </ul>
       </div>
 

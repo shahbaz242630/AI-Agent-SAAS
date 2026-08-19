@@ -5,7 +5,7 @@ import {
   invoiceStatusLabel,
   invoiceStatusTone,
   isInvoiceEditable,
-} from "../src/lib/invoice-status";
+} from "../src/products/invoice-follow-up/invoice-status";
 
 /**
  * Slice 1.6c plan §6: "every one of the nine stored plus three computed

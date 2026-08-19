@@ -3,7 +3,7 @@ import {
   buildReminderMessage,
   type EmailReminderStepKey,
   type ReminderMessageInput,
-} from "../src/modules/reminders/reminder-message.js";
+} from "../src/products/invoice-follow-up/reminders/reminder-message.js";
 
 /**
  * The reminder copy (Slice 1.7).

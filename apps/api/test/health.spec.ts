@@ -3,7 +3,7 @@ import request from "supertest";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { healthResponseSchema, readinessResponseSchema } from "@eva/validation";
 import type { PrismaService } from "../src/common/database/prisma.service.js";
-import { HealthService } from "../src/modules/monitoring/health.service.js";
+import { HealthService } from "../src/platform/monitoring/health.service.js";
 import { createTestApp } from "./support.js";
 
 describe("HealthService", () => {

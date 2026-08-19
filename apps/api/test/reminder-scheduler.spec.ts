@@ -1,13 +1,16 @@
 import { describe, expect, it } from "vitest";
 import { DEFAULT_REMINDER_STEPS } from "@eva/types";
 import type { ReminderActionType, ReminderStepKey } from "@eva/types";
-import { todayInTimezone } from "../src/modules/invoices/invoice-status.js";
-import type { ComputedAction, ScheduleStep } from "../src/modules/reminders/reminder-scheduler.js";
+import { todayInTimezone } from "../src/products/invoice-follow-up/invoices/invoice-status.js";
+import type {
+  ComputedAction,
+  ScheduleStep,
+} from "../src/products/invoice-follow-up/reminders/reminder-scheduler.js";
 import {
   applyContactSpacing,
   computeInvoiceSchedule,
   uuidv5,
-} from "../src/modules/reminders/reminder-scheduler.js";
+} from "../src/products/invoice-follow-up/reminders/reminder-scheduler.js";
 
 const DAY_MS = 86_400_000;
 

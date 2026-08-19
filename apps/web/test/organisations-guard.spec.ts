@@ -57,7 +57,14 @@ describe("every signed-in screen resolves its organisation the same way", () => 
    * strictly more useful, on the screen a customer lands on first. If Home ever
    * stops handling it, this test starts failing for the right reason.
    */
-  const EXEMPT = "/app";
+  /**
+   * ⚠️ MOVED FROM `/app` TO THE PRODUCT'S OWN ROUTE (2026-08-19). `/app` is the
+   * hub now — a platform screen — and the richer 401/correlation-id handling
+   * this exemption is about belongs to invoice chasing's Home, which moved with
+   * it. Pointing this at `/app` after the move would have exempted the hub and
+   * silently stopped checking the screen the rule was written for.
+   */
+  const EXEMPT = "/app/invoice-chasing";
 
   it("never calls apiFetch('/organisations') directly, except on Home", () => {
     const offenders = screens

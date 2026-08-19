@@ -13,12 +13,15 @@ import {
   signToken,
   type FixtureOrg,
 } from "./support.js";
-import { parseImportFile, sniffFileType } from "../src/modules/imports/import-parser.js";
+import {
+  parseImportFile,
+  sniffFileType,
+} from "../src/products/invoice-follow-up/imports/import-parser.js";
 import {
   normaliseImportCurrency,
   parseImportAmount,
   parseImportDate,
-} from "../src/modules/imports/import-values.js";
+} from "../src/products/invoice-follow-up/imports/import-values.js";
 
 /**
  * CSV/Excel invoice import (Slice 1.3) — parser units, upload security and

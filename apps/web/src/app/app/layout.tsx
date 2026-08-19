@@ -26,11 +26,11 @@ import type { SidebarIdentity } from "./sidebar-body";
  * a real state rather than only an error one.
  */
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
-  const identity = await loadIdentity();
+  const { identity, heldModules } = await loadShell();
 
   return (
     <div className="flex min-h-screen bg-background">
-      <AppSidebar identity={identity} signOut={signOut} />
+      <AppSidebar identity={identity} heldModules={heldModules} signOut={signOut} />
       {/*
        * ⚠️ A `div`, NOT A `main`, AND THAT IS NOT A DETAIL. All twelve signed-in
        * screens render their own `<main>`; wrapping them in another one would
@@ -49,6 +49,39 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   );
 }
 
+/**
+ * What the shell shows: who you are, and which products you actually hold.
+ *
+ * ⚠️ `heldModules` IS `null` WHEN WE COULD NOT FIND OUT, AND THAT IS NOT `[]`.
+ * Every fetch here swallows its own failure, so a modules call that fails must
+ * not be reported as "you own nothing" — the sidebar would then confidently
+ * show every product as off. Unknown is its own state and the sidebar renders
+ * it as neither.
+ */
+async function loadShell(): Promise<{
+  identity: SidebarIdentity;
+  heldModules: readonly string[] | null;
+}> {
+  const identity = await loadIdentity();
+  if (!identity.organisationId) return { identity, heldModules: null };
+  try {
+    const supabase = await createClient();
+    const { data: sessionData } = await supabase.auth.getSession();
+    const accessToken = sessionData.session?.access_token;
+    if (!accessToken) return { identity, heldModules: null };
+    const modules = (await (
+      await apiFetch(`/organisations/${identity.organisationId}/modules`, accessToken)
+    ).json()) as { moduleKey: string; enabled: boolean }[];
+    return {
+      identity,
+      heldModules: modules.filter((module) => module.enabled).map((module) => module.moduleKey),
+    };
+  } catch (error) {
+    if (!(error instanceof ApiError)) throw error;
+    return { identity, heldModules: null };
+  }
+}
+
 async function loadIdentity(): Promise<SidebarIdentity> {
   const supabase = await createClient();
   const { data: claimsData } = await supabase.auth.getClaims();
@@ -62,17 +95,19 @@ async function loadIdentity(): Promise<SidebarIdentity> {
 
   const { data: sessionData } = await supabase.auth.getSession();
   const accessToken = sessionData.session?.access_token;
-  if (!accessToken) return { organisation: null, user };
+  if (!accessToken) return { organisationId: null, organisation: null, user };
 
   try {
     const organisations = (await (await apiFetch("/organisations", accessToken)).json()) as {
+      id: string;
       name: string;
       roleKey: string;
     }[];
     // Single-org app today — the same first-of-list rule every screen uses.
     const organisation = organisations[0];
-    if (!organisation) return { organisation: null, user };
+    if (!organisation) return { organisationId: null, organisation: null, user };
     return {
+      organisationId: organisation.id,
       organisation: {
         name: organisation.name,
         initials: initialsFrom(organisation.name),
@@ -84,6 +119,6 @@ async function loadIdentity(): Promise<SidebarIdentity> {
     // 401 included: the page below will do the redirecting, and doing it here
     // as well would race it.
     if (!(error instanceof ApiError)) throw error;
-    return { organisation: null, user };
+    return { organisationId: null, organisation: null, user };
   }
 }

@@ -7,7 +7,7 @@ import {
   chaseTimingLine,
   defaultBookCurrency,
   otherCurrenciesLine,
-} from "../src/lib/invoice-book";
+} from "../src/products/invoice-follow-up/invoice-book";
 
 /** A fixed formatter, so these test the SENTENCE and not `Intl`. */
 const formatDate = (value: string) => `on ${value.slice(0, 10)}`;

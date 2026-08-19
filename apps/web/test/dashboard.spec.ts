@@ -6,7 +6,7 @@ import {
   owedHeadline,
   owedRows,
   type CurrencyTotal,
-} from "@/lib/dashboard";
+} from "@/products/invoice-follow-up/dashboard";
 
 /**
  * The home screen's logic (Slice 1.9).
