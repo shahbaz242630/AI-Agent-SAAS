@@ -72,21 +72,25 @@ describe("the sidebar, rendered", () => {
   });
 
   /**
-   * ⚠️ THE GUARD FOR A CONTROL THAT COULD NOT DO ANYTHING (walked 2026-08-19).
+   * ⚠️ REVERSED ON 2026-08-20, AND THE WAY OUT MATTERS MORE THAN THE TIDINESS.
    *
-   * `/app` sends a customer holding ONE product straight into it. The sidebar
-   * still offered "All products", so clicking it bounced them back to the
-   * screen they were already on — a link that reads as broken. It survives when
-   * they hold none (the hub explains how to switch one on) and when we could
-   * not find out.
+   * This used to assert the OPPOSITE: "All products" was hidden for a customer
+   * holding one product, because `/app` sent them straight back into that
+   * product and a link that changes nothing reads as broken. The founder
+   * removed that skip — everybody lands on the hub now — so the link goes
+   * somewhere real for everyone.
+   *
+   * ⚠️ THIS IS THE HALF THAT WOULD HAVE BEEN MISSED. Deleting the skip in
+   * `app/page.tsx` and leaving the sidebar alone would have stranded a
+   * one-product customer inside their product with no way back to the screen
+   * the founder asked to be able to reach — two halves of one promise in two
+   * files, with nothing failing in between. Found by reading the sidebar after
+   * changing the page, not by a test.
    */
-  it("hides 'All products' when there is only one product to choose", () => {
-    expect(render("/app/invoice-chasing", IDENTITY, ["email_credit_controller"])).not.toContain(
+  it("always offers 'All products', however many the customer holds", () => {
+    expect(render("/app/invoice-chasing", IDENTITY, ["email_credit_controller"])).toContain(
       "All products",
     );
-  });
-
-  it("keeps 'All products' when there is a real choice, or none at all", () => {
     expect(render("/app", IDENTITY, HOLDS_TWO)).toContain("All products");
     expect(render("/app", IDENTITY, [])).toContain("All products");
     expect(render("/app", IDENTITY, null)).toContain("All products");

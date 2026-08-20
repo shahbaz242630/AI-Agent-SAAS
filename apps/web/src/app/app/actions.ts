@@ -1,10 +1,17 @@
 "use server";
 
 import { redirect } from "next/navigation";
+import { revalidatePath } from "next/cache";
+import { moduleHref } from "@eva/types";
 import { ApiError, apiFetch } from "@/lib/api";
+import { canStartProduct } from "@/lib/product-hub";
 import { createClient } from "@/lib/supabase/server";
 
 export interface CreateOrganisationState {
+  error?: string;
+}
+
+export interface StartProductState {
   error?: string;
 }
 
@@ -92,4 +99,60 @@ export async function createOrganisationForOnboarding(
   if (result.signedOut) redirect("/sign-in");
   if (result.error) return { error: result.error };
   redirect("/app/onboarding");
+}
+
+/**
+ * Switch a product on from the hub, and go straight into it.
+ *
+ * ⚠️ THE LANDING IS THE POINT, NOT A CONVENIENCE. Founder, 2026-08-20: *"once
+ * they choose, let's say invoice chasing, they land at invoice chasing
+ * dashboard"*. Switching a product on and then returning somebody to the list
+ * they just chose from makes them hunt for the thing they have already picked.
+ * The settings screen deliberately does the opposite and stays put: somebody
+ * MANAGING products is not somebody STARTING one.
+ *
+ * ⚠️ IT REFUSES ANYTHING WE HAVE NOT BUILT, and the check is here rather than
+ * only on the screen. The hub renders a button for live products only — but a
+ * form post is not a button. Without this, a hand-made post would switch on a
+ * product with no screens behind it and then redirect the customer into a bare
+ * 404: the exact defect PR #90 closed, re-created by the fix for a different
+ * one.
+ */
+export async function startProduct(
+  _prevState: StartProductState,
+  formData: FormData,
+): Promise<StartProductState> {
+  const organisationId = String(formData.get("organisationId") ?? "");
+  const moduleKey = String(formData.get("moduleKey") ?? "");
+
+  if (!organisationId || !canStartProduct(moduleKey)) {
+    return { error: "That product isn't available to switch on yet." };
+  }
+
+  const accessToken = await getAccessToken();
+  if (!accessToken) redirect("/sign-in");
+
+  try {
+    await apiFetch(`/organisations/${organisationId}/modules/${moduleKey}`, accessToken, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ enabled: true }),
+    });
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 401) redirect("/sign-in");
+    // The API's own message names what is actually missing — a prerequisite, a
+    // permission, a seat. Ours would be a guess (defect F4, slice 1.6).
+    return {
+      error: error instanceof ApiError ? error.message : "Something went wrong. Please try again.",
+    };
+  }
+
+  /**
+   * ⚠️ BOTH CALLS SIT OUTSIDE THE `try`, for the reason `submitOrganisation`
+   * already documents: `redirect` works by throwing, so a redirect inside that
+   * block would be caught by our own `catch` and reported to the customer as
+   * "Something went wrong" — after their product had switched on perfectly.
+   */
+  revalidatePath("/app");
+  redirect(moduleHref(moduleKey));
 }
