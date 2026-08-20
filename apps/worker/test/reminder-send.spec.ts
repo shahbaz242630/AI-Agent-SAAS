@@ -44,6 +44,12 @@ describe("reminder-send scheduled task (Slice 1.7)", () => {
       headers: {
         "content-type": "application/json",
         "x-internal-secret": TEST_SECRET,
+        // ⚠️ THE REFERENCE THAT TIES THIS RUN TO THE API'S OWN LOG LINES
+        // (Slice 3.0c). The API honours an inbound x-correlation-id, so the
+        // sweep and everything it logged share one searchable string.
+        "x-correlation-id": expect.stringMatching(
+          /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+        ),
       },
       body: "{}",
     });
@@ -59,7 +65,10 @@ describe("reminder-send scheduled task (Slice 1.7)", () => {
     };
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(200, body)));
 
-    await expect(runReminderSend()).resolves.toEqual(body);
+    await expect(runReminderSend()).resolves.toEqual({
+      ...body,
+      correlationId: expect.any(String),
+    });
   });
 
   /**
@@ -77,7 +86,10 @@ describe("reminder-send scheduled task (Slice 1.7)", () => {
     };
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(200, body)));
 
-    await expect(runReminderSend()).resolves.toEqual(body);
+    await expect(runReminderSend()).resolves.toEqual({
+      ...body,
+      correlationId: expect.any(String),
+    });
   });
 
   it("throws on non-2xx so Trigger.dev retries — status only, never the response body", async () => {
