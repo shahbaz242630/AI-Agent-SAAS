@@ -38,7 +38,18 @@ export type WebPermissionKey =
   // Slice 1.8 — the reminder timing screen is the write the line above said
   // would come. The API has accepted `reminders:write` since slice 1.5; until
   // 1.8 no screen called it.
-  | "reminders:write";
+  | "reminders:write"
+  /**
+   * Slice 3.1a — the enquiry book.
+   *
+   * ⚠️ THESE TWO ARE CARRIED BY `lead_follow_up_email` ALONE, WHICH MAKES THE
+   * 402 PATH REACHABLE FROM DAY ONE. Every other key on this list belongs to a
+   * product our only production organisation already holds, so "you haven't
+   * bought this" has been mostly theoretical. Here it is the ordinary case —
+   * and it is a different sentence from "your role can't", per §0d.
+   */
+  | "leads:read"
+  | "leads:write";
 
 /** The shape every page already fetches from `GET /organisations`. */
 export interface OrganisationAccess {
@@ -111,7 +122,10 @@ export type WriteAction =
   | "confirm-import"
   | "cancel-import"
   | "change-settings"
-  | "change-reminder-timing";
+  | "change-reminder-timing"
+  // Slice 3.1a — the enquiry book.
+  | "log-lead"
+  | "stop-contacting";
 
 /**
  * ⚠️ `Record<WriteAction, string>` IS THE EXHAUSTIVENESS GUARANTEE. Adding a
@@ -143,4 +157,15 @@ const REFUSED: Record<WriteAction, string> = {
   // every invoice already being chased. Telling someone the wrong one is the
   // standing §0d mistake — name the thing they were actually refused.
   "change-reminder-timing": "Your role can't change when Eva chases.",
+  "log-lead": "Your role can't log an enquiry.",
+  /**
+   * ⚠️ NOT FOLDED INTO `log-lead`, AND THIS IS THE ONE WHERE IT MATTERS MOST.
+   * Both are `leads:write`, so they move together under the default matrix —
+   * which is exactly the coincidence that makes sharing a sentence tempting.
+   * But somebody refused here was trying to honour a person asking not to be
+   * contacted again, and telling them their role "can't log an enquiry" would
+   * send them looking for the wrong thing while a compliance request sits
+   * unactioned. Name what they were refused.
+   */
+  "stop-contacting": "Your role can't record a do-not-contact request.",
 };

@@ -10,11 +10,11 @@ import { BackChip } from "@/components/ui";
 import { UploadForm } from "./import-controls";
 
 /**
- * ⚠️ BUILT, NOT WRITTEN OUT — both of these were `/app/invoices`, which
- * stopped being an address when the products got their own URLs.
+ * ⚠️ BUILT, NOT WRITTEN OUT — this was `/app/invoices`, which stopped being
+ * an address when the products got their own URLs, so the way off this
+ * screen led nowhere.
  */
 const BOOK = moduleHref("email_credit_controller", "invoices");
-const IMPORT = moduleHref("email_credit_controller", "invoices/import");
 
 /**
  * Upload a book (slice 1.6c — the founder's "user lands on this table, uploads
