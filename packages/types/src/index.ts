@@ -67,6 +67,13 @@ export const PERMISSION_KEYS = [
    *  able to see what exists and buy one, or it can never become a customer. */
   "modules:read",
   "modules:manage",
+  /**
+   * Slice 3.1a. The lead product finally owns permissions of its own — until
+   * now it granted nothing at all, so buying it gave a customer no new access
+   * to anything.
+   */
+  "leads:read",
+  "leads:write",
 ] as const;
 
 export type PermissionKey = (typeof PERMISSION_KEYS)[number];
@@ -106,9 +113,46 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<OrganisationRole, readonly Permiss
     // needs it to make sense of a 402 rather than reading it as a fault.
     "modules:read",
   ],
-  sales: ["customers:read", "contacts:read", "invoices:read", "imports:read", "reminders:read"],
-  reception: ["customers:read", "contacts:read", "invoices:read", "imports:read", "reminders:read"],
-  read_only: ["customers:read", "contacts:read", "invoices:read", "imports:read", "reminders:read"],
+  /**
+   * ⚠️ SALES AND RECEPTION CAN WRITE LEADS, AND THEY ARE THE ONLY TWO (3.1a).
+   *
+   * Enquiries are sales' actual job, and reception is who takes the missed
+   * call that becomes one — BRD 4.3 lists "missed inbound call" as an eligible
+   * source, and it is logged by hand by whoever answered the phone. Both roles
+   * are otherwise read-only across this product, which is why these are their
+   * first write permissions and why they are worth stating rather than
+   * inheriting.
+   *
+   * Finance is deliberately left out: an unanswered enquiry is not a
+   * receivable, and a permission granted "just in case" is one nobody can
+   * later argue about removing.
+   */
+  sales: [
+    "customers:read",
+    "contacts:read",
+    "invoices:read",
+    "imports:read",
+    "reminders:read",
+    "leads:read",
+    "leads:write",
+  ],
+  reception: [
+    "customers:read",
+    "contacts:read",
+    "invoices:read",
+    "imports:read",
+    "reminders:read",
+    "leads:read",
+    "leads:write",
+  ],
+  read_only: [
+    "customers:read",
+    "contacts:read",
+    "invoices:read",
+    "imports:read",
+    "reminders:read",
+    "leads:read",
+  ],
 };
 
 // --- Slice 1.6a: module entitlements ---
@@ -190,6 +234,16 @@ export const PERMISSION_MODULES: Record<
    */
   "mailbox:read": ["email_credit_controller", "lead_follow_up_email"],
   "mailbox:manage": ["email_credit_controller", "lead_follow_up_email"],
+  /**
+   * ⚠️ EMAIL ONLY, NOT BOTH LEAD PRODUCTS. Founder ruling 14 makes lead
+   * follow-up by email and by call two separate purchases with different
+   * machinery. A customer who eventually buys only the voice one will need its
+   * own keys, pointed at its own screens — listing both here now would grant
+   * access to a lead book on the strength of buying a phone product that
+   * cannot yet write to it.
+   */
+  "leads:read": ["lead_follow_up_email"],
+  "leads:write": ["lead_follow_up_email"],
 };
 
 /**

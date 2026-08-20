@@ -635,3 +635,65 @@ export const setModuleSchema = z.object({
 });
 
 export type SetModuleInput = z.infer<typeof setModuleSchema>;
+
+// --- Slice 3.1a: the lead record ---
+
+/**
+ * The channels a person can log an enquiry from BY HAND today (BRD 4.3
+ * "Eligible lead sources").
+ *
+ * ⚠️ THREE, NOT ELEVEN. The BRD lists every channel the product will eventually
+ * accept, but a mailbox reader (3.1b) and a voice stack (Phase 2) do not exist,
+ * and a source nothing can produce is a value that only ever appears in a
+ * dropdown. These three are the ones a human genuinely enters: the phone rang
+ * and nobody got to it, an existing client asked for something new, somebody
+ * asked to be called back.
+ */
+export const MANUAL_LEAD_SOURCES = [
+  "missed_call",
+  "existing_customer",
+  "callback_request",
+] as const;
+
+export type ManualLeadSource = (typeof MANUAL_LEAD_SOURCES)[number];
+
+/**
+ * POST /organisations/:organisationId/leads — log an enquiry that arrived some
+ * other way (Slice 3.1a).
+ *
+ * ⚠️ `receivedAt` IS REQUIRED AND IS NOT "NOW". Speed-to-lead (BRD 4.3) is
+ * measured from when the enquiry HAPPENED. Somebody logging Friday's missed
+ * call on Monday morning must be able to say so, or the record claims a
+ * three-day-old enquiry arrived this instant and every response target
+ * computed from it is a fiction.
+ *
+ * ⚠️ AT LEAST ONE WAY TO REACH THEM. A lead with a name and no contact details
+ * cannot be followed up and would sit in the book forever looking like work
+ * nobody did. The database enforces it too — belt and braces, because this one
+ * is the difference between a lead and a note.
+ */
+export const createLeadRequestSchema = z
+  .object({
+    source: z.enum(MANUAL_LEAD_SOURCES),
+    contactName: z.string().trim().min(1).max(200).optional(),
+    contactEmail: z.email().max(320).optional(),
+    contactPhone: z.string().trim().min(1).max(50).optional(),
+    /** What they asked for, in their words where we have them. */
+    enquiry: z.string().trim().min(1).max(4000).optional(),
+    receivedAt: z.iso.datetime(),
+    /** Set when the enquiry is recognised as coming from an existing client. */
+    customerId: z.uuid().optional(),
+    /**
+     * Verbatim evidence of the enquiry — the note taken from the call, the
+     * message they left. Kept in `lead_evidence`, which nothing can edit.
+     */
+    evidenceExcerpt: z.string().trim().min(1).max(4000).optional(),
+    /** The channel's own reference where one exists: a call id, a ticket id. */
+    evidenceExternalId: z.string().trim().min(1).max(200).optional(),
+  })
+  .refine((value) => Boolean(value.contactEmail ?? value.contactPhone), {
+    message: "A lead needs an email address or a phone number to be followed up.",
+    path: ["contactPhone"],
+  });
+
+export type CreateLeadRequest = z.infer<typeof createLeadRequestSchema>;
