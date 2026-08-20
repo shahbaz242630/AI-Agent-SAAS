@@ -124,21 +124,22 @@ export function SidebarBody({
         {[
           ...(currentProduct ? (PRODUCT_NAV[currentProduct] ?? []) : []),
           /**
-           * ⚠️ NO "ALL PRODUCTS" LINK WHEN THERE IS NOTHING TO CHOOSE BETWEEN
-           * (found by walking, 2026-08-19, minutes after the hub landed).
+           * ⚠️ "ALL PRODUCTS" IS ALWAYS SHOWN, AND THE REASON IT ONCE WAS NOT
+           * IS THE REASON IT MUST BE NOW.
            *
-           * `/app` sends a customer holding ONE product straight into it, which
-           * is the whole design — so the link bounced them back to the screen
-           * they were already on. A control that cannot change anything is
-           * worse than a missing one: it reads as broken.
+           * It used to be hidden for a customer holding exactly one product,
+           * because `/app` sent them straight back into that product and a link
+           * that cannot change anything reads as broken. **The founder reversed
+           * that skip on 2026-08-20** — everybody lands on the hub now — so the
+           * link goes somewhere real for everyone, and hiding it would strand a
+           * one-product customer inside their product with no way back to the
+           * screen they were explicitly asked to be able to reach.
            *
-           * Kept when they hold none (the hub explains how to switch one on)
-           * and when we could not find out (`null` — claiming nothing beats
-           * hiding a real door).
+           * ⚠️ TWO HALVES OF ONE PROMISE IN TWO FILES: removing the skip in
+           * `app/page.tsx` without this line would have shipped exactly half a
+           * fix, and nothing would have failed. Found by looking, not by tests.
            */
-          ...NAV_ITEMS.filter(
-            (item) => item.href !== "/app" || heldModules === null || heldModules.length !== 1,
-          ),
+          ...NAV_ITEMS,
         ].map((item) => {
           const active = isActiveSection(pathname, item.href);
           const Icon = NAV_ICONS[item.href];
