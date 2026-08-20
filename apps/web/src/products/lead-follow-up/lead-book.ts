@@ -301,3 +301,46 @@ export function nowForInput(timezone: string, now: Date = new Date()): string {
   const hour = String(Number(get("hour")) % 24).padStart(2, "0");
   return `${get("year")}-${get("month")}-${get("day")}T${hour}:${get("minute")}`;
 }
+
+/** A client who shares this person's email address or phone number. */
+export interface AlsoAffected {
+  customerId: string;
+  customerName: string;
+  matchedOn: ("email" | "phone")[];
+}
+
+/**
+ * What a do-not-contact request will actually reach, said before it happens.
+ *
+ * ⚠️ THIS SENTENCE IS THE FIX FOR A TRAP THE FOUNDER WALKED INTO ON THE FIRST
+ * ENQUIRY EVER LOGGED (2026-08-20). Suppression is by VALUE, organisation-wide
+ * and cross-product, so recording a do-not-contact on an enquiry ALSO stops
+ * invoice chasers to the same address. The screen said "every channel,
+ * permanently" — true, and abstract enough that nobody reads it as "this will
+ * stop you chasing Meridian Logistics". Naming the client is what turns a
+ * disclaimer into a warning.
+ *
+ * ⚠️ IT NAMES THEM, IT DOES NOT COUNT THEM. "1 other client affected" is the
+ * same disclaimer wearing a number: it tells somebody there is a consequence
+ * without telling them what it is, which leaves them exactly as unable to
+ * decide. Beyond three, the list is trimmed and the remainder counted, because
+ * a paragraph of names is not read either.
+ */
+export function alsoAffectsLine(affected: readonly AlsoAffected[]): string | null {
+  if (affected.length === 0) return null;
+
+  const names = affected.map((row) => row.customerName);
+  const listed =
+    names.length <= 3 ? list(names) : `${list(names.slice(0, 3))} and ${names.length - 3} more`;
+  const verb = affected.length === 1 ? "is" : "are";
+  const they = affected.length === 1 ? "them" : "them";
+
+  return `${listed} ${verb} on your client list with the same details, so this will stop Eva contacting ${they} about invoices too.`;
+}
+
+/** "A", "A and B", "A, B and C" — the way a person writes a list. */
+function list(names: readonly string[]): string {
+  if (names.length === 0) return "";
+  if (names.length === 1) return names[0]!;
+  return `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
+}

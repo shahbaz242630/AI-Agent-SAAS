@@ -7,7 +7,11 @@ import { PrismaService } from "../../common/database/prisma.service.js";
 import { UsersService } from "../users/users.service.js";
 import { requirePermission, type TenantTx } from "../permissions/permissions.js";
 import { writeAuditLog } from "../audit/audit-log.js";
-import { addSuppression, type SuppressionChannel } from "../suppression/suppression.js";
+import {
+  addSuppression,
+  normaliseSuppressionValue,
+  type SuppressionChannel,
+} from "../suppression/suppression.js";
 import type { AuthUser } from "../authentication/current-auth-user.decorator.js";
 
 /**
@@ -33,8 +37,35 @@ export interface LeadSummary {
   createdAt: Date;
 }
 
+/**
+ * Who ELSE stops being contactable if this lead is marked do-not-contact.
+ *
+ * ⚠️ THIS EXISTS BECAUSE THE ACTION REACHES FURTHER THAN THE SCREEN IT SITS ON,
+ * AND THE FOUNDER WALKED STRAIGHT INTO IT (2026-08-20). Suppression is by
+ * VALUE, organisation-wide and cross-product by BRD design — so a
+ * do-not-contact on an enquiry silently stops invoice chasers to the same
+ * address. The first lead ever logged on production used an address that is
+ * also a client's billing contact; nothing on the screen said so, and it was
+ * only caught by reading the database by hand.
+ *
+ * Naming the blast radius before somebody commits to it is the fix. The
+ * suppression itself stays permanent — that is the compliance guarantee, not
+ * the bug.
+ */
+export interface LeadAlsoAffects {
+  customerId: string;
+  customerName: string;
+  /** Which detail they share — the same channels the action will suppress. */
+  matchedOn: ("email" | "phone")[];
+}
+
 /** A lead with the proof behind it — the detail screen's shape. */
 export interface LeadDetail extends LeadSummary {
+  /**
+   * Clients who share this person's email address or phone number, and would
+   * therefore be silenced too. Empty when nobody else is affected.
+   */
+  alsoAffects: LeadAlsoAffects[];
   evidence: {
     channel: string;
     externalId: string | null;
@@ -80,6 +111,7 @@ export class LeadsService {
       if (!lead) throw new NotFoundException("Lead not found");
       return {
         ...toSummary(lead),
+        alsoAffects: await this.whoElseWouldBeSilenced(tx, lead),
         evidence: lead.evidence
           ? {
               channel: lead.evidence.channel,
@@ -166,6 +198,9 @@ export class LeadsService {
 
       return {
         ...toSummary(lead),
+        // Computed here too: an enquiry can arrive from somebody who is already
+        // a client, and the screen that appears next carries the same button.
+        alsoAffects: await this.whoElseWouldBeSilenced(tx, lead),
         evidence: {
           channel: lead.evidence!.channel,
           externalId: lead.evidence!.externalId,
@@ -245,6 +280,72 @@ export class LeadsService {
 
       return toSummary(updated);
     });
+  }
+
+  /**
+   * The clients a do-not-contact on this lead would silence as well.
+   *
+   * ⚠️ IT MIRRORS `doNotContact` EXACTLY, INCLUDING ITS BLIND SPOTS, AND THAT
+   * IS THE POINT. The action suppresses the email case-folded and the phone
+   * number as typed (`normaliseSuppressionValue`), so this matches the same way.
+   * A cleverer match here — stripping spaces from numbers, comparing +44 to 0 —
+   * would warn about clients the action would NOT actually silence, and a
+   * warning that overstates gets ignored, which is worse than none.
+   *
+   * The reverse blind spot is real and deliberate: `07700 900123` and
+   * `+447700900123` are the same person to a human and two different values to
+   * the suppression list, so neither the action nor this warning connects them.
+   * That is a limitation of suppression-by-value, not of this function, and it
+   * is the same on both sides — which is what keeps the warning honest.
+   *
+   * ⚠️ CONTACTS AND CUSTOMERS ARE PLATFORM TABLES, so reading them here crosses
+   * no wall — `table-ownership.ts` lists both alongside `lead`. This would be a
+   * violation if it lived in the lead PRODUCT, which is one more reason the
+   * lead record is platform.
+   */
+  private async whoElseWouldBeSilenced(
+    tx: TenantTx,
+    lead: { contactEmail: string | null; contactPhone: string | null },
+  ): Promise<LeadAlsoAffects[]> {
+    const email = lead.contactEmail ? normaliseSuppressionValue("email", lead.contactEmail) : null;
+    const phone = lead.contactPhone ? normaliseSuppressionValue("call", lead.contactPhone) : null;
+    if (!email && !phone) return [];
+
+    const matches = await tx.contact.findMany({
+      where: {
+        deletedAt: null,
+        OR: [...(email ? [{ email }] : []), ...(phone ? [{ phone }] : [])],
+      },
+      select: {
+        email: true,
+        phone: true,
+        customer: { select: { id: true, name: true, deletedAt: true } },
+      },
+    });
+
+    /**
+     * ⚠️ ONE ENTRY PER CLIENT, NOT PER CONTACT. A client with two people on the
+     * same shared inbox would otherwise be named twice in the same sentence.
+     */
+    const byCustomer = new Map<string, LeadAlsoAffects>();
+    for (const match of matches) {
+      // A deleted client cannot be chased, so naming it would be a warning
+      // about something that cannot happen.
+      if (!match.customer || match.customer.deletedAt !== null) continue;
+      const existing = byCustomer.get(match.customer.id) ?? {
+        customerId: match.customer.id,
+        customerName: match.customer.name,
+        matchedOn: [] as ("email" | "phone")[],
+      };
+      if (email && match.email === email && !existing.matchedOn.includes("email")) {
+        existing.matchedOn.push("email");
+      }
+      if (phone && match.phone === phone && !existing.matchedOn.includes("phone")) {
+        existing.matchedOn.push("phone");
+      }
+      byCustomer.set(match.customer.id, existing);
+    }
+    return [...byCustomer.values()].sort((a, b) => a.customerName.localeCompare(b.customerName));
   }
 
   private async requireCustomer(tx: TenantTx, customerId: string): Promise<void> {
