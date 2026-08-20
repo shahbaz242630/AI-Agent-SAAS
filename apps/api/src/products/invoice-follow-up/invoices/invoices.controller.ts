@@ -25,8 +25,10 @@ import {
 } from "../../../platform/authentication/current-auth-user.decorator.js";
 // eslint-disable-next-line @typescript-eslint/consistent-type-imports
 import { InvoicesService, type InvoiceSummary } from "./invoices.service.js";
+import { OwnedBy } from "../../../common/monitoring/owner.js";
 
 @Controller("organisations/:organisationId/customers/:customerId/invoices")
+@OwnedBy("product:invoice-follow-up")
 export class InvoicesController {
   constructor(private readonly invoicesService: InvoicesService) {}
 

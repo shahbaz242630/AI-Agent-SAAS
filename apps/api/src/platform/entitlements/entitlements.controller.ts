@@ -5,6 +5,7 @@ import { ZodValidationPipe } from "../../common/validation/zod-validation.pipe.j
 import { CurrentAuthUser, type AuthUser } from "../authentication/current-auth-user.decorator.js";
 // eslint-disable-next-line @typescript-eslint/consistent-type-imports
 import { EntitlementsService } from "./entitlements.service.js";
+import { OwnedBy } from "../../common/monitoring/owner.js";
 
 /**
  * Which products an organisation holds (Slice 1.6a). Cross-tenant access is
@@ -14,6 +15,7 @@ import { EntitlementsService } from "./entitlements.service.js";
  * why that is a requirement rather than an oversight.
  */
 @Controller("organisations/:organisationId/modules")
+@OwnedBy("platform")
 export class EntitlementsController {
   constructor(private readonly entitlementsService: EntitlementsService) {}
 

@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { schedules } from "@trigger.dev/sdk/v3";
 import { loadEnv } from "@eva/configuration";
 import { workerEnvSchema } from "../config/env.js";
@@ -10,6 +11,12 @@ export interface ReconcileResult {
   durationMs: number;
 }
 
+/** The API's summary plus the reference tying this run to the API's own log
+ *  lines (Slice 3.0c — see `reminder-send.ts` for the reasoning). */
+export interface ReconcileRun extends ReconcileResult {
+  correlationId: string;
+}
+
 /**
  * The daily reconcile call (Slice 1.5, plan §7.2 — thin durable timer; ALL
  * business logic lives in the API). Fires POST /internal/reminders/reconcile
@@ -17,22 +24,27 @@ export interface ReconcileResult {
  * Trigger.dev retries (maxAttempts 3, trigger.config.ts); a partial-failure
  * 200 does NOT throw — the API already isolated and logged those orgs.
  */
-export async function runReminderReconcile(): Promise<ReconcileResult> {
+export async function runReminderReconcile(): Promise<ReconcileRun> {
   const env = loadEnv(workerEnvSchema);
   const baseUrl = env.API_BASE_URL.replace(/\/+$/, "");
+  const correlationId = randomUUID();
   const response = await fetch(`${baseUrl}/internal/reminders/reconcile`, {
     method: "POST",
     headers: {
       "content-type": "application/json",
       "x-internal-secret": env.INTERNAL_API_SECRET,
+      "x-correlation-id": correlationId,
     },
     body: "{}",
   });
   if (!response.ok) {
-    // Status only — never the response body or headers (the secret must not leak).
-    throw new Error(`reminder reconcile request failed with status ${response.status}`);
+    // Status and the reference only — never the response body or headers (the
+    // secret must not leak).
+    throw new Error(
+      `reminder reconcile request failed with status ${response.status} (reference ${correlationId})`,
+    );
   }
-  return (await response.json()) as ReconcileResult;
+  return { ...((await response.json()) as ReconcileResult), correlationId };
 }
 
 /**

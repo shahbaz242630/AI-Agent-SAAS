@@ -9,8 +9,10 @@ import { ZodValidationPipe } from "../../common/validation/zod-validation.pipe.j
 import { CurrentAuthUser, type AuthUser } from "../authentication/current-auth-user.decorator.js";
 // eslint-disable-next-line @typescript-eslint/consistent-type-imports
 import { ContactsService, type ContactSummary } from "./contacts.service.js";
+import { OwnedBy } from "../../common/monitoring/owner.js";
 
 @Controller("organisations/:organisationId/customers/:customerId/contacts")
+@OwnedBy("platform")
 export class ContactsController {
   constructor(private readonly contactsService: ContactsService) {}
 

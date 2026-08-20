@@ -13,12 +13,14 @@ import {
 } from "../../../platform/authentication/current-auth-user.decorator.js";
 // eslint-disable-next-line @typescript-eslint/consistent-type-imports
 import { RemindersService } from "./reminders.service.js";
+import { OwnedBy } from "../../../common/monitoring/owner.js";
 
 /**
  * Reminder sequence configuration + per-invoice send-queue visibility
  * (Slice 1.5; plan §3). Cross-tenant access is always 404, never 403 (BRD 15).
  */
 @Controller("organisations/:organisationId")
+@OwnedBy("product:invoice-follow-up")
 export class RemindersController {
   constructor(private readonly remindersService: RemindersService) {}
 

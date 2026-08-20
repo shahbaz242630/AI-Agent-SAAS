@@ -18,8 +18,10 @@ import {
   type OrganisationSummary,
   type RolePermissionsView,
 } from "./organisations.service.js";
+import { OwnedBy } from "../../common/monitoring/owner.js";
 
 @Controller("organisations")
+@OwnedBy("platform")
 export class OrganisationsController {
   constructor(private readonly organisationsService: OrganisationsService) {}
 

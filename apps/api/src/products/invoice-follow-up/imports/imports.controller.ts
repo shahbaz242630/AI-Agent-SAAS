@@ -21,6 +21,7 @@ import {
 // eslint-disable-next-line @typescript-eslint/consistent-type-imports
 import { ImportsService, type UploadedImportFile } from "./imports.service.js";
 import { MAX_UPLOAD_BYTES } from "./import-parser.js";
+import { OwnedBy } from "../../../common/monitoring/owner.js";
 
 /**
  * CSV/Excel invoice import (Slice 1.3; plan §3). The upload uses memory
@@ -28,6 +29,7 @@ import { MAX_UPLOAD_BYTES } from "./import-parser.js";
  * (BRD 16 data minimisation).
  */
 @Controller("organisations/:organisationId/imports")
+@OwnedBy("product:invoice-follow-up")
 export class ImportsController {
   constructor(private readonly importsService: ImportsService) {}
 

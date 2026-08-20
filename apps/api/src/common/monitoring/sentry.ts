@@ -52,8 +52,24 @@ export function initSentry(env: ApiEnv): void {
 }
 
 /** ErrorReporter backed by Sentry; safe to call even when init was skipped. */
+/**
+ * ErrorReporter backed by Sentry; safe to call even when init was skipped.
+ *
+ * ⚠️ `tags` GOES THROUGH AS TAGS. Sentry's `captureException` accepts both on
+ * the same hint object, and the difference is the whole reason the port
+ * distinguishes them: a tag can be filtered, searched and alerted on, `extra`
+ * can only be read after you have already found the event. `product` and
+ * `correlationId` are the two things somebody searches BY, so they are tags.
+ */
 export const sentryErrorReporter: ErrorReporter = {
   captureException(error, context) {
-    Sentry.captureException(error, context ? { extra: context } : undefined);
+    if (!context) {
+      Sentry.captureException(error);
+      return;
+    }
+    Sentry.captureException(error, {
+      ...(context.tags ? { tags: context.tags } : {}),
+      ...(context.extra ? { extra: context.extra } : {}),
+    });
   },
 };

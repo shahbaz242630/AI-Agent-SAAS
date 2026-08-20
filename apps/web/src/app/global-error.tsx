@@ -2,6 +2,7 @@
 
 import * as Sentry from "@sentry/nextjs";
 import { useEffect } from "react";
+import { ownerForRoute } from "@/lib/product-owner";
 
 /**
  * Root error boundary (Next.js global-error convention). Replaces the root
@@ -17,7 +18,19 @@ export default function GlobalError({
   reset: () => void;
 }) {
   useEffect(() => {
-    Sentry.captureException(error);
+    /**
+     * ⚠️ TAGGED WITH THE PRODUCT, LIKE EVERY OTHER FAULT (Slice 3.0c). This is
+     * the browser half, and it is the half a customer is actually looking at
+     * when they pick up the phone. The pathname is read here rather than
+     * through `usePathname()` because this boundary replaces the root layout —
+     * there is no router context left to ask.
+     */
+    Sentry.captureException(error, {
+      tags: {
+        product:
+          typeof window === "undefined" ? "unattributed" : ownerForRoute(window.location.pathname),
+      },
+    });
   }, [error]);
 
   return (

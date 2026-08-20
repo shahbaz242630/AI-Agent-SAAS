@@ -35,6 +35,11 @@ describe("reminder-reconcile scheduled task (Slice 1.5)", () => {
       headers: {
         "content-type": "application/json",
         "x-internal-secret": TEST_SECRET,
+        // ⚠️ THE REFERENCE THAT TIES THIS RUN TO THE API'S OWN LOG LINES
+        // (Slice 3.0c). See reminder-send.spec.ts.
+        "x-correlation-id": expect.stringMatching(
+          /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+        ),
       },
       body: "{}",
     });
@@ -46,7 +51,11 @@ describe("reminder-reconcile scheduled task (Slice 1.5)", () => {
       vi.fn().mockResolvedValue(jsonResponse(200, { processed: 5, failed: [] })),
     );
 
-    await expect(runReminderReconcile()).resolves.toEqual({ processed: 5, failed: [] });
+    await expect(runReminderReconcile()).resolves.toEqual({
+      processed: 5,
+      failed: [],
+      correlationId: expect.any(String),
+    });
   });
 
   it("does not throw on a partial-failure 200 — the API already isolated those orgs", async () => {
@@ -55,7 +64,11 @@ describe("reminder-reconcile scheduled task (Slice 1.5)", () => {
       vi.fn().mockResolvedValue(jsonResponse(200, { processed: 4, failed: ["org_aaa"] })),
     );
 
-    await expect(runReminderReconcile()).resolves.toEqual({ processed: 4, failed: ["org_aaa"] });
+    await expect(runReminderReconcile()).resolves.toEqual({
+      processed: 4,
+      failed: ["org_aaa"],
+      correlationId: expect.any(String),
+    });
   });
 
   it("throws on non-2xx so Trigger.dev retries — status only, never the response body", async () => {

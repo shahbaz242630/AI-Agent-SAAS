@@ -25,6 +25,7 @@ import {
 } from "../../platform/authentication/current-auth-user.decorator.js";
 // eslint-disable-next-line @typescript-eslint/consistent-type-imports
 import { MailboxesService } from "./mailboxes.service.js";
+import { OwnedBy } from "../../common/monitoring/owner.js";
 
 /**
  * Mailbox connection management (Slice 1.6; plan §3). Cross-tenant access is
@@ -37,6 +38,7 @@ import { MailboxesService } from "./mailboxes.service.js";
  * our own web app consumes these.
  */
 @Controller("organisations/:organisationId/mailboxes")
+@OwnedBy("capability:mailbox")
 export class MailboxesController {
   constructor(private readonly mailboxesService: MailboxesService) {}
 

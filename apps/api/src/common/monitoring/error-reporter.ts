@@ -6,6 +6,34 @@
  */
 export const ERROR_REPORTER = Symbol("ERROR_REPORTER");
 
+/**
+ * ⚠️ TAGS AND EXTRA ARE NOT TWO NAMES FOR THE SAME THING, AND PUTTING A VALUE
+ * IN THE WRONG ONE MAKES IT UNFINDABLE. Sentry indexes tags: they are what a
+ * search box, a filter and an alert can use. `extra` is only visible once you
+ * have already found the event — which is no help at all when the question is
+ * "show me everything invoice follow-up broke this week", or when a customer
+ * quotes a reference number and there are nine thousand events to look in.
+ *
+ * Until 2026-08-20 everything went into `extra`, including the correlation id
+ * the customer reads off their own screen.
+ */
+export interface FaultContext {
+  /**
+   * Indexed and searchable. Short values only — a product tag, a correlation
+   * id; never a message, a stack, or a URL with an id in it.
+   *
+   * ⚠️ `correlationId` IS ONE VALUE PER REQUEST, AND THAT IS A DELIBERATE
+   * TRADE. Sentry advises against high-cardinality tags, and at real volume
+   * this would be one to revisit — but the entire purpose of a reference number
+   * is that the string on a customer's screen finds the event, and in `extra`
+   * it cannot be searched for at all. At our volume the cost is nil and the
+   * alternative is a reference nobody can look up.
+   */
+  tags?: Record<string, string>;
+  /** Visible on the event, not searchable. Everything else. */
+  extra?: Record<string, unknown>;
+}
+
 export interface ErrorReporter {
-  captureException(error: unknown, context?: Record<string, unknown>): void;
+  captureException(error: unknown, context?: FaultContext): void;
 }

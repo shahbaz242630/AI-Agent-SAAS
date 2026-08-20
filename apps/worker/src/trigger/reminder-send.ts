@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { schedules } from "@trigger.dev/sdk/v3";
 import { loadEnv } from "@eva/configuration";
 import { workerEnvSchema } from "../config/env.js";
@@ -24,6 +25,22 @@ export interface SendRemindersResult {
 }
 
 /**
+ * What the task returns: the API's summary, plus the reference that ties this
+ * run to the API's own log lines.
+ *
+ * ⚠️ THIS IS THE BACKGROUND HALF OF SLICE 3.0C. A customer saying "Eva never
+ * chased my invoice on Tuesday" leads to a Trigger.dev run that says
+ * `held: 3` — and then to a log search by time window and URL, hoping the
+ * right sweep is in the results. The API honours an inbound
+ * `x-correlation-id`, so minting one here and printing it in the run output
+ * turns that into a single-string search that returns exactly this sweep's
+ * lines, per-organisation warnings included.
+ */
+export interface SendRemindersRun extends SendRemindersResult {
+  correlationId: string;
+}
+
+/**
  * The send sweep (Slice 1.7). A thin durable timer, like the reconcile task —
  * ALL business logic lives in the API (plan §7.2) and this only calls it.
  *
@@ -33,22 +50,28 @@ export interface SendRemindersResult {
  * limit) rather than a task failure. Throwing would retry the whole sweep to
  * no purpose and bury the real signal in red task runs.
  */
-export async function runReminderSend(): Promise<SendRemindersResult> {
+export async function runReminderSend(): Promise<SendRemindersRun> {
   const env = loadEnv(workerEnvSchema);
   const baseUrl = env.API_BASE_URL.replace(/\/+$/, "");
+  const correlationId = randomUUID();
   const response = await fetch(`${baseUrl}/internal/reminders/send`, {
     method: "POST",
     headers: {
       "content-type": "application/json",
       "x-internal-secret": env.INTERNAL_API_SECRET,
+      "x-correlation-id": correlationId,
     },
     body: "{}",
   });
   if (!response.ok) {
-    // Status only — never the response body or headers (the secret must not leak).
-    throw new Error(`reminder send request failed with status ${response.status}`);
+    // Status and the reference only — never the response body or headers (the
+    // secret must not leak). The reference is what finds the API's account of
+    // the same failure, which is the half that says WHY.
+    throw new Error(
+      `reminder send request failed with status ${response.status} (reference ${correlationId})`,
+    );
   }
-  return (await response.json()) as SendRemindersResult;
+  return { ...((await response.json()) as SendRemindersResult), correlationId };
 }
 
 /**
