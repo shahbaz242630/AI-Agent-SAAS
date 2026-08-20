@@ -1,5 +1,6 @@
 import * as Sentry from "@sentry/nextjs";
 import { configuredOrigin, MISSING_ORIGIN_MESSAGE } from "./lib/public-origin";
+import { ownerForRoute } from "./lib/product-owner";
 
 export async function register() {
   if (process.env.NEXT_RUNTIME === "nodejs") {
@@ -31,6 +32,23 @@ function assertPublicOriginConfigured(): void {
   throw new Error(MISSING_ORIGIN_MESSAGE);
 }
 
-// Captures errors from Server Components, route handlers and middleware.
-// A no-op when Sentry was not initialised (empty DSN or tests).
-export const onRequestError = Sentry.captureRequestError;
+/**
+ * Captures errors from Server Components, route handlers and middleware.
+ * A no-op when Sentry was not initialised (empty DSN or tests).
+ *
+ * ⚠️ WRAPPED RATHER THAN HANDED STRAIGHT OVER, so the event carries the product
+ * (Slice 3.0c). `captureRequestError` forks the CURRENT scope, so a tag set on
+ * the scope around it survives onto the event — which is what makes "show me
+ * everything invoice follow-up broke this week" a filter rather than a reading
+ * exercise.
+ *
+ * `routePath` is preferred over `request.path`: it is the route template
+ * (`/app/clients/[customerId]/invoices`), so the tag cannot vary with a
+ * customer id and cannot accidentally carry one into Sentry.
+ */
+export const onRequestError: typeof Sentry.captureRequestError = (error, request, errorContext) => {
+  Sentry.withScope((scope) => {
+    scope.setTag("product", ownerForRoute(errorContext.routePath || request.path));
+    Sentry.captureRequestError(error, request, errorContext);
+  });
+};
