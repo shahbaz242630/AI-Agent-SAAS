@@ -1,7 +1,7 @@
 "use client";
 
 import { usePathname } from "next/navigation";
-import { showsAppChrome } from "@/lib/navigation";
+import { showsSidebar } from "@/lib/navigation";
 import { SignOutIcon } from "./nav-icons";
 import { SidebarBody, type SidebarIdentity } from "./sidebar-body";
 import { ACCOUNT_ITEM_CLASS } from "./user-menu";
@@ -36,7 +36,7 @@ export function AppSidebar({
   signOut: () => void;
 }) {
   const pathname = usePathname() ?? "/app";
-  if (!showsAppChrome(pathname)) return null;
+  if (!showsSidebar(pathname)) return null;
 
   return (
     <SidebarBody

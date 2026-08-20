@@ -111,8 +111,13 @@ export default async function AppHubPage() {
   const firstVisit = !unreadable && held.length === 0;
 
   return (
-    <main className="flex w-full max-w-[1080px] flex-1 flex-col gap-[26px] px-10 pt-8 pb-9">
-      <section className="flex w-full max-w-2xl flex-col gap-2">
+    /* ⚠️ CENTRED AND NARROW, BECAUSE THERE IS NO SIDEBAR TO BALANCE AGAINST
+       (founder, 2026-08-20). Every other signed-in screen is a working surface
+       pinned beside the nav; this one is a choice, and a choice pushed against
+       the left edge of a wide empty page reads as a page that failed to
+       finish loading. `mx-auto` is doing the work the sidebar used to. */
+    <main className="mx-auto flex w-full max-w-[860px] flex-1 flex-col gap-[26px] px-10 pt-10 pb-14">
+      <section className="flex w-full flex-col gap-2">
         <h1 className="font-display text-[29px] leading-tight font-semibold">
           {organisation.name}
         </h1>
@@ -134,7 +139,7 @@ export default async function AppHubPage() {
       </section>
 
       {yours.length > 0 && (
-        <section className="flex w-full max-w-2xl flex-col gap-4">
+        <section className="grid w-full gap-4 sm:grid-cols-2">
           {yours.map((key) => (
             <Link
               key={key}
@@ -149,7 +154,7 @@ export default async function AppHubPage() {
       )}
 
       {heldNotReady.length > 0 && (
-        <section className="flex w-full max-w-2xl flex-col gap-3">
+        <section className="flex w-full flex-col gap-3">
           <h2 className="text-[10.5px] font-bold tracking-[0.08em] text-muted-foreground uppercase">
             Switched on · still being built
           </h2>
@@ -174,7 +179,7 @@ export default async function AppHubPage() {
       )}
 
       {available.length > 0 && (
-        <section className="flex w-full max-w-2xl flex-col gap-3">
+        <section className="flex w-full flex-col gap-3">
           {/* ⚠️ NO HEADING ON THE FIRST VISIT. "Not switched on" is a useful
               label beside things you DO have; as the title of the only section
               on somebody's first screen it names the absence instead of the

@@ -46,9 +46,68 @@ const ICONS: Readonly<
 export const ACCOUNT_ITEM_CLASS =
   "flex w-full cursor-pointer items-center gap-2.5 rounded-[9px] px-2.5 py-2 text-[13px] font-medium text-sidebar-body hover:bg-sidebar-hover";
 
+/**
+ * Where this menu is mounted, which decides which way it opens and which half
+ * of the palette it wears.
+ *
+ * ⚠️ ONE PROP, TWO COHERENT PRESETS — not a pile of style overrides. The two
+ * placements differ in three ways at once (direction, alignment, palette), and
+ * any mix of them that is not one of these two is wrong: a dark panel on the
+ * light header is unreadable, and a downward menu at the foot of a full-height
+ * sidebar opens past the bottom of the window.
+ *
+ * `sidebar` is the original: pinned to the bottom of the dark sidebar, opening
+ * upwards where the space actually is. `header` is the chooser's top bar
+ * (founder, 2026-08-20) — light surface, opening downwards, right-aligned to
+ * the trigger because the trigger sits at the right-hand end of the bar.
+ */
+export type UserMenuPlacement = "sidebar" | "header";
+
+/** The dropdown panel itself. */
+const PANEL_CLASS: Record<UserMenuPlacement, string> = {
+  sidebar:
+    "absolute bottom-full left-0 mb-2 flex w-full flex-col gap-0.5 rounded-[var(--radius-control)] border border-sidebar-border bg-sidebar-panel p-1.5 shadow-[var(--shadow-panel)]",
+  header:
+    "absolute top-full right-0 z-20 mt-2 flex w-56 flex-col gap-0.5 rounded-[var(--radius-control)] border border-sidebar-border bg-sidebar-panel p-1.5 shadow-[var(--shadow-panel)]",
+};
+
+/**
+ * The trigger.
+ *
+ * ⚠️ THE PANEL STAYS DARK IN BOTH PLACEMENTS, AND ONLY THE TRIGGER CHANGES.
+ * Every row inside it wears `ACCOUNT_ITEM_CLASS`, whose colours are the
+ * sidebar's — restyling the panel for the light header would mean a second set
+ * of item classes, and `ACCOUNT_ITEM_CLASS` exists precisely because three
+ * items drifting apart looked like a mistake. A dark menu panel on a light bar
+ * is an ordinary pattern; three differently-coloured menus are not.
+ */
+const TRIGGER_CLASS: Record<UserMenuPlacement, string> = {
+  sidebar:
+    "flex w-full cursor-pointer items-center gap-2.5 rounded-[var(--radius-control)] bg-sidebar-hover p-2 text-left hover:bg-sidebar-active",
+  header:
+    "flex cursor-pointer items-center gap-2.5 rounded-[var(--radius-control)] border border-border bg-surface p-1.5 pr-2.5 text-left hover:bg-row-hover",
+};
+
+/** Name and email inside the trigger — dark sidebar versus light bar. */
+const TRIGGER_NAME_CLASS: Record<UserMenuPlacement, string> = {
+  sidebar: "truncate text-xs font-semibold text-sidebar-foreground",
+  header: "truncate text-xs font-semibold text-foreground",
+};
+
+const TRIGGER_EMAIL_CLASS: Record<UserMenuPlacement, string> = {
+  sidebar: "truncate text-[10.5px] text-sidebar-faint",
+  header: "truncate text-[10.5px] text-muted-foreground",
+};
+
+const CHEVRON_CLASS: Record<UserMenuPlacement, string> = {
+  sidebar: "shrink-0 text-sidebar-faint",
+  header: "shrink-0 text-muted-foreground",
+};
+
 export function UserMenu({
   user,
   signOutSlot,
+  placement = "sidebar",
 }: {
   user: { name: string; email: string; initials: string };
   /**
@@ -57,6 +116,9 @@ export function UserMenu({
    * in a plain test.
    */
   signOutSlot: React.ReactNode;
+  /** Defaults to the sidebar, so the twelve screens that already use it are
+   *  untouched by the chooser's arrival. */
+  placement?: UserMenuPlacement;
 }) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
@@ -92,11 +154,7 @@ export function UserMenu({
         role="menu"
         aria-label="Account"
         /* `hidden` and not an early return — see the note above the component. */
-        className={
-          open
-            ? "absolute bottom-full left-0 mb-2 flex w-full flex-col gap-0.5 rounded-[var(--radius-control)] border border-sidebar-border bg-sidebar-panel p-1.5 shadow-[var(--shadow-panel)]"
-            : "hidden"
-        }
+        className={open ? PANEL_CLASS[placement] : "hidden"}
       >
         {ACCOUNT_MENU_ITEMS.map((item) => {
           const Icon = ICONS[item.href];
@@ -130,7 +188,7 @@ export function UserMenu({
         aria-haspopup="menu"
         aria-expanded={open}
         aria-controls={menuId}
-        className="flex w-full cursor-pointer items-center gap-2.5 rounded-[var(--radius-control)] bg-sidebar-hover p-2 text-left hover:bg-sidebar-active"
+        className={TRIGGER_CLASS[placement]}
       >
         <span
           aria-hidden
@@ -139,12 +197,10 @@ export function UserMenu({
           {user.initials}
         </span>
         <span className="flex min-w-0 flex-1 flex-col">
-          <span className="truncate text-xs font-semibold text-sidebar-foreground">
-            {user.name}
-          </span>
-          <span className="truncate text-[10.5px] text-sidebar-faint">{user.email}</span>
+          <span className={TRIGGER_NAME_CLASS[placement]}>{user.name}</span>
+          <span className={TRIGGER_EMAIL_CLASS[placement]}>{user.email}</span>
         </span>
-        <ChevronIcon className={`shrink-0 text-sidebar-faint ${open ? "rotate-180" : ""}`} />
+        <ChevronIcon className={`${CHEVRON_CLASS[placement]} ${open ? "rotate-180" : ""}`} />
       </button>
     </div>
   );
