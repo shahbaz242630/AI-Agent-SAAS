@@ -162,3 +162,39 @@ export function showsAppChrome(pathname: string): boolean {
   const path = normalise(pathname);
   return !CHROME_FREE_PATHS.some((free) => path === free || path.startsWith(`${free}/`));
 }
+
+/**
+ * The chooser — `/app` itself.
+ *
+ * ⚠️ IT IS A DIFFERENT KIND OF SCREEN FROM EVERY OTHER SIGNED-IN ONE, and
+ * founder ruling 2026-08-20 makes that explicit: *"this page is like a page
+ * which drives traffic to product… we don't need to have a side bar… so this
+ * page only has cards to choose which feature"*. A workspace needs navigation
+ * down the side; a chooser needs nothing competing with the choice.
+ */
+export function isChooserPath(pathname: string): boolean {
+  return normalise(pathname) === "/app";
+}
+
+/**
+ * The sidebar: every signed-in screen EXCEPT the chooser and the onboarding
+ * flow. Two different reasons, deliberately kept in one predicate — the sidebar
+ * asks one question ("do I render?") and should not have to know why not.
+ */
+export function showsSidebar(pathname: string): boolean {
+  return showsAppChrome(pathname) && !isChooserPath(pathname);
+}
+
+/**
+ * The chooser's own top bar, which carries the account menu the sidebar would
+ * otherwise have carried.
+ *
+ * ⚠️ THE TWO ARE EXCLUSIVE AND EXHAUSTIVE ON PURPOSE. Settings, change password
+ * and sign out live in exactly one of these on any given screen. If both could
+ * be false on a screen that shows the shell, those three would be unreachable —
+ * `user-menu.tsx` already warns that it is the ONLY way into two of them, and a
+ * test below asserts the property rather than trusting the reading.
+ */
+export function showsChooserHeader(pathname: string): boolean {
+  return showsAppChrome(pathname) && isChooserPath(pathname);
+}

@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { NAV_ITEMS, isActiveSection, showsAppChrome } from "@/lib/navigation";
+import {
+  NAV_ITEMS,
+  isActiveSection,
+  isChooserPath,
+  showsAppChrome,
+  showsChooserHeader,
+  showsSidebar,
+} from "@/lib/navigation";
 
 /**
  * The app shell's navigation (Slice 1.9).
@@ -88,5 +95,59 @@ describe("app navigation", () => {
       }
       expect(showsAppChrome("/app/invoices/import")).toBe(true);
     });
+  });
+});
+
+describe("the chooser has its own chrome (founder, 2026-08-20)", () => {
+  /**
+   * ⚠️ THE PROPERTY, NOT THE CASES. Settings, Change password and Sign out live
+   * in the sidebar's account menu on every workspace screen and in the
+   * chooser's top bar on `/app`. If a signed-in path could ever show NEITHER,
+   * those three would be unreachable from it — `user-menu.tsx` says it is the
+   * only route to two of them, and that stops being a warning and becomes a
+   * trap once the sidebar is gone from a page.
+   *
+   * Asserted over every path the app can be on rather than the two we happened
+   * to think of.
+   */
+  it("shows exactly one of the sidebar and the chooser bar, on every path", () => {
+    const paths = [
+      "/app",
+      "/app/",
+      "/app/clients",
+      "/app/clients/abc/invoices",
+      "/app/invoice-chasing",
+      "/app/invoice-chasing/invoices/import",
+      "/app/settings/mailbox",
+      "/app/settings/reminders",
+      ...NAV_ITEMS.map((item) => item.href),
+    ];
+
+    for (const path of paths) {
+      const both = [showsSidebar(path), showsChooserHeader(path)].filter(Boolean).length;
+      expect(both, `${path} shows ${both} of the two account menus, not 1`).toBe(1);
+    }
+  });
+
+  /** Onboarding is the one place that legitimately shows neither — there is no
+   *  account menu to reach because there is not yet an account to manage. */
+  it("shows neither during onboarding, which is the whole point of that flow", () => {
+    for (const path of ["/app/onboarding", "/app/organisations/new"]) {
+      expect(showsSidebar(path)).toBe(false);
+      expect(showsChooserHeader(path)).toBe(false);
+    }
+  });
+
+  it("treats only /app itself as the chooser", () => {
+    expect(isChooserPath("/app")).toBe(true);
+    expect(isChooserPath("/app/")).toBe(true);
+    expect(isChooserPath("/app/clients")).toBe(false);
+    expect(isChooserPath("/app/invoice-chasing")).toBe(false);
+  });
+
+  it("keeps the sidebar off the chooser and on everything else", () => {
+    expect(showsSidebar("/app")).toBe(false);
+    expect(showsSidebar("/app/clients")).toBe(true);
+    expect(showsSidebar("/app/invoice-chasing")).toBe(true);
   });
 });

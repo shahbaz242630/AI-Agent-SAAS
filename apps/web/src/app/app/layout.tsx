@@ -3,6 +3,7 @@ import { displayNameFrom, initialsFrom, roleLabel } from "@/lib/identity";
 import { createClient } from "@/lib/supabase/server";
 import { signOut } from "./actions";
 import { AppSidebar } from "./app-sidebar";
+import { ChooserHeader } from "./chooser-header";
 import type { SidebarIdentity } from "./sidebar-body";
 
 /**
@@ -30,6 +31,13 @@ export default async function AppLayout({ children }: { children: React.ReactNod
 
   return (
     <div className="flex min-h-screen bg-background">
+      {/* ⚠️ EXACTLY ONE OF THESE TWO RENDERS ON ANY SIGNED-IN SCREEN, and both
+          decide for themselves from the path. The chooser has no sidebar
+          (founder, 2026-08-20), so it carries the account menu in a top bar
+          instead — and those are the only two homes Settings, Change password
+          and Sign out have anywhere in the product. `navigation.spec.ts`
+          asserts the exclusivity, because "one or the other" written in a
+          comment is how a screen ends up with neither. */}
       <AppSidebar identity={identity} heldModules={heldModules} signOut={signOut} />
       {/*
        * ⚠️ A `div`, NOT A `main`, AND THAT IS NOT A DETAIL. All twelve signed-in
@@ -44,7 +52,10 @@ export default async function AppLayout({ children }: { children: React.ReactNod
        * than the viewport and put a horizontal scrollbar on the PAGE instead of
        * inside the table's card.
        */}
-      <div className="flex min-w-0 flex-1 flex-col">{children}</div>
+      <div className="flex min-w-0 flex-1 flex-col">
+        <ChooserHeader identity={identity} signOut={signOut} />
+        {children}
+      </div>
     </div>
   );
 }
