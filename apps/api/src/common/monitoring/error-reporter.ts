@@ -18,8 +18,17 @@ export const ERROR_REPORTER = Symbol("ERROR_REPORTER");
  * the customer reads off their own screen.
  */
 export interface FaultContext {
-  /** Indexed and searchable. Short, low-noise values only — a product tag, a
-   *  correlation id; never a message or a stack. */
+  /**
+   * Indexed and searchable. Short values only — a product tag, a correlation
+   * id; never a message, a stack, or a URL with an id in it.
+   *
+   * ⚠️ `correlationId` IS ONE VALUE PER REQUEST, AND THAT IS A DELIBERATE
+   * TRADE. Sentry advises against high-cardinality tags, and at real volume
+   * this would be one to revisit — but the entire purpose of a reference number
+   * is that the string on a customer's screen finds the event, and in `extra`
+   * it cannot be searched for at all. At our volume the cost is nil and the
+   * alternative is a reference nobody can look up.
+   */
   tags?: Record<string, string>;
   /** Visible on the event, not searchable. Everything else. */
   extra?: Record<string, unknown>;
