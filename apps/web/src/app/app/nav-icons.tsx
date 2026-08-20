@@ -71,6 +71,23 @@ function ChasingIcon(props: IconProps) {
   );
 }
 
+/**
+ * An open envelope — enquiries arriving (Slice 3.1a).
+ *
+ * ⚠️ NOT THE PAPER PLANE. Chasing sends; enquiries arrive, and the two products
+ * sit three rows apart in the same sidebar. Reusing the plane would put the
+ * same mark beside "what Eva sent" and "who wrote to you", which is the one
+ * pair a glance most needs to tell apart.
+ */
+function EnquiriesIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M3 10.2L12 4l9 6.2V19a1.6 1.6 0 0 1-1.6 1.6H4.6A1.6 1.6 0 0 1 3 19z" />
+      <path d="M3 10.4l9 6 9-6" />
+    </Icon>
+  );
+}
+
 export function SettingsIcon(props: IconProps) {
   return (
     <Icon {...props}>
@@ -191,6 +208,10 @@ export const NAV_ICONS: Readonly<Record<string, (props: IconProps) => React.JSX.
   [moduleHref("email_credit_controller")]: HomeIcon,
   [moduleHref("email_credit_controller", "invoices")]: InvoicesIcon,
   [moduleHref("email_credit_controller", "chasing")]: ChasingIcon,
+  /* Slice 3.1a. Added WITH the screens rather than after them: the sidebar
+     went half-illustrated for five weeks last time an icon key was left
+     behind, and it is invisible because a missing key renders nothing. */
+  [moduleHref("lead_follow_up_email", "enquiries")]: EnquiriesIcon,
   "/app/clients": ClientsIcon,
   "/app/settings/reminders": SettingsIcon,
 };

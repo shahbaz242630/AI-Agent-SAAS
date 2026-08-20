@@ -1,12 +1,14 @@
 import { describe, expect, it } from "vitest";
 import {
   NAV_ITEMS,
+  PRODUCT_NAV,
   isActiveSection,
   isChooserPath,
   showsAppChrome,
   showsChooserHeader,
   showsSidebar,
 } from "@/lib/navigation";
+import { NAV_ICONS } from "@/app/app/nav-icons";
 
 /**
  * The app shell's navigation (Slice 1.9).
@@ -149,5 +151,40 @@ describe("the chooser has its own chrome (founder, 2026-08-20)", () => {
     expect(showsSidebar("/app")).toBe(false);
     expect(showsSidebar("/app/clients")).toBe(true);
     expect(showsSidebar("/app/invoice-chasing")).toBe(true);
+  });
+});
+
+/**
+ * ⚠️ EVERY NAV ITEM MUST HAVE AN ICON, AND THIS GUARD EXISTS BECAUSE THE GAP
+ * HAS NOW OPENED TWICE IN TWO DAYS.
+ *
+ * `NAV_ICONS` is keyed by href, and `sidebar-body.tsx` renders nothing at all
+ * when a key is missing — "a missing key renders no icon rather than throwing",
+ * which is safe in the sense that nothing crashes and unsafe in the sense that
+ * nobody finds out. On 2026-08-19 the products got their own URLs and the keys
+ * stayed on the old ones, so Invoices and Chasing lost their icons for five
+ * weeks. On 2026-08-20 the lead product shipped its screens and its nav item
+ * arrived with no key at all — the same hole, one day after fixing it, found by
+ * looking at production rather than by anything failing.
+ *
+ * An icon is not decoration here: without one the label starts where no other
+ * label starts, so the row reads as broken rather than as plain.
+ */
+describe("every nav item is illustrated", () => {
+  const everyItem = [...NAV_ITEMS, ...Object.values(PRODUCT_NAV).flatMap((items) => items ?? [])];
+
+  it("has an icon for each item, in both the platform nav and every product's", () => {
+    const missing = everyItem
+      .filter((item) => !NAV_ICONS[item.href])
+      .map((item) => `${item.label} (${item.href})`);
+
+    expect(missing, "add a key to NAV_ICONS for these").toEqual([]);
+  });
+
+  /** The foundation: if the lists ever come back empty the test above passes
+   *  while proving nothing, which is the failure mode it was written against. */
+  it("is looking at a nav that actually has items in it", () => {
+    expect(everyItem.length).toBeGreaterThanOrEqual(4);
+    expect(Object.keys(PRODUCT_NAV).length).toBeGreaterThanOrEqual(2);
   });
 });
