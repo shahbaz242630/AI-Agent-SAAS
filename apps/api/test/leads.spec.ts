@@ -206,6 +206,146 @@ describe("Leads: the record, the evidence and the refusal", () => {
     }).expect(400);
   });
 
+  /**
+   * ⚠️ THE WARNING THAT WAS MISSING WHEN THE FOUNDER WALKED IT (2026-08-20).
+   *
+   * Suppression is by VALUE, organisation-wide and cross-product, so a
+   * do-not-contact recorded on an enquiry also stops invoice chasers to the
+   * same address. The very first lead logged on production used an address that
+   * was already a client's billing contact, and NOTHING on the screen said so —
+   * it was caught by reading the database by hand.
+   *
+   * `alsoAffects` is what the screen now names before anybody commits. These
+   * tests pin that it predicts the action ACCURATELY: it must not miss a client
+   * who would really be silenced, and it must not invent one who would not.
+   */
+  describe("what else a do-not-contact would silence", () => {
+    const clientWithSharedEmail = async (email: string, phone?: string) => {
+      const customer = await owner.customer.create({
+        data: { organisationId: org.id, name: `Shared ${email}` },
+      });
+      await owner.contact.create({
+        data: {
+          organisationId: org.id,
+          customerId: customer.id,
+          name: "Billing",
+          email,
+          ...(phone ? { phone } : {}),
+        },
+      });
+      return customer;
+    };
+
+    it("names a client who shares the email address", async () => {
+      const customer = await clientWithSharedEmail("shared-books@example.com");
+      const created = await logLead(tokens.get("owner")!, {
+        source: "callback_request",
+        contactEmail: "shared-books@example.com",
+        receivedAt,
+      }).expect(201);
+
+      const detail = await request(app.getHttpServer())
+        .get(`/organisations/${org.id}/leads/${created.body.id}`)
+        .set("Authorization", `Bearer ${tokens.get("owner")!}`)
+        .expect(200);
+
+      expect(detail.body.alsoAffects).toHaveLength(1);
+      expect(detail.body.alsoAffects[0].customerId).toBe(customer.id);
+      expect(detail.body.alsoAffects[0].matchedOn).toEqual(["email"]);
+    });
+
+    /** The action case-folds the address, so the warning must too — otherwise
+     *  `Sam@Example.com` warns about nobody and silences somebody. */
+    it("matches an address that differs only in case, exactly as the action does", async () => {
+      const customer = await clientWithSharedEmail("mixed-case@example.com");
+      const created = await logLead(tokens.get("owner")!, {
+        source: "callback_request",
+        contactEmail: "Mixed-Case@Example.com",
+        receivedAt,
+      }).expect(201);
+
+      const detail = await request(app.getHttpServer())
+        .get(`/organisations/${org.id}/leads/${created.body.id}`)
+        .set("Authorization", `Bearer ${tokens.get("owner")!}`)
+        .expect(200);
+
+      expect(
+        detail.body.alsoAffects.map((row: { customerId: string }) => row.customerId),
+      ).toContain(customer.id);
+    });
+
+    it("says nobody when the enquiry is from someone new", async () => {
+      const created = await logLead(tokens.get("owner")!, {
+        source: "missed_call",
+        contactEmail: "a-total-stranger@example.com",
+        receivedAt,
+      }).expect(201);
+
+      const detail = await request(app.getHttpServer())
+        .get(`/organisations/${org.id}/leads/${created.body.id}`)
+        .set("Authorization", `Bearer ${tokens.get("owner")!}`)
+        .expect(200);
+
+      expect(detail.body.alsoAffects).toEqual([]);
+    });
+
+    /**
+     * ⚠️ THE DOCUMENTED BLIND SPOT, PINNED SO IT STAYS HONEST. Suppression
+     * stores the number as typed, so `07700 900999` and `+447700900999` are two
+     * different values to it. The action would NOT silence the client here, and
+     * so the warning must not claim it would. If somebody later makes the phone
+     * match cleverer, this test fails and they have to make the ACTION cleverer
+     * in the same commit — which is the only way the two stay in step.
+     */
+    it("does not claim a client is affected when the action would not silence them", async () => {
+      await clientWithSharedEmail("plus-format@example.com", "+447700900999");
+      const created = await logLead(tokens.get("owner")!, {
+        source: "missed_call",
+        contactPhone: "07700 900999",
+        receivedAt,
+      }).expect(201);
+
+      const detail = await request(app.getHttpServer())
+        .get(`/organisations/${org.id}/leads/${created.body.id}`)
+        .set("Authorization", `Bearer ${tokens.get("owner")!}`)
+        .expect(200);
+
+      expect(detail.body.alsoAffects).toEqual([]);
+    });
+
+    /** One row per client, however many of their people share the address. */
+    it("names a client once even with two contacts on the same address", async () => {
+      const customer = await owner.customer.create({
+        data: { organisationId: org.id, name: "Two People One Inbox" },
+      });
+      for (const name of ["Ann", "Bo"]) {
+        await owner.contact.create({
+          data: {
+            organisationId: org.id,
+            customerId: customer.id,
+            name,
+            email: "one-inbox@example.com",
+          },
+        });
+      }
+      const created = await logLead(tokens.get("owner")!, {
+        source: "callback_request",
+        contactEmail: "one-inbox@example.com",
+        receivedAt,
+      }).expect(201);
+
+      const detail = await request(app.getHttpServer())
+        .get(`/organisations/${org.id}/leads/${created.body.id}`)
+        .set("Authorization", `Bearer ${tokens.get("owner")!}`)
+        .expect(200);
+
+      const named = detail.body.alsoAffects.filter(
+        (row: { customerId: string }) => row.customerId === customer.id,
+      );
+      expect(named).toHaveLength(1);
+    });
+  });
+
   describe("who may do what", () => {
     it("lets sales and reception log an enquiry — it is their job", async () => {
       for (const role of ["sales", "reception", "owner"]) {

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  alsoAffectsLine,
   bookCountLine,
   contactLine,
   describeMoment,
@@ -10,6 +11,7 @@ import {
   leadStatusTone,
   nowForInput,
   wallClockToInstant,
+  type AlsoAffected,
 } from "@/products/lead-follow-up/lead-book";
 
 describe("lead vocabulary", () => {
@@ -224,5 +226,56 @@ describe("the date box's starting value", () => {
     const at = new Date("2026-08-20T13:30:00.000Z");
     const typed = nowForInput("Europe/London", at);
     expect(wallClockToInstant(typed, "Europe/London")).toBe("2026-08-20T13:30:00.000Z");
+  });
+});
+
+/**
+ * ⚠️ THE WARNING THAT WAS MISSING WHEN THE FOUNDER WALKED IT (2026-08-20).
+ * The first enquiry ever logged on production used an address that was already
+ * a client's billing contact. Recording a do-not-contact would have stopped
+ * invoice chasers to that client, and the screen said only "every channel,
+ * permanently" — abstract enough that nobody reads it as a consequence.
+ */
+describe("what a do-not-contact will also stop", () => {
+  const client = (customerName: string): AlsoAffected => ({
+    customerId: customerName,
+    customerName,
+    matchedOn: ["email"],
+  });
+
+  it("says nothing when nobody else is affected", () => {
+    expect(alsoAffectsLine([])).toBeNull();
+  });
+
+  /** ⚠️ THE NAME IS THE WHOLE VALUE. "1 other client affected" is the same
+   *  disclaimer wearing a number — it reports that a consequence exists
+   *  without saying what it is, which leaves the reader unable to decide. */
+  it("names the client rather than counting them", () => {
+    const line = alsoAffectsLine([client("Meridian Logistics Ltd")])!;
+    expect(line).toContain("Meridian Logistics Ltd");
+    expect(line).toContain("invoices");
+    expect(line).not.toMatch(/1 (other )?client/);
+  });
+
+  it("writes two and three the way a person would", () => {
+    expect(alsoAffectsLine([client("Acme"), client("Byrne")])!).toContain("Acme and Byrne");
+    expect(alsoAffectsLine([client("Acme"), client("Byrne"), client("Crowe")])!).toContain(
+      "Acme, Byrne and Crowe",
+    );
+  });
+
+  /** A paragraph of names is not read either, so past three it trims — but it
+   *  still NAMES three, so the reader knows the kind of thing at stake. */
+  it("trims a long list without hiding that it is long", () => {
+    const line = alsoAffectsLine(["Acme", "Byrne", "Crowe", "Dunn", "Ellis"].map(client))!;
+    expect(line).toContain("Acme, Byrne and Crowe");
+    expect(line).toContain("2 more");
+  });
+
+  it("agrees with itself about one client versus several", () => {
+    expect(alsoAffectsLine([client("Acme")])!).toContain("is on your client list");
+    expect(alsoAffectsLine([client("Acme"), client("Byrne")])!).toContain(
+      "are on your client list",
+    );
   });
 });

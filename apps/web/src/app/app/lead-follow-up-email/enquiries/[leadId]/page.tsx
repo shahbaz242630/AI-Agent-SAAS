@@ -6,6 +6,7 @@ import { can } from "@/lib/permissions";
 import { createClient } from "@/lib/supabase/server";
 import { BackChip, StatusPill } from "@/components/ui";
 import {
+  alsoAffectsLine,
   contactLine,
   describeMoment,
   evidenceSummary,
@@ -13,6 +14,7 @@ import {
   leadSourceLabel,
   leadStatusLabel,
   leadStatusTone,
+  type AlsoAffected,
 } from "@/products/lead-follow-up/lead-book";
 import { StopContactingControl } from "./stop-contacting-control";
 
@@ -52,6 +54,8 @@ interface LeadDetail {
   status: string;
   receivedAt: string;
   firstRespondedAt: string | null;
+  /** Clients who share this person's details and would be silenced too. */
+  alsoAffects: AlsoAffected[];
   evidence: {
     channel: string;
     externalId: string | null;
@@ -242,6 +246,22 @@ export default async function EnquiryDetailPage({
               This is immediate and permanent, and it applies to every way of reaching them, not
               just this enquiry. There is no undo.
             </p>
+            {/**
+             * ⚠️ THE NAMED CONSEQUENCE, AND THE REASON THIS PANEL WAS CHANGED.
+             * The sentence above is true and abstract. On the first enquiry ever
+             * logged on production the person was ALSO a client's billing
+             * contact, so this button would have stopped invoice chasers to a
+             * paying client — and nothing on screen said so. It was caught by
+             * reading the database by hand, which is not a plan.
+             *
+             * Named, not counted, and placed ABOVE the button rather than under
+             * it: a consequence discovered after the click is not a warning.
+             */}
+            {alsoAffectsLine(lead.alsoAffects) && (
+              <p className="rounded-[var(--radius-card)] border border-danger-border bg-danger-tint px-4 py-3 text-sm font-medium text-danger">
+                {alsoAffectsLine(lead.alsoAffects)}
+              </p>
+            )}
             {canWrite ? (
               <StopContactingControl
                 organisationId={organisation.id}
