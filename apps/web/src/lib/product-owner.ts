@@ -25,6 +25,15 @@ export const UNATTRIBUTED = "unattributed";
 const INVOICE_FOLLOW_UP: OwnerTag = "product:invoice-follow-up";
 
 /**
+ * The lead product's tag (Slice 3.1a). Same rule, and here the two words are
+ * further apart than ever: the URL says `lead-follow-up-email` because a
+ * customer buys email and call separately, while the code folder is
+ * `lead-follow-up` because both products will share it. Tagging by the slug
+ * would file the two halves of one codebase under two different names.
+ */
+const LEAD_FOLLOW_UP: OwnerTag = "product:lead-follow-up";
+
+/**
  * Route folders directly under `/app`, and who owns them.
  *
  * ⚠️ EVERY FOLDER UNDER `src/app/app/` MUST APPEAR HERE. The spec reads the
@@ -33,6 +42,7 @@ const INVOICE_FOLLOW_UP: OwnerTag = "product:invoice-follow-up";
  */
 const APP_SECTIONS: Record<string, OwnerTag> = {
   "invoice-chasing": INVOICE_FOLLOW_UP,
+  "lead-follow-up-email": LEAD_FOLLOW_UP,
   clients: "platform",
   settings: "platform",
   organisations: "platform",

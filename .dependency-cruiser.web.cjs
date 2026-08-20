@@ -28,8 +28,28 @@
  */
 const WEB = "^apps/web/src";
 
-/** The invoice product's route folder, from `moduleHref` in MODULE_CATALOGUE. */
-const PRODUCT_ROUTES = `${WEB}/app/app/invoice-chasing/`;
+/**
+ * Each product's route folder, and the code folder it alone may import.
+ *
+ * ⚠️ THE TWO NAMES DIFFER, AND THAT IS WHY THIS IS A MAP RATHER THAN A REGEX
+ * CAPTURE. The route segment comes from `MODULE_CATALOGUE.slug` — what a
+ * customer sees in the address bar — and the code folder is named after the
+ * domain. `invoice-chasing` is served by `invoice-follow-up`;
+ * `lead-follow-up-email` by `lead-follow-up`. A `$1` backreference of the kind
+ * the API's config uses would silently match nothing here, which is the worst
+ * possible outcome for a wall: it passes because it cannot see.
+ *
+ * ⚠️ ADDING A PRODUCT IS ONE LINE HERE. That was the promise made in
+ * `ARCHITECTURE-PLATFORM-AND-PRODUCTS.md` §4, and slice 3.1a is the first time
+ * anything has tested it. It held: one line, and both walls covered the new
+ * product.
+ */
+const PRODUCT_FOLDERS = {
+  "invoice-chasing": "invoice-follow-up",
+  "lead-follow-up-email": "lead-follow-up",
+};
+
+const PRODUCT_ROUTES = Object.keys(PRODUCT_FOLDERS).map((slug) => `${WEB}/app/app/${slug}/`);
 
 /**
  * ⚠️ KNOWN CROSSINGS, RECORDED RATHER THAN PRETENDED AWAY (2026-08-19).
@@ -110,23 +130,34 @@ module.exports = {
       severity: "error",
       from: {
         path: `${WEB}/app/`,
-        pathNot: [PRODUCT_ROUTES, ...DECLARED_CROSSINGS],
+        pathNot: [...PRODUCT_ROUTES, ...DECLARED_CROSSINGS],
       },
       to: { path: `${WEB}/products/` },
     },
-    {
-      name: "product-route-imports-other-product",
+    /**
+     * ⚠️ NO LONGER DORMANT — 2026-08-20. The previous version of this rule said
+     * "today there is one product route folder, so this rule is dormant — it
+     * becomes the load-bearing one the day lead follow-up gets its own
+     * screens." That day is today, and it arrived with the rule still hardcoded
+     * to `invoice-follow-up`: every lead screen would have been free to import
+     * invoice code and the wall would have said nothing.
+     *
+     * One rule per product now, because each route folder has a different
+     * permitted code folder. Both were proved by injecting a violation, not by
+     * reading the config.
+     */
+    ...Object.entries(PRODUCT_FOLDERS).map(([slug, folder]) => ({
+      name: `product-route-imports-other-product`,
       comment:
-        "A product's own screens may use that product's code and nothing from a sibling. Today " +
-        "there is one product route folder, so this rule is dormant — it becomes the load-bearing " +
-        "one the day lead follow-up gets its own screens.",
+        `A product's own screens may use that product's code and nothing from a sibling. ` +
+        `Screens under /app/${slug}/ may import products/${folder}/ and no other product.`,
       severity: "error",
-      from: { path: PRODUCT_ROUTES },
+      from: { path: `${WEB}/app/app/${slug}/` },
       to: {
         path: `${WEB}/products/([^/]+)/`,
-        pathNot: `${WEB}/products/invoice-follow-up/`,
+        pathNot: `${WEB}/products/${folder}/`,
       },
-    },
+    })),
     {
       name: "no-unresolvable",
       comment:

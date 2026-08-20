@@ -115,17 +115,63 @@ describe("ownerForRoute", () => {
  * web tags from this map; nothing else compares the two, and the day they
  * diverge every search silently returns half an answer.
  */
+/**
+ * ⚠️ A PRODUCT MAY LEGITIMATELY EXIST ON ONE SIDE ONLY, AND SLICE 3.1a IS THE
+ * FIRST CASE. This test used to demand identical sets, which is a stricter
+ * thing than the rule above actually needs — the rule is that the two apps must
+ * NAME a product the same, not that both must have reached it yet.
+ *
+ * `lead-follow-up` has web screens and no API folder, and that is the founder's
+ * own ruling rather than an oversight: the lead RECORD is PLATFORM, because
+ * three products will want the same lead and a person must not become three
+ * records with do-not-contact honoured on one of them. So the API's lead code
+ * sits in `platform/leads`. The product's own API code arrives at 3.1b, when
+ * Eva reads a mailbox — machinery that is genuinely this product's and nobody
+ * else's.
+ *
+ * ⚠️ NOTHING GOES ON THIS LIST WITHOUT A REASON WRITTEN BESIDE IT — the same
+ * rule `ALLOWED_CROSSINGS` carries in the API, for the same reason: an
+ * exception list that grows silently is how a boundary dies politely.
+ */
+const ONE_SIDED: Record<string, string> = {
+  "lead-follow-up":
+    "Web screens shipped in 3.1a; the API's lead record is platform (founder ruling) until 3.1b gives this product API code of its own.",
+};
+
 describe("The API and the web agree on what a product is called", () => {
-  it("has the same product folders on both sides", () => {
-    const folders = (root: string): string[] =>
-      readdirSync(root, { withFileTypes: true })
-        .filter((entry) => entry.isDirectory())
-        .map((entry) => entry.name)
-        .sort();
+  const folders = (root: string): string[] =>
+    readdirSync(root, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name)
+      .sort();
 
-    const web = folders(path.join(WEB_SRC, "products"));
-    const api = folders(path.resolve(__dirname, "../../api/src/products"));
+  const web = folders(path.join(WEB_SRC, "products"));
+  const api = folders(path.resolve(__dirname, "../../api/src/products"));
 
-    expect(web).toEqual(api);
+  /**
+   * The teeth. A folder on one side only is either declared above with its
+   * reason, or it is the divergence this file exists to catch — including the
+   * one that matters most, a rename on one side (`lead-followup` against
+   * `lead-follow-up`), which shows up here as TWO undeclared one-sided folders.
+   */
+  it("never has a product folder on one side that nobody has explained", () => {
+    const shared = new Set(web.filter((folder) => api.includes(folder)));
+    const oneSided = [...new Set([...web, ...api])].filter((f) => !shared.has(f)).sort();
+
+    expect(oneSided, "add these to ONE_SIDED with a reason, or fix the name").toEqual(
+      Object.keys(ONE_SIDED).sort(),
+    );
+  });
+
+  /**
+   * ⚠️ AND THE LIST MUST NOT OUTLIVE ITS REASON. A product declared one-sided
+   * that has since grown a folder on both sides should come OFF the list, or
+   * the next real divergence is masked by a stale entry.
+   */
+  it("drops a product from the list once both sides have it", () => {
+    for (const folder of Object.keys(ONE_SIDED)) {
+      const onBoth = web.includes(folder) && api.includes(folder);
+      expect(onBoth, `${folder} is on both sides now — remove it from ONE_SIDED`).toBe(false);
+    }
   });
 });

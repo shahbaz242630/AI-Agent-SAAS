@@ -67,6 +67,19 @@ export const PRODUCT_NAV: Partial<Record<ModuleKey, readonly NavItem[]>> = {
       description: "What Eva has actually sent",
     },
   ],
+  /**
+   * Slice 3.1a. One section, because the product has one screen — and no
+   * "Home" entry, because its root only redirects here until 3.1c gives it a
+   * dashboard worth the click. A nav item pointing at a redirect is a menu
+   * entry that lies about where it goes.
+   */
+  lead_follow_up_email: [
+    {
+      href: moduleHref("lead_follow_up_email", "enquiries"),
+      label: "Enquiries",
+      description: "Everyone who has got in touch",
+    },
+  ],
 };
 
 /**
