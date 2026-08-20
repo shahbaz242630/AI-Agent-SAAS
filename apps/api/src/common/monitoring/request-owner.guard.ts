@@ -41,10 +41,29 @@ export class RequestOwnerGuard implements CanActivate {
         context.getClass(),
       ]) ?? UNATTRIBUTED;
 
-    const request = context.switchToHttp().getRequest<OwnedRequest>();
+    const request = context
+      .switchToHttp()
+      .getRequest<OwnedRequest & { params?: Record<string, string> }>();
     // Read back by the exception filter, which has no ExecutionContext of its
     // own to ask and must answer for faults thrown anywhere in the request.
     request.evaOwner = owner;
+
+    /**
+     * ⚠️ WHO IT HAPPENED TO, AS A FIELD RATHER THAN BURIED IN THE URL — and
+     * this is NOT redundancy. Verified against production on 2026-08-20:
+     * Railway's log filter matches whole ATTRIBUTES and its text search does
+     * not reach inside them, so `--filter "<organisation id>"` returns nothing
+     * even though the id is sitting in `req.url` on every line. "Show me
+     * everything we did for this customer" is the first question a complaint
+     * asks, and without this field it has no answer.
+     *
+     * It is the organisation the request was FOR, taken from the route before
+     * anything has checked whether the caller may have it — a 403 in the same
+     * line is what says they may not. Route params are populated by the router
+     * before guards run; absent on routes that are not organisation-scoped, and
+     * left off rather than logged as empty.
+     */
+    const organisationId = request.params?.organisationId;
 
     /**
      * ⚠️ `assign` REACHES EVERY LINE THIS REQUEST WILL EMIT, past and future.
@@ -61,7 +80,10 @@ export class RequestOwnerGuard implements CanActivate {
      * here would mean the logging module was not wired at all, and a silent
      * catch would hide it for exactly as long as it took to matter.
      */
-    this.logger.assign({ product: owner });
+    this.logger.assign({
+      product: owner,
+      ...(organisationId ? { organisationId } : {}),
+    });
     return true;
   }
 }

@@ -139,6 +139,16 @@ class TaggedController {
   }
 }
 
+/** An organisation-scoped route, which is what almost every real one is. */
+@Controller("tagged/:organisationId/things")
+@OwnedBy("product:test-product")
+class ScopedController {
+  @Get()
+  list(): { ok: true } {
+    return { ok: true };
+  }
+}
+
 /** What a controller that forgot the decorator does. The wall above stops one
  *  reaching production; this pins down what would happen if it did. */
 @Controller("untagged")
@@ -184,7 +194,7 @@ describe("Attribution: the wiring, not the annotation", () => {
           assignResponse: true,
         }),
       ],
-      controllers: [TaggedController, UntaggedController],
+      controllers: [TaggedController, ScopedController, UntaggedController],
       providers: [
         { provide: APP_GUARD, useClass: RequestOwnerGuard },
         { provide: APP_FILTER, useClass: GlobalExceptionFilter },
@@ -215,6 +225,33 @@ describe("Attribution: the wiring, not the annotation", () => {
     // count, and take the error rate and the latency off the same line.
     expect(line.responseTime).toBeTypeOf("number");
     expect((line.res as { statusCode?: number }).statusCode).toBe(200);
+  });
+
+  /**
+   * ⚠️ NOT REDUNDANT WITH THE URL, AND PRODUCTION IS WHY. Verified against
+   * Railway on 2026-08-20: its log filter matches whole attributes and its text
+   * search does not reach inside them, so searching for an organisation id
+   * returns NOTHING even though the id is sitting in `req.url` on every line.
+   * "Everything we did for this customer" is the first question a complaint
+   * asks; this field is the only thing that answers it.
+   */
+  it("stamps the organisation, so one customer's lines can be found at all", async () => {
+    await request(app.getHttpServer())
+      .get("/tagged/7a2ef080-7bdc-417c-94dc-efd651a7349f/things")
+      .expect(200);
+
+    const line = await completionLine();
+    expect(line.organisationId).toBe("7a2ef080-7bdc-417c-94dc-efd651a7349f");
+    expect(line.product).toBe("product:test-product");
+  });
+
+  it("leaves the field off entirely when a route has no organisation", async () => {
+    await request(app.getHttpServer()).get("/tagged/ok").expect(200);
+
+    const line = await completionLine();
+    // Absent, not empty: an empty string would look like an organisation whose
+    // id we failed to read.
+    expect(line).not.toHaveProperty("organisationId");
   });
 
   it("reaches a line written deep in a service that knows nothing about products", async () => {
