@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { MODULE_CATALOGUE, MODULE_KEYS, type ModuleKey } from "@eva/types";
-import { hubGroups, hubSkipTarget } from "@/lib/product-hub";
+import { canStartProduct, hubGroups, hubSkipTarget, startableProducts } from "@/lib/product-hub";
 
 /**
  * ⚠️ THE GUARD FOR TWO DEFECTS THAT REACHED PRODUCTION (walked 2026-08-19,
@@ -94,5 +94,72 @@ describe("the hub's skip", () => {
     expect(hubSkipTarget([])).toBeNull();
     expect(hubSkipTarget([BUILT[0]!, UNBUILT[0]!])).toBeNull();
     expect(hubSkipTarget([...MODULE_KEYS])).toBeNull();
+  });
+});
+
+/**
+ * The first-run choice (2026-08-20).
+ *
+ * ⚠️ THE HUB SHIPPED IN 3.0 SOLVED THE SECOND VISIT, NOT THE FIRST. It routed
+ * people into products they already held. Somebody who has just signed up holds
+ * nothing, so the screen listed five products they could not click and pointed
+ * them at a settings page to do the one thing they came for. Founder,
+ * 2026-08-20: *"a page where they choose which feature they want… once they
+ * choose they land at that dashboard"*.
+ */
+describe("startableProducts", () => {
+  it("offers a product we have built and they do not hold", () => {
+    expect(startableProducts([])).toContain("email_credit_controller");
+  });
+
+  /** ⚠️ THE 2026-08-19 DEFECT, WEARING A BUTTON. Offering to switch on a
+   *  product with no screens behind it lands the customer in a bare 404 — the
+   *  thing PR #90 closed. Holding a product must never outrank building it. */
+  it("never offers a product we have not built", () => {
+    for (const key of startableProducts([])) {
+      expect(MODULE_CATALOGUE[key].live, `${key} is offered but is not built`).toBe(true);
+    }
+  });
+
+  it("does not offer something they already hold", () => {
+    expect(startableProducts(["email_credit_controller"])).not.toContain("email_credit_controller");
+  });
+
+  /** Every startable key is one the hub is already showing, so a button can
+   *  never appear beside a product the screen has not listed. */
+  it("only ever offers keys from the available group", () => {
+    const held: ModuleKey[] = ["voice_credit_controller"];
+    const { available } = hubGroups(held);
+    for (const key of startableProducts(held)) {
+      expect(available).toContain(key);
+    }
+  });
+});
+
+describe("canStartProduct", () => {
+  it("allows a real, built product", () => {
+    expect(canStartProduct("email_credit_controller")).toBe(true);
+  });
+
+  /**
+   * ⚠️ THE SCREEN IS NOT THE ENFORCEMENT. The button renders only for live
+   * products, but a form post is not a button — anybody can send one. Hiding a
+   * control has never been enforcement in this codebase.
+   */
+  it("refuses a real product we have not built yet", () => {
+    expect(canStartProduct("lead_follow_up_email")).toBe(false);
+  });
+
+  it("refuses a key that is not a product at all", () => {
+    expect(canStartProduct("email_credit_controller; drop table")).toBe(false);
+    expect(canStartProduct("")).toBe(false);
+  });
+
+  /** The rule that keeps the two in step: anything the screen offers, the
+   *  action must accept, and nothing else. */
+  it("accepts exactly what the hub offers", () => {
+    for (const key of MODULE_KEYS) {
+      expect(canStartProduct(key)).toBe(startableProducts([]).includes(key));
+    }
   });
 });

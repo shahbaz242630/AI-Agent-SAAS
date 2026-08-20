@@ -65,3 +65,36 @@ export function hubSkipTarget(held: readonly ModuleKey[]): ModuleKey | null {
   const only = held[0]!;
   return MODULE_CATALOGUE[only].live ? only : null;
 }
+
+/**
+ * The products somebody can switch on right now, from the hub itself.
+ *
+ * ⚠️ THIS IS THE FIRST-RUN SCREEN'S WHOLE JOB, AND IT WAS MISSING. Founder,
+ * 2026-08-20: *"a page after get started or once user logs in or sign up where
+ * they choose which feature they want… once they choose, they land at that
+ * dashboard"*. The hub shipped in 3.0 routed people INTO products they already
+ * held, which is the second visit. On the FIRST visit a customer holds nothing,
+ * so the screen listed five products they could not click and pointed them at a
+ * settings page to do the one thing they came to do.
+ *
+ * ⚠️ LIVE ONLY. The same rule as the sidebar and the skip: holding a product
+ * must never outrank our having built it. Offering to switch on something with
+ * no screens behind it is the 404 defect of 2026-08-19 wearing a button.
+ */
+export function startableProducts(held: readonly ModuleKey[]): readonly ModuleKey[] {
+  return hubGroups(held).available.filter((key) => MODULE_CATALOGUE[key].live);
+}
+
+/**
+ * Whether a key may be switched on from the hub at all.
+ *
+ * ⚠️ CHECKED IN THE SERVER ACTION, NOT ONLY IN THE SCREEN. The button is only
+ * rendered for live products, but a form post is not a button — anybody can
+ * send one. Hiding a control has never been enforcement in this codebase and is
+ * not enforcement here.
+ */
+export function canStartProduct(moduleKey: string): moduleKey is ModuleKey {
+  return (MODULE_KEYS as readonly string[]).includes(moduleKey)
+    ? MODULE_CATALOGUE[moduleKey as ModuleKey].live
+    : false;
+}

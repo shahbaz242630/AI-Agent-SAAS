@@ -3,8 +3,9 @@ import { redirect } from "next/navigation";
 import { MODULE_CATALOGUE, MODULE_KEYS, moduleHref, type ModuleKey } from "@eva/types";
 import { ApiError, apiFetch } from "@/lib/api";
 import { fetchOrganisations } from "@/lib/organisations";
-import { hubGroups, hubSkipTarget } from "@/lib/product-hub";
+import { hubGroups, hubSkipTarget, startableProducts } from "@/lib/product-hub";
 import { createClient } from "@/lib/supabase/server";
+import { StartProductButton } from "./start-product-button";
 
 /**
  * The hub — which of Eva's products you have, and a way into each.
@@ -85,6 +86,17 @@ export default async function AppHubPage() {
 
   /** Three groups, and every key in the catalogue lands in exactly one. */
   const { yours, heldNotReady, available } = hubGroups(held);
+  /** Of the ones they do not hold, those we have actually built. */
+  const startable = new Set(startableProducts(held));
+  /**
+   * ⚠️ THE FIRST VISIT IS A DIFFERENT SCREEN FROM EVERY LATER ONE. Somebody who
+   * holds nothing has not come to navigate — they have come to choose, and
+   * until 2026-08-20 this screen answered that by listing five products they
+   * could not click and sending them to a settings page. Founder: *"a page
+   * where they choose which feature they want… once they choose they land at
+   * that dashboard"*.
+   */
+  const firstVisit = !unreadable && held.length === 0;
 
   return (
     <main className="flex w-full max-w-[1080px] flex-1 flex-col gap-[26px] px-10 pt-8 pb-9">
@@ -103,7 +115,9 @@ export default async function AppHubPage() {
                    own bill. */
                 held.length > 0
                 ? "Everything you have switched on is still being built."
-                : "You haven't switched any products on yet."}
+                : /* An invitation, not an inventory of absence. This is the
+                     first sentence a new customer reads after signing up. */
+                  "Choose what you'd like Eva to do. You can switch on more later."}
         </p>
       </section>
 
@@ -149,9 +163,15 @@ export default async function AppHubPage() {
 
       {available.length > 0 && (
         <section className="flex w-full max-w-2xl flex-col gap-3">
-          <h2 className="text-[10.5px] font-bold tracking-[0.08em] text-muted-foreground uppercase">
-            Not switched on
-          </h2>
+          {/* ⚠️ NO HEADING ON THE FIRST VISIT. "Not switched on" is a useful
+              label beside things you DO have; as the title of the only section
+              on somebody's first screen it names the absence instead of the
+              offer. */}
+          {!firstVisit && (
+            <h2 className="text-[10.5px] font-bold tracking-[0.08em] text-muted-foreground uppercase">
+              Not switched on
+            </h2>
+          )}
           {/* Named rather than hidden, the sidebar's rule: somebody who cannot
               see a product cannot tell "not built" from "not bought", and both
               are things a customer may want to act on. */}
@@ -164,13 +184,23 @@ export default async function AppHubPage() {
                 <span className="text-sm font-semibold">{MODULE_CATALOGUE[key].name}</span>
                 <span className="text-sm text-muted-foreground">{MODULE_CATALOGUE[key].blurb}</span>
               </span>
-              <span className="text-xs font-semibold text-muted-foreground">
-                {MODULE_CATALOGUE[key].live ? "Off" : "Coming soon"}
-              </span>
+              {/* ⚠️ A CONTROL FOR WHAT EXISTS, A WORD FOR WHAT DOES NOT. The
+                  button appears only for products we have built — offering to
+                  switch on something with no screens behind it would land the
+                  customer in the same bare 404 that PR #90 closed. */}
+              {startable.has(key) ? (
+                <StartProductButton
+                  organisationId={organisation.id}
+                  moduleKey={key}
+                  productName={MODULE_CATALOGUE[key].name}
+                />
+              ) : (
+                <span className="text-xs font-semibold text-muted-foreground">Coming soon</span>
+              )}
             </div>
           ))}
           <p className="text-sm text-muted-foreground">
-            Switch a product on in{" "}
+            You can switch products on and off any time in{" "}
             <Link href="/app/settings/modules" className="font-medium text-link hover:underline">
               your products
             </Link>
