@@ -31,6 +31,7 @@ import {
   type ConfirmInvoiceDocumentResponse,
   type UploadedPdfFile,
 } from "./invoice-documents.service.js";
+import { OwnedBy } from "../../../common/monitoring/owner.js";
 
 /**
  * PDF invoice extraction (Slice 1.4; plan §3). Uploads use memory storage
@@ -39,6 +40,7 @@ import {
  * streams it for the review screen (and the 1.7 attachment source).
  */
 @Controller("organisations/:organisationId/invoice-documents")
+@OwnedBy("product:invoice-follow-up")
 export class InvoiceDocumentsController {
   constructor(private readonly invoiceDocumentsService: InvoiceDocumentsService) {}
 

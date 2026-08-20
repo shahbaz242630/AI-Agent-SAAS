@@ -15,6 +15,7 @@ import { describeFault } from "../logging/fault-description.js";
 import { stripCredentialQuery } from "../logging/log-redaction.js";
 import { ERROR_REPORTER, type ErrorReporter } from "../monitoring/error-reporter.js";
 import { FAULT_LOG, type FaultLog } from "../monitoring/fault-log.js";
+import { ownerOf } from "../monitoring/owner.js";
 
 /**
  * Sanitizes every error response leaving the API (BRD 14): stack traces and
@@ -82,6 +83,13 @@ export class GlobalExceptionFilter implements ExceptionFilter {
     // Not the raw URL: on the OAuth callback the query string carries a live
     // authorization code + state JWT (Slice 1.6, BRD 14).
     const path = stripCredentialQuery(request.url);
+    /**
+     * ⚠️ WHICH PRODUCT BROKE — the field that makes a fault answerable at five
+     * products instead of one. Stamped by `RequestOwnerGuard` before
+     * authentication runs, so a 401 on the invoice product is attributed too.
+     * `unattributed` when the request never reached a controller at all.
+     */
+    const product = ownerOf(request);
 
     /**
      * ⚠️ EVERY 5xx, NOT ONLY THE UNEXPECTED ONES. A 502 we threw on purpose
@@ -94,6 +102,7 @@ export class GlobalExceptionFilter implements ExceptionFilter {
     if (fault || status >= 500) {
       this.faultLog?.recordFault({
         correlationId,
+        product,
         method: request.method,
         path,
         statusCode: status,
@@ -113,7 +122,16 @@ export class GlobalExceptionFilter implements ExceptionFilter {
     }
 
     if (fault || status >= 500) {
-      this.errorReporter?.captureException(exception, { correlationId, path });
+      /**
+       * ⚠️ TAGS, NOT `extra`. These two are what somebody searches BY — "every
+       * fault in invoice follow-up this week", and the reference number a
+       * customer read off their own error screen. In `extra`, where both used
+       * to be, neither can be searched for at all.
+       */
+      this.errorReporter?.captureException(exception, {
+        tags: { product, correlationId },
+        extra: { path },
+      });
     }
 
     // A StructuredHttpException's body is deliberate — a machine-readable code

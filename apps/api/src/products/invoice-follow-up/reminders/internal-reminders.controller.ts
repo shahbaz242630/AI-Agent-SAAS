@@ -5,6 +5,7 @@ import { InternalSecretGuard } from "../../../platform/authentication/internal-s
 import { RemindersService, type ReconcileResult } from "./reminders.service.js";
 // eslint-disable-next-line @typescript-eslint/consistent-type-imports
 import { ReminderSenderService, type SendRemindersResult } from "./reminder-sender.service.js";
+import { OwnedBy } from "../../../common/monitoring/owner.js";
 
 /**
  * Internal service-to-service endpoints (Slice 1.5, plan §7.8). @Public()
@@ -13,6 +14,7 @@ import { ReminderSenderService, type SendRemindersResult } from "./reminder-send
  * Trigger.dev daily sweep — never by the browser.
  */
 @Controller("internal/reminders")
+@OwnedBy("product:invoice-follow-up")
 @UseGuards(InternalSecretGuard)
 export class InternalRemindersController {
   constructor(

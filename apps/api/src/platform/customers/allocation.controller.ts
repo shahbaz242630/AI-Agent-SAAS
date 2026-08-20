@@ -5,6 +5,7 @@ import { ZodValidationPipe } from "../../common/validation/zod-validation.pipe.j
 import { CurrentAuthUser, type AuthUser } from "../authentication/current-auth-user.decorator.js";
 // eslint-disable-next-line @typescript-eslint/consistent-type-imports
 import { AllocationService } from "./allocation.service.js";
+import { OwnedBy } from "../../common/monitoring/owner.js";
 
 /**
  * Client allocation across mailbox seats (slice 1.6b).
@@ -18,6 +19,7 @@ import { AllocationService } from "./allocation.service.js";
  * break the screen.
  */
 @Controller("organisations/:organisationId/customers/allocation")
+@OwnedBy("platform")
 export class AllocationController {
   constructor(private readonly allocationService: AllocationService) {}
 

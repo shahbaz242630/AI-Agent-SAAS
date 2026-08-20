@@ -4,6 +4,7 @@ import { ZodValidationPipe } from "../../common/validation/zod-validation.pipe.j
 import { Public } from "../../platform/authentication/public.decorator.js";
 // eslint-disable-next-line @typescript-eslint/consistent-type-imports
 import { MailboxesService } from "./mailboxes.service.js";
+import { OwnedBy } from "../../common/monitoring/owner.js";
 
 /**
  * Microsoft OAuth redirect target (Slice 1.6, ruling 4). @Public: the
@@ -13,6 +14,7 @@ import { MailboxesService } from "./mailboxes.service.js";
  * entirely (app.module autoLogging.ignore).
  */
 @Controller("integrations/microsoft")
+@OwnedBy("capability:mailbox")
 export class MicrosoftOAuthController {
   constructor(private readonly mailboxesService: MailboxesService) {}
 

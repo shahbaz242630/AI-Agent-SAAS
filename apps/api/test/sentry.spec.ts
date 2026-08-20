@@ -73,13 +73,31 @@ describe("initSentry (BRD 14)", () => {
 });
 
 describe("sentryErrorReporter", () => {
-  it("forwards captured exceptions with context to Sentry", () => {
+  /**
+   * ⚠️ THE SPLIT IS THE POINT. Sentry indexes tags and does not index `extra`,
+   * so a value in the wrong one is a value nobody can search for. Until
+   * 2026-08-20 everything went to `extra`, including the reference number the
+   * customer reads off their own error screen.
+   */
+  it("forwards tags as tags and extra as extra", () => {
     const error = new Error("boom");
 
-    sentryErrorReporter.captureException(error, { correlationId: "corr-1" });
+    sentryErrorReporter.captureException(error, {
+      tags: { product: "product:invoice-follow-up", correlationId: "corr-1" },
+      extra: { path: "/organisations/1/invoices" },
+    });
 
     expect(Sentry.captureException).toHaveBeenCalledWith(error, {
-      extra: { correlationId: "corr-1" },
+      tags: { product: "product:invoice-follow-up", correlationId: "corr-1" },
+      extra: { path: "/organisations/1/invoices" },
     });
+  });
+
+  it("passes no hint at all when there is no context, rather than an empty one", () => {
+    const error = new Error("boom");
+
+    sentryErrorReporter.captureException(error);
+
+    expect(Sentry.captureException).toHaveBeenCalledWith(error);
   });
 });

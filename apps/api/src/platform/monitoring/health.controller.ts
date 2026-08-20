@@ -6,9 +6,11 @@ import { Public } from "../authentication/public.decorator.js";
 // which requires the class reference at runtime (not a type-only import).
 // eslint-disable-next-line @typescript-eslint/consistent-type-imports
 import { HealthService } from "./health.service.js";
+import { OwnedBy } from "../../common/monitoring/owner.js";
 
 @Public()
 @Controller("health")
+@OwnedBy("platform")
 export class HealthController {
   constructor(private readonly healthService: HealthService) {}
 

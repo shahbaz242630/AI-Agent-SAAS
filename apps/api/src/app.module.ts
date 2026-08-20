@@ -19,6 +19,7 @@ import { UsersModule } from "./platform/users/users.module.js";
 import { LOG_REDACT_PATHS, serializeRequest } from "./common/logging/log-redaction.js";
 import { GlobalExceptionFilter } from "./common/filters/global-exception.filter.js";
 import { ERROR_REPORTER } from "./common/monitoring/error-reporter.js";
+import { RequestOwnerGuard } from "./common/monitoring/request-owner.guard.js";
 import { FAULT_LOG, type FaultLog } from "./common/monitoring/fault-log.js";
 import { sentryErrorReporter } from "./common/monitoring/sentry.js";
 
@@ -62,11 +63,30 @@ import { sentryErrorReporter } from "./common/monitoring/sentry.js";
         },
         ...(process.env.NODE_ENV === "development" ? { transport: { target: "pino-pretty" } } : {}),
       },
+      /**
+       * ⚠️ THIS IS WHAT PUTS `product` ON THE COMPLETION LINE, and that line is
+       * the per-product metric. Without it, `PinoLogger.assign` reaches every
+       * line the request emits EXCEPT pino-http's own `request completed` —
+       * the only one carrying `responseTime` and `statusCode`. Requests per
+       * product, error rate per product and latency per product are all that
+       * line, grouped; leaving it untagged would mean building a metrics
+       * service to recover what we were already writing.
+       */
+      assignResponse: true,
     }),
     MonitoringModule,
   ],
   providers: [
     { provide: APP_FILTER, useClass: GlobalExceptionFilter },
+    /**
+     * ⚠️ FIRST, AND THE ORDER IS THE FEATURE. Global guards run in the order
+     * they are registered here, so this one tags the request before the rate
+     * limiter can reject it and before authentication can refuse it — which
+     * means a 429 or a 401 still says which product the customer was trying to
+     * use. Registered after this line, it would only ever label requests that
+     * had already succeeded at getting in.
+     */
+    { provide: APP_GUARD, useClass: RequestOwnerGuard },
     { provide: APP_GUARD, useClass: ThrottlerGuard },
     { provide: ERROR_REPORTER, useValue: sentryErrorReporter },
     /**

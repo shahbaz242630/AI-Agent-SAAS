@@ -7,6 +7,7 @@ import {
 } from "../../../platform/authentication/current-auth-user.decorator.js";
 // eslint-disable-next-line @typescript-eslint/consistent-type-imports
 import { InvoicesService, type InvoiceBook, type InvoiceSummary } from "./invoices.service.js";
+import { OwnedBy } from "../../../common/monitoring/owner.js";
 
 /**
  * The organisation's whole book (slice 1.6c, task 9 — the founder's one table).
@@ -19,6 +20,7 @@ import { InvoicesService, type InvoiceBook, type InvoiceSummary } from "./invoic
  * main screen.
  */
 @Controller("organisations/:organisationId/invoices")
+@OwnedBy("product:invoice-follow-up")
 export class OrganisationInvoicesController {
   constructor(private readonly invoicesService: InvoicesService) {}
 
