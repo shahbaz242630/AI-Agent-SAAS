@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
+import { moduleHref } from "@eva/types";
 import { ApiError, apiFetch } from "@/lib/api";
 import {
   invoiceActionSuccess,
@@ -11,6 +12,19 @@ import {
 import { formatMoney, parseAmountInput } from "@/lib/money";
 import { humanRefusal, type WriteAction } from "@/lib/permissions";
 import { createClient } from "@/lib/supabase/server";
+
+/**
+ * The book's address, built from the catalogue rather than typed out.
+ *
+ * ⚠️ THE REFRESHES BELOW NAMED A PATH THAT IS NOT A ROUTE. Written by hand as
+ * `/app/invoices`, they stopped matching anything when the products got their
+ * own URLs. What is certain is that they cleared nothing: there is no cache
+ * entry under an address Next does not serve. What a customer actually saw is
+ * NOT established — the book is server-rendered on demand, so how stale it
+ * looked depends on the client router's cache, and nobody has reproduced it.
+ * Stated this way on purpose: the defect is provable, the symptom is not.
+ */
+const BOOK = moduleHref("email_credit_controller", "invoices");
 
 /**
  * Invoice actions (slice 1.6c, task 3).
@@ -198,7 +212,7 @@ export async function createInvoice(
   // org-wide book. Revalidating only the one the click came from leaves the
   // other showing a status that is no longer true.
   revalidatePath(`/app/clients/${customerId}/invoices`);
-  revalidatePath("/app/invoices");
+  revalidatePath(BOOK);
   /**
    * Saying WHICH state it landed in matters: "active" means Eva starts
    * chasing, and that is not something to discover later.
@@ -287,7 +301,7 @@ export async function updateInvoice(
   // org-wide book. Revalidating only the one the click came from leaves the
   // other showing a status that is no longer true.
   revalidatePath(`/app/clients/${customerId}/invoices`);
-  revalidatePath("/app/invoices");
+  revalidatePath(BOOK);
   return { success: `Invoice ${values.invoiceNumber} saved. It is still a draft.` };
 }
 
@@ -362,7 +376,7 @@ export async function recordPayment(
   // org-wide book. Revalidating only the one the click came from leaves the
   // other showing a status that is no longer true.
   revalidatePath(`/app/clients/${customerId}/invoices`);
-  revalidatePath("/app/invoices");
+  revalidatePath(BOOK);
 
   /**
    * ⚠️ THE OUTCOME IS DESCRIBED FROM THE API'S ANSWER, not from what was sent.
@@ -458,7 +472,7 @@ export async function runInvoiceAction(
   // org-wide book. Revalidating only the one the click came from leaves the
   // other showing a status that is no longer true.
   revalidatePath(`/app/clients/${customerId}/invoices`);
-  revalidatePath("/app/invoices");
+  revalidatePath(BOOK);
   return {
     success: invoiceActionSuccess(action, invoiceNumber || "That invoice", { chaseBlockedReason }),
   };
@@ -545,7 +559,7 @@ export async function updateContact(
   // Both screens show this person, and the book shows their address in its own
   // column now — leaving either stale shows an address that was just corrected.
   revalidatePath(`/app/clients/${customerId}/invoices`);
-  revalidatePath("/app/invoices");
+  revalidatePath(BOOK);
   return {
     success:
       values.email.length > 0

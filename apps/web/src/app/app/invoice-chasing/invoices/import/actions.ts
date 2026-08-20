@@ -4,8 +4,23 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { ApiError, apiFetch } from "@/lib/api";
 import { humanRefusal } from "@/lib/permissions";
+import { moduleHref } from "@eva/types";
 import { MAX_UPLOAD_BYTES } from "@/products/invoice-follow-up/import-messages";
 import { createClient } from "@/lib/supabase/server";
+
+/**
+ * Where the upload flow lives.
+ *
+ * ⚠️ THIS FLOW WAS BROKEN END TO END (found 2026-08-20). Uploading a
+ * spreadsheet succeeded, and then the redirect that shows you what was read
+ * landed on a 404 — so the rows were staged in the database with no way
+ * OFFERED to reach, confirm or cancel them; the real address still worked if
+ * you knew to type it. Cancelling had the same fault. The addresses
+ * were written out by hand and stayed behind when the products got their own
+ * URLs.
+ */
+const BOOK = moduleHref("email_credit_controller", "invoices");
+const IMPORT = moduleHref("email_credit_controller", "invoices/import");
 
 /**
  * Uploading a book (slice 1.6c — the founder's upload → preview → confirm).
@@ -93,7 +108,7 @@ export async function uploadImport(
 
   // Outside the try: `redirect` works by throwing, and catching it here would
   // turn a successful upload into "something went wrong".
-  redirect(`/app/invoices/import/${importId}`);
+  redirect(`${IMPORT}/${importId}`);
 }
 
 /** Turn the staged rows into draft invoices. */
@@ -122,8 +137,8 @@ export async function confirmImport(
   }
 
   // Both: the book now has new rows, and this page becomes the report.
-  revalidatePath("/app/invoices");
-  revalidatePath(`/app/invoices/import/${importId}`);
+  revalidatePath(BOOK);
+  revalidatePath(`${IMPORT}/${importId}`);
   return { success: "Imported." };
 }
 
@@ -158,5 +173,5 @@ export async function cancelImport(
     };
   }
 
-  redirect("/app/invoices/import");
+  redirect(IMPORT);
 }

@@ -2,10 +2,24 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
+import { moduleHref } from "@eva/types";
 import { ApiError, apiFetch } from "@/lib/api";
 import { normalisePhoneInput, parseAmountInput } from "@/lib/money";
 import { humanRefusal } from "@/lib/permissions";
 import { createClient } from "@/lib/supabase/server";
+
+/**
+ * The book's address, built from the catalogue rather than typed out.
+ *
+ * ⚠️ THE REFRESHES BELOW NAMED A PATH THAT IS NOT A ROUTE. Written by hand as
+ * `/app/invoices`, they stopped matching anything when the products got their
+ * own URLs. What is certain is that they cleared nothing: there is no cache
+ * entry under an address Next does not serve. What a customer actually saw is
+ * NOT established — the book is server-rendered on demand, so how stale it
+ * looked depends on the client router's cache, and nobody has reproduced it.
+ * Stated this way on purpose: the defect is provable, the symptom is not.
+ */
+const BOOK = moduleHref("email_credit_controller", "invoices");
 
 /**
  * Adding a row to the book by typing it (slice 1.6c).
@@ -140,7 +154,7 @@ export async function addBookRow(
     };
   }
 
-  revalidatePath("/app/invoices");
+  revalidatePath(BOOK);
   return {
     success:
       values.status === "active"

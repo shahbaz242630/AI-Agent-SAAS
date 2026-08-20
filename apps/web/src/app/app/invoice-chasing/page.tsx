@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
-import type { ReminderActivityDto } from "@eva/types";
+import { moduleHref, type ReminderActivityDto } from "@eva/types";
 import { AlertCard, EmptyState, GhostLink, PrimaryLink, SectionHeading } from "@/components/ui";
 import { ApiError, apiFetch } from "@/lib/api";
 import {
@@ -14,6 +14,19 @@ import { createClient } from "@/lib/supabase/server";
 import { greeting, todayLabel } from "@/lib/today";
 import { OwedPanel } from "./owed-panel";
 import { WeekPanel } from "./week-panel";
+
+/**
+ * This product's own screens, built from the catalogue rather than typed out.
+ *
+ * ⚠️ ALL FOUR OF THE LINKS BELOW WERE DEAD (found 2026-08-20). This screen is
+ * the first thing a customer sees inside Invoice Chasing, and its empty state —
+ * the one a brand-new account lands on — offered "Add your first invoice" and
+ * "Upload a spreadsheet" pointing at addresses that stopped existing when the
+ * products got their own URLs. A new customer's first two clicks were 404s.
+ */
+const BOOK = moduleHref("email_credit_controller", "invoices");
+const IMPORT = moduleHref("email_credit_controller", "invoices/import");
+const CHASING = moduleHref("email_credit_controller", "chasing");
 
 /**
  * Home (Slice 1.9; redressed 2026-08-09).
@@ -176,7 +189,7 @@ export default async function AppHomePage() {
           {...(overdueCount !== null && overdueCount > 0
             ? {
                 action: {
-                  href: "/app/invoices?status=overdue",
+                  href: `${BOOK}?status=overdue`,
                   label:
                     overdueCount === 1
                       ? "1 invoice is overdue"
@@ -196,8 +209,8 @@ export default async function AppHomePage() {
             headline="Your book is empty."
             detail="Add an invoice or upload a spreadsheet, and Eva starts chasing whatever is left on it — on the schedule you set."
           >
-            <PrimaryLink href="/app/invoices">Add your first invoice</PrimaryLink>
-            <GhostLink href="/app/invoices/import">Upload a spreadsheet</GhostLink>
+            <PrimaryLink href={BOOK}>Add your first invoice</PrimaryLink>
+            <GhostLink href={IMPORT}>Upload a spreadsheet</GhostLink>
           </EmptyState>
         ) : (
           <OwedPanel rows={rows} />
@@ -208,7 +221,7 @@ export default async function AppHomePage() {
         <section className="flex flex-col gap-2.5">
           <SectionHeading
             title="Eva this week"
-            action={{ href: "/app/reminders", label: "See everything Eva sent" }}
+            action={{ href: CHASING, label: "See everything Eva sent" }}
           />
           <WeekPanel activity={activity} />
         </section>

@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
+import { moduleHref } from "@eva/types";
 import { ApiError, apiFetch } from "@/lib/api";
 import { humanRefusal } from "@/lib/permissions";
 import {
@@ -11,6 +12,14 @@ import {
   type OffsetDirection,
 } from "@/products/invoice-follow-up/reminder-sequence";
 import { createClient } from "@/lib/supabase/server";
+
+/**
+ * Same defect, other screen: this was `/app/reminders`, which has not been a
+ * route since the products got their own URLs — so the refresh after a
+ * schedule change cleared nothing. As above, the miss is certain and the
+ * symptom a customer would notice is not something anyone has reproduced.
+ */
+const CHASING = moduleHref("email_credit_controller", "chasing");
 
 /**
  * Reminder timing settings (Slice 1.8; founder ruling 2026-08-08).
@@ -112,7 +121,7 @@ export async function updateReminderStep(
    * recomputed.
    */
   revalidatePath("/app/settings/reminders");
-  revalidatePath("/app/reminders");
+  revalidatePath(CHASING);
 
   return {
     stepId,

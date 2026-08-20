@@ -9,6 +9,8 @@
  * and a screen reader announcing "Home, image, Home" is worse than silence.
  */
 
+import { moduleHref } from "@eva/types";
+
 type IconProps = { className?: string | undefined };
 
 function Icon({ className, children }: IconProps & { children: React.ReactNode }) {
@@ -166,11 +168,29 @@ export function PasswordIcon() {
  * Keyed by href so the icon and the nav item cannot drift apart — a positional
  * array would silently shift every icon by one the day a section is inserted.
  * A missing key renders no icon rather than throwing.
+ *
+ * ⚠️ KEYED BY HREF IS ONLY DRIFT-PROOF IF BOTH SIDES BUILD THE HREF THE SAME
+ * WAY, AND FOR FIVE WEEKS THEY DID NOT. `PRODUCT_NAV` builds its hrefs with
+ * `moduleHref`; these keys were typed out as `/app/invoices` and
+ * `/app/reminders`. When the products got their own URLs the nav moved and the
+ * keys did not, so Invoices and Chasing lost their icons — and because a
+ * missing key renders nothing rather than throwing, the failure the comment
+ * above describes as safe is exactly what hid it. Nothing failed; the sidebar
+ * just quietly went half-illustrated.
+ *
+ * Computed keys are the fix: there is now one source for the segment, and a
+ * renamed product moves the nav item and its icon together.
  */
 export const NAV_ICONS: Readonly<Record<string, (props: IconProps) => React.JSX.Element>> = {
   "/app": HomeIcon,
-  "/app/invoices": InvoicesIcon,
+  /* ⚠️ A PRODUCT'S OWN HOME HAD NO ICON AT ALL, and unlike the two above that
+     is not the route move — `PRODUCT_NAV` has always built a Home item and
+     this map has never had a key for it. Left alone it is one unillustrated
+     row sitting above four illustrated ones, with its label starting where no
+     other label starts. Founder: say if you would rather it stayed bare. */
+  [moduleHref("email_credit_controller")]: HomeIcon,
+  [moduleHref("email_credit_controller", "invoices")]: InvoicesIcon,
+  [moduleHref("email_credit_controller", "chasing")]: ChasingIcon,
   "/app/clients": ClientsIcon,
-  "/app/reminders": ChasingIcon,
   "/app/settings/reminders": SettingsIcon,
 };
