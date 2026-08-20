@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import { moduleHref } from "@eva/types";
 import { ApiError, apiFetch } from "@/lib/api";
 import { fetchOrganisations } from "@/lib/organisations";
 import {
@@ -34,6 +35,19 @@ import { BookRows, type BookRow } from "./book-rows";
  */
 
 const PAGE_SIZE = 50;
+
+/**
+ * This screen's own address, and the upload flow's.
+ *
+ * ⚠️ THE FILTERS, THE SEARCH BOX AND THE PAGING ALL POINTED AT A 404 (found
+ * 2026-08-20). `linkTo` below builds every one of them, and it built them onto
+ * `/app/invoices` — the address this screen had before the products got their
+ * own URLs. The book itself loaded, because the sidebar's link is built from
+ * the catalogue; every control ON the book was dead. That is the worst shape
+ * for a defect to take, because the screen looks fine until you use it.
+ */
+const BOOK = moduleHref("email_credit_controller", "invoices");
+const IMPORT = moduleHref("email_credit_controller", "invoices/import");
 
 interface OrganisationSummary {
   id: string;
@@ -208,7 +222,7 @@ export default async function InvoiceBookPage({
       }
     }
     const qs = next.toString();
-    return qs ? `/app/invoices?${qs}` : "/app/invoices";
+    return qs ? `${BOOK}?${qs}` : BOOK;
   };
 
   /**
@@ -246,7 +260,7 @@ export default async function InvoiceBookPage({
           })}
           clients={clients}
         >
-          {canImport && <GhostLink href="/app/invoices/import">Upload a spreadsheet</GhostLink>}
+          {canImport && <GhostLink href={IMPORT}>Upload a spreadsheet</GhostLink>}
         </AddRowForm>
       ) : (
         /* ⚠️ UPLOADING SURVIVES LOSING THE OTHER HALF. `imports:write` and
@@ -256,7 +270,7 @@ export default async function InvoiceBookPage({
         <div className="flex w-full max-w-6xl flex-col gap-3">
           {canImport && (
             <div className="flex flex-wrap items-center gap-2">
-              <GhostLink href="/app/invoices/import">Upload a spreadsheet</GhostLink>
+              <GhostLink href={IMPORT}>Upload a spreadsheet</GhostLink>
             </div>
           )}
           <p className="w-full rounded-[var(--radius-card)] border border-border bg-surface px-6 py-3 text-sm text-muted-foreground">
@@ -322,7 +336,7 @@ export default async function InvoiceBookPage({
             </Link>
           ))}
           {/* A plain GET form, so a filtered book is a URL somebody can keep. */}
-          <form action="/app/invoices" method="get" className="flex items-center gap-2">
+          <form action={BOOK} method="get" className="flex items-center gap-2">
             {status && <input type="hidden" name="status" value={status} />}
             {currency && <input type="hidden" name="currency" value={currency} />}
             <input

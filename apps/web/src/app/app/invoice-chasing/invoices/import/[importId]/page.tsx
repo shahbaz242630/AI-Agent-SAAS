@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import { moduleHref } from "@eva/types";
 import { ApiError, apiFetch } from "@/lib/api";
 import { fetchOrganisations } from "@/lib/organisations";
 import {
@@ -13,6 +14,15 @@ import { can, readOnlyImportsLine } from "@/lib/permissions";
 import { createClient } from "@/lib/supabase/server";
 import { BackChip } from "@/components/ui";
 import { ConfirmImportControls } from "../import-controls";
+
+/**
+ * ⚠️ BUILT, NOT WRITTEN OUT — both of these were `/app/invoices`, which stopped
+ * being an address when the products got their own URLs. On this screen that
+ * made "See the drafts" dead at the exact moment it matters most: straight
+ * after a confirm, when the customer has just created the invoices it points at.
+ */
+const BOOK = moduleHref("email_credit_controller", "invoices");
+const IMPORT = moduleHref("email_credit_controller", "invoices/import");
 
 /**
  * The preview, and afterwards the report (slice 1.6c).
@@ -282,13 +292,13 @@ export default async function ImportPreviewPage({
       {done && (
         <div className="flex w-full max-w-5xl gap-3">
           <Link
-            href="/app/invoices?status=draft"
+            href={`${BOOK}?status=draft`}
             className="rounded-[var(--radius-control)] bg-primary px-4 py-2 text-[13px] font-semibold text-primary-foreground shadow-[var(--shadow-primary)] hover:opacity-90"
           >
             See the drafts
           </Link>
           <Link
-            href="/app/invoices/import"
+            href={IMPORT}
             className="rounded-[var(--radius-control)] border border-input-border bg-surface px-4 py-2 text-[13px] font-semibold hover:bg-chip-hover"
           >
             Upload another file
@@ -304,7 +314,7 @@ function Shell({ children }: { children: React.ReactNode }) {
     <main className="flex w-full max-w-[1080px] flex-1 flex-col gap-[26px] px-10 pt-8 pb-9">
       {/* ⚠️ FIRST, NOT LAST. It used to sit under everything as grey text, which
           read as a footnote rather than a way out (founder, 2026-08-18). */}
-      <BackChip href="/app/invoices">Back to your invoices</BackChip>
+      <BackChip href={BOOK}>Back to your invoices</BackChip>
       {children}
     </main>
   );

@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import { moduleHref } from "@eva/types";
 import { ApiError, apiFetch } from "@/lib/api";
 import { fetchOrganisations } from "@/lib/organisations";
 import { importFieldLabel } from "@/products/invoice-follow-up/import-messages";
@@ -7,6 +8,13 @@ import { can, readOnlyImportsLine } from "@/lib/permissions";
 import { createClient } from "@/lib/supabase/server";
 import { BackChip } from "@/components/ui";
 import { UploadForm } from "./import-controls";
+
+/**
+ * ⚠️ BUILT, NOT WRITTEN OUT — both of these were `/app/invoices`, which
+ * stopped being an address when the products got their own URLs.
+ */
+const BOOK = moduleHref("email_credit_controller", "invoices");
+const IMPORT = moduleHref("email_credit_controller", "invoices/import");
 
 /**
  * Upload a book (slice 1.6c — the founder's "user lands on this table, uploads
@@ -182,7 +190,7 @@ function Shell({ children }: { children: React.ReactNode }) {
     <main className="flex w-full max-w-[1080px] flex-1 flex-col gap-[26px] px-10 pt-8 pb-9">
       {/* ⚠️ FIRST, NOT LAST. It used to sit under everything as grey text, which
           read as a footnote rather than a way out (founder, 2026-08-18). */}
-      <BackChip href="/app/invoices">Back to your invoices</BackChip>
+      <BackChip href={BOOK}>Back to your invoices</BackChip>
       {children}
     </main>
   );

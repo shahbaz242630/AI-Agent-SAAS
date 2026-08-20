@@ -1,4 +1,14 @@
-import type { ReminderActivityDto, ReminderWaitingReason } from "@eva/types";
+import { moduleHref, type ReminderActivityDto, type ReminderWaitingReason } from "@eva/types";
+
+/**
+ * Where this product's own screens live.
+ *
+ * ⚠️ BUILT, NEVER WRITTEN OUT — and this file is why the rule has a test now.
+ * These two links said `/app/reminders`, which stopped being an address when
+ * the products got their own URLs. `MODULE_CATALOGUE.slug` is the only place
+ * the path segment exists; anything else is a copy that goes stale in silence.
+ */
+const CHASING = moduleHref("email_credit_controller", "chasing");
 
 /**
  * What the home screen says (Slice 1.9).
@@ -162,7 +172,7 @@ export function attentionItems(input: {
       headline: n === 1 ? "1 reminder didn't send" : `${n} reminders didn't send`,
       detail:
         "Eva could not deliver these and will not retry them automatically. Worth a look at what went wrong.",
-      href: "/app/reminders",
+      href: CHASING,
       linkLabel: "See what happened",
     });
   }
@@ -181,7 +191,7 @@ export function attentionItems(input: {
       headline: n === 1 ? "1 reminder is waiting" : `${n} reminders are waiting`,
       detail:
         "These are due and have not gone out yet. Nothing is lost — Eva tries again on the next run.",
-      href: "/app/reminders",
+      href: CHASING,
       linkLabel: "See what is waiting",
     });
   }
