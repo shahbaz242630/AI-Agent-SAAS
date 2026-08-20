@@ -163,7 +163,16 @@ export default async function EnquiryBookPage() {
       )}
 
       <section className="flex w-full flex-col gap-3">
-        <p className="text-sm text-muted-foreground">{bookCountLine(leads.length)}</p>
+        {/**
+         * ⚠️ NOT SHOWN WHEN THE BOOK IS EMPTY, because the empty state three
+         * lines below opens with the same sentence. Walked on production and
+         * "No enquiries yet." appeared twice in one glance, which reads as a
+         * rendering fault rather than as emphasis. The empty state says it
+         * better — it says what to do next as well.
+         */}
+        {leads.length > 0 && (
+          <p className="text-sm text-muted-foreground">{bookCountLine(leads.length)}</p>
+        )}
 
         {leads.length === 0 ? (
           <EmptyState
