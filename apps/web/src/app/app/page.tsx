@@ -3,7 +3,7 @@ import { redirect } from "next/navigation";
 import { MODULE_CATALOGUE, MODULE_KEYS, moduleHref, type ModuleKey } from "@eva/types";
 import { ApiError, apiFetch } from "@/lib/api";
 import { fetchOrganisations } from "@/lib/organisations";
-import { hubGroups, hubSkipTarget, startableProducts } from "@/lib/product-hub";
+import { hubGroups, startableProducts } from "@/lib/product-hub";
 import { createClient } from "@/lib/supabase/server";
 import { StartProductButton } from "./start-product-button";
 
@@ -15,11 +15,16 @@ import { StartProductButton } from "./start-product-button";
  * dashboard, which was fine while there was one product and would have been
  * wrong the moment there were two.
  *
- * ⚠️ ONE PRODUCT SKIPS STRAIGHT PAST THIS SCREEN, and that is the whole design.
- * A hub in front of a customer who holds a single product is an extra click
- * every login, forever, to solve a problem they do not have — and today every
- * customer holds exactly one. The wall appears when there is something to
- * choose between.
+ * ⚠️ EVERYBODY LANDS HERE, EVERY TIME. Founder, 2026-08-20: *"I should land on
+ * page which shows all options so I can select which dashboard to check"*. This
+ * comment used to say the opposite — that holding one product should skip
+ * straight past — and that was my reasoning, approved and then overruled once
+ * the founder actually used it. See the note above `hubGroups` below.
+ *
+ * ⚠️ IT IS ALSO WHERE PRODUCTS ARE CHOSEN, not just where owned ones are
+ * listed. Somebody arriving for the first time holds nothing; sending them to a
+ * settings screen to switch their first product on made the welcome screen an
+ * inventory of what they lacked.
  *
  * ⚠️ IT IS A PLATFORM SCREEN. It reads the catalogue and the organisation's
  * entitlements and knows nothing about what any product DOES. Adding the CRM
@@ -72,17 +77,24 @@ export default async function AppHubPage() {
   }
 
   /**
-   * ⚠️ THE SKIP HAPPENS BEFORE ANYTHING RENDERS, and only when we actually
-   * know. `unreadable` deliberately does not redirect: bouncing somebody into a
-   * product on a guess is worse than showing them the choice.
+   * ⚠️ THIS SCREEN NEVER REDIRECTS INTO A PRODUCT. DO NOT PUT THE SKIP BACK.
+   *
+   * It used to: holding exactly one built product sent you straight into it,
+   * on my argument that a chooser in front of somebody with one product is an
+   * extra click every login, forever. The founder approved that reasoning, then
+   * used it, and overruled it on 2026-08-20: *"I signed in .. still land on
+   * invoice chasing dashboard .. I should land on page which shows all options
+   * so I can select which dashboard to check"*.
+   *
+   * The argument was wrong because it counted clicks and not purpose. This page
+   * is not a toll gate on the way to the "real" screen — it is where somebody
+   * sees everything Eva can do for them, including the four products they have
+   * not bought. Skipping it hid the shop from the customer to save them a click.
+   *
+   * The archive still contains the old reasoning (ruling 15, slice 3.0). It is
+   * superseded. `hubSkipTarget` is deleted rather than left returning null, so
+   * there is nothing here to switch back on.
    */
-  /**
-   * ⚠️ THE SKIP GOES ONLY INTO A PRODUCT THAT EXISTS — see `hubSkipTarget`,
-   * where the rule lives and is tested. Skipping on the COUNT alone sent
-   * somebody holding one unbuilt product into a bare 404.
-   */
-  const skipTo = unreadable ? null : hubSkipTarget(held);
-  if (skipTo) redirect(moduleHref(skipTo));
 
   /** Three groups, and every key in the catalogue lands in exactly one. */
   const { yours, heldNotReady, available } = hubGroups(held);

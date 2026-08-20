@@ -48,23 +48,23 @@ export function hubGroups(held: readonly ModuleKey[]): HubGroups {
 }
 
 /**
- * The product to send somebody straight into, skipping the hub — or `null` to
- * show the hub.
+ * ⚠️ THERE IS NO `hubSkipTarget` ANY MORE, AND THAT IS DELIBERATE (2026-08-20).
  *
- * Founder-approved: a wall in front of somebody holding a single product is an
- * extra click every login, forever.
+ * Holding exactly one built product used to send you straight into it, skipping
+ * this screen. My argument was that a chooser in front of somebody with one
+ * product is an extra click every login, forever; the founder approved it, used
+ * it, and overruled it: *"I should land on page which shows all options so I
+ * can select which dashboard to check"*.
  *
- * ⚠️ AND ONLY INTO A PRODUCT THAT EXISTS. `moduleHref` resolves for every key
- * in the catalogue, built or not, so skipping on the COUNT alone would send
- * somebody holding one unbuilt product into a bare Next 404 — no shell, no way
- * back — as the first screen after signing in. Holding one unbuilt product
- * shows the hub instead, which can at least say what they are waiting for.
+ * The argument counted clicks and missed the purpose. The hub is where somebody
+ * sees everything Eva can do — including the products they have not bought yet.
+ * Skipping it hid the shop to save a click.
+ *
+ * It is **deleted rather than left returning null** so there is no dormant
+ * switch to turn back on, and no function whose tests slowly make the case for
+ * restoring it. The archive (ruling 15, slice 3.0) still argues the old way and
+ * is superseded.
  */
-export function hubSkipTarget(held: readonly ModuleKey[]): ModuleKey | null {
-  if (held.length !== 1) return null;
-  const only = held[0]!;
-  return MODULE_CATALOGUE[only].live ? only : null;
-}
 
 /**
  * The products somebody can switch on right now, from the hub itself.

@@ -1,6 +1,8 @@
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { MODULE_CATALOGUE, MODULE_KEYS, type ModuleKey } from "@eva/types";
-import { canStartProduct, hubGroups, hubSkipTarget, startableProducts } from "@/lib/product-hub";
+import { canStartProduct, hubGroups, startableProducts } from "@/lib/product-hub";
 
 /**
  * ⚠️ THE GUARD FOR TWO DEFECTS THAT REACHED PRODUCTION (walked 2026-08-19,
@@ -71,29 +73,36 @@ describe("the hub's grouping", () => {
   });
 });
 
-describe("the hub's skip", () => {
-  /**
-   * Founder-approved: a wall in front of somebody holding a single product is
-   * an extra click every login, forever.
-   */
-  it("sends a customer holding one built product straight into it", () => {
-    expect(hubSkipTarget([BUILT[0]!])).toBe(BUILT[0]!);
+/**
+ * ⚠️ THE HUB IS ALWAYS SHOWN — THE SKIP IS GONE, AND MUST NOT COME BACK.
+ *
+ * Holding one built product used to redirect straight into it. The founder
+ * approved that reasoning, used it, and overruled it on 2026-08-20: *"I signed
+ * in .. still land on invoice chasing dashboard .. I should land on page which
+ * shows all options so I can select which dashboard to check"*.
+ *
+ * This test reads the page's own source, the same technique the API uses to
+ * check every controller declares an owner. It is here because the argument for
+ * the skip is still written down in the archive and reads persuasively — a
+ * future session tidying up "an extra click every login" would restore the
+ * exact behaviour the founder rejected, and no other test would notice.
+ */
+describe("the hub never redirects into a product", () => {
+  it("has no redirect into a product route in the hub page", () => {
+    const source = readFileSync(path.resolve(__dirname, "../src/app/app/page.tsx"), "utf8");
+
+    // `redirect("/sign-in")` and `redirect("/app/onboarding")` are fine and
+    // expected — they are not products. A redirect built from `moduleHref` is
+    // the skip, whatever it gets called next time.
+    expect(source, "the hub is redirecting into a product again").not.toMatch(
+      /redirect\(\s*moduleHref/,
+    );
   });
 
-  /**
-   * ⚠️ THE 404 TRAP. `moduleHref` resolves for every key in the catalogue,
-   * built or not, so skipping on the COUNT alone would have redirected
-   * somebody holding one unbuilt product into a page that does not exist — as
-   * the first thing they saw after signing in, with no shell to escape from.
-   */
-  it("does NOT skip into a product that does not exist yet", () => {
-    expect(hubSkipTarget([UNBUILT[0]!])).toBeNull();
-  });
+  it("keeps a single held product on the hub as a card you click", () => {
+    const { yours } = hubGroups([BUILT[0]!]);
 
-  it("shows the hub when there is a real choice, or nothing at all", () => {
-    expect(hubSkipTarget([])).toBeNull();
-    expect(hubSkipTarget([BUILT[0]!, UNBUILT[0]!])).toBeNull();
-    expect(hubSkipTarget([...MODULE_KEYS])).toBeNull();
+    expect(yours).toEqual([BUILT[0]!]);
   });
 });
 
