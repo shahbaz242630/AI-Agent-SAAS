@@ -40,6 +40,9 @@ model Organisation {
   humanEscalations  HumanEscalation[]
   emailAccounts   EmailAccount[]
   modules         OrganisationModule[]
+  leads           Lead[]
+  leadEvidence    LeadEvidence[]
+  consentTexts    ConsentText[]
 
   @@map("organisations")
 }
@@ -192,6 +195,9 @@ model Customer {
   emailAccount   EmailAccount? @relation(fields: [organisationId, emailAccountId], references: [organisationId, id], onDelete: Restrict, map: "customers_email_account_same_org_fkey")
   contacts       Contact[]
   invoices       Invoice[]
+  /// Enquiries recognised as coming from this existing client (BRD 4.3 lists
+  /// "existing customer requesting another service" as an eligible source).
+  leads          Lead[]
 
   @@index([organisationId])
   @@map("customers")
@@ -629,4 +635,106 @@ model OrganisationModule {
 
   @@index([organisationId])
   @@map("organisation_modules")
+}
+
+/// Slice 3.1a — the lead record.
+///
+/// ⚠️ A LEAD IS NOT A CUSTOMER, AND NOT A CONTACT. It is somebody who got in
+/// touch and has not been answered yet. `customerId` is set only once we
+/// recognise them as an existing client (BRD 4.3 lists "existing customer
+/// requesting another service" as an eligible source), and stays null for the
+/// strangers who are the point of the product.
+model Lead {
+  id             String    @id @default(uuid()) @db.Uuid
+  organisationId String    @map("organisation_id") @db.Uuid
+  /// The BRD 4.3 channel this arrived through. Narrow on purpose: only what a
+  /// person can log by hand today. 3.1b adds `email` when a reader exists.
+  source         String
+  contactName    String?   @map("contact_name")
+  contactEmail   String?   @map("contact_email")
+  contactPhone   String?   @map("contact_phone")
+  /// What they asked for, as received. Null for a missed call, which has a
+  /// number and no words — inventing a summary would put words in a customer's
+  /// mouth on a compliance record.
+  enquiry        String?
+  /// `new` or `do_not_contact`. 3.1c adds the states that need Eva to answer;
+  /// a status nothing can set is the `endsAt` trap from migration 0024.
+  status         String    @default("new")
+  /// ⚠️ THEIR CLOCK, NOT OURS. Speed-to-lead is measured from when the enquiry
+  /// HAPPENED. A Friday missed call logged on Monday is three days old, and a
+  /// target measured from `createdAt` would call it instant.
+  receivedAt     DateTime  @map("received_at") @db.Timestamptz(6)
+  firstRespondedAt DateTime? @map("first_responded_at") @db.Timestamptz(6)
+  customerId     String?   @map("customer_id") @db.Uuid
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy      String?   @map("created_by") @db.Uuid
+  deletedAt      DateTime? @map("deleted_at") @db.Timestamptz(6)
+  organisation   Organisation  @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+  customer       Customer?     @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  evidence       LeadEvidence?
+
+  @@index([organisationId])
+  @@index([organisationId, receivedAt(sort: Desc)])
+  @@map("leads")
+}
+
+/// Why this lead is allowed to be contacted at all (BRD 4.3, "Consent
+/// evidence").
+///
+/// ⚠️ WRITTEN ONCE, NEVER UPDATED — AND THE DATABASE IS WHAT ENFORCES IT.
+/// `eva_app` holds SELECT and INSERT on this table and nothing else, so there
+/// is no UPDATE for a service to forget to avoid. Lead follow-up is
+/// marketing-adjacent under PECR: the difference between a lawful response and
+/// an unlawful one is whether we can prove the person contacted us first, and
+/// evidence that can be edited proves nothing.
+///
+/// No `updatedAt`, deliberately — there is no update to stamp.
+model LeadEvidence {
+  id                String    @id @default(uuid()) @db.Uuid
+  organisationId    String    @map("organisation_id") @db.Uuid
+  leadId            String    @unique @map("lead_id") @db.Uuid
+  channel           String
+  /// The provider's own id where one exists (Graph message id, call id).
+  externalId        String?   @map("external_id")
+  senderAddress     String?   @map("sender_address")
+  recipientAddress  String?   @map("recipient_address")
+  subject           String?
+  /// When the enquiry happened, from the channel's own record.
+  occurredAt        DateTime  @map("occurred_at") @db.Timestamptz(6)
+  consentTextId     String?   @map("consent_text_id") @db.Uuid
+  /// Verbatim, so the evidence outlives the mailbox it came from.
+  rawExcerpt        String?   @map("raw_excerpt")
+  createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  createdBy         String?   @map("created_by") @db.Uuid
+  organisation      Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+  lead              Lead         @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  consentText       ConsentText? @relation(fields: [consentTextId], references: [id], onDelete: Restrict)
+
+  @@index([organisationId])
+  @@map("lead_evidence")
+}
+
+/// The wording somebody agreed to, frozen (BRD 4.3: "Consent text versions must
+/// be immutable records so evidence remains provable").
+///
+/// An edit is a NEW version, never an overwrite — enforced the same way as
+/// `LeadEvidence`, by withholding UPDATE from `eva_app`. Nothing in 3.1a
+/// writes these: all three of its sources are direct inbound contact, which
+/// needs no consent text. The table exists now because evidence references it,
+/// and back-filling a reference into historical evidence is the thing that
+/// cannot be done honestly later.
+model ConsentText {
+  id             String    @id @default(uuid()) @db.Uuid
+  organisationId String    @map("organisation_id") @db.Uuid
+  version        Int
+  body           String
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  createdBy      String?   @map("created_by") @db.Uuid
+  organisation   Organisation   @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+  evidence       LeadEvidence[]
+
+  @@unique([organisationId, version])
+  @@index([organisationId])
+  @@map("consent_texts")
 }

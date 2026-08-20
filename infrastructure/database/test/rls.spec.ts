@@ -86,6 +86,9 @@ const TENANT_TABLES = [
   "human_escalations",
   "email_accounts",
   "organisation_modules",
+  "leads",
+  "lead_evidence",
+  "consent_texts",
 ];
 
 describe("RLS: connection role hardening", () => {
@@ -110,7 +113,7 @@ describe("RLS: connection role hardening", () => {
         'imports', 'import_rows', 'invoice_documents', 'suppression_list',
         'organisation_role_permissions', 'reminder_sequences', 'reminder_steps',
         'scheduled_actions', 'human_escalations', 'email_accounts',
-        'organisation_modules'
+        'organisation_modules', 'leads', 'lead_evidence', 'consent_texts'
       )`;
     expect(rows.length).toBe(TENANT_TABLES.length);
     for (const row of rows) {
@@ -128,7 +131,7 @@ describe("RLS: connection role hardening", () => {
         'imports', 'import_rows', 'invoice_documents', 'suppression_list',
         'organisation_role_permissions', 'reminder_sequences', 'reminder_steps',
         'scheduled_actions', 'human_escalations', 'email_accounts',
-        'organisation_modules'
+        'organisation_modules', 'leads', 'lead_evidence', 'consent_texts'
       )
       GROUP BY tablename`;
     expect(rows.length).toBe(TENANT_TABLES.length);

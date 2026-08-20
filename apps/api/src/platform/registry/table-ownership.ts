@@ -25,6 +25,30 @@ export const PLATFORM_TABLES = [
   "suppressionEntry",
   "organisationRolePermission",
   "organisationModule",
+  /**
+   * ⚠️ THE LEAD RECORD IS PLATFORM, NOT THE LEAD PRODUCT'S — and this is the
+   * decision to argue with if any of this ever feels wrong (3.1a, 2026-08-20).
+   *
+   * The founder already ruled it for clients: "Clients stay OUTSIDE the
+   * products (one client record) or a lead-only customer cannot reach their own
+   * contacts." A lead is the same kind of thing — a person who got in touch —
+   * and THREE products will want the same one: follow-up by email, follow-up by
+   * call (ruling 14 makes them separate purchases), and the CRM that ruling 16
+   * says every structural decision must be checked against. Two lead books for
+   * one enquiry is the failure that ruling avoided for clients.
+   *
+   * The RECORD is platform; ACCESS is product-gated. `leads:read` and
+   * `leads:write` are carried by `lead_follow_up_email` alone today
+   * (`PERMISSION_MODULES`), so a customer holding only invoice chasing gets
+   * nothing — the table being shared is not the same as the data being open.
+   *
+   * What the lead PRODUCT will own is the machinery of answering: reading the
+   * mailbox, classifying an enquiry, sending the reply. That lives under
+   * `products/` when 3.1b and 3.1c build it.
+   */
+  "lead",
+  "leadEvidence",
+  "consentText",
 ] as const;
 
 /** Shared machinery. Owned by a capability, not by any product. */

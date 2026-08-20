@@ -82,6 +82,7 @@ describe("Schema conventions (BRD 10)", () => {
     expect(rows.map((r) => r.table_name).sort()).toEqual([
       "_prisma_migrations",
       "audit_logs",
+      "consent_texts",
       "contacts",
       "customers",
       "email_accounts",
@@ -90,6 +91,8 @@ describe("Schema conventions (BRD 10)", () => {
       "imports",
       "invoice_documents",
       "invoices",
+      "lead_evidence",
+      "leads",
       "organisation_memberships",
       "organisation_modules",
       "organisation_role_permissions",
@@ -637,6 +640,40 @@ describe("Schema conventions (BRD 10)", () => {
     await prisma.organisation.deleteMany({
       where: { id: { in: [orgNone.id, orgDraft.id, orgActive.id] } },
     });
+  });
+
+  /**
+   * ⚠️ THIS TEST EXISTS BECAUSE THE FIRST VERSION OF MIGRATION 0026 WAS A LIE.
+   *
+   * It granted `SELECT, INSERT` on `lead_evidence` and wrote a confident
+   * comment about the database refusing to change compliance evidence. But
+   * `ALTER DEFAULT PRIVILEGES FOR ROLE eva` hands `eva_app` all four
+   * privileges on every table `eva` creates (`pg_default_acl` shows
+   * `eva_app=arwd`), and a GRANT only ever ADDS. UPDATE and DELETE were sitting
+   * there from the default, on the one table whose entire job is being
+   * provable, and nothing failed.
+   *
+   * BRD 4.3: consent evidence must be immutable "so evidence remains provable".
+   * The revoke is what makes that true, and this is what keeps the revoke.
+   */
+  it("evidence and consent wording cannot be changed by the app role, ever", async () => {
+    const rows = await prisma.$queryRaw<{ table_name: string; privilege_type: string }[]>`
+      SELECT table_name, privilege_type
+      FROM information_schema.table_privileges
+      WHERE grantee = 'eva_app'
+        AND table_name IN ('lead_evidence', 'consent_texts')`;
+
+    const granted = new Set(rows.map((row) => `${row.table_name}.${row.privilege_type}`));
+
+    for (const table of ["lead_evidence", "consent_texts"]) {
+      // Readable and writable once...
+      expect(granted.has(`${table}.SELECT`), `${table} must be readable`).toBe(true);
+      expect(granted.has(`${table}.INSERT`), `${table} must be writable once`).toBe(true);
+      // ...and never changeable afterwards. Cascade still removes it with its
+      // lead: referential actions run with the constraint owner's privileges.
+      expect(granted.has(`${table}.UPDATE`), `${table} must NOT be updatable`).toBe(false);
+      expect(granted.has(`${table}.DELETE`), `${table} must NOT be deletable`).toBe(false);
+    }
   });
 
   it("every migration ships rollback guidance (forward-only convention, BRD 18)", () => {
