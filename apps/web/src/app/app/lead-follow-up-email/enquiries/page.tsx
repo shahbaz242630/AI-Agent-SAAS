@@ -3,7 +3,6 @@ import { redirect } from "next/navigation";
 import { moduleHref } from "@eva/types";
 import { ApiError, apiFetch } from "@/lib/api";
 import { fetchOrganisations } from "@/lib/organisations";
-import { can } from "@/lib/permissions";
 import { createClient } from "@/lib/supabase/server";
 import { EmptyState, StatusPill } from "@/components/ui";
 import {
@@ -14,9 +13,7 @@ import {
   leadSourceLabel,
   leadStatusLabel,
   leadStatusTone,
-  nowForInput,
 } from "@/products/lead-follow-up/lead-book";
-import { LogEnquiryForm } from "./log-enquiry-form";
 
 /**
  * The enquiry book (Slice 3.1a).
@@ -131,36 +128,28 @@ export default async function EnquiryBookPage() {
     );
   }
 
-  const canWrite = can(organisation, "leads:write");
-
   return (
     <Shell>
       <section className="flex w-full flex-col gap-2">
         <h1 className="font-display text-[29px] leading-tight font-semibold">Enquiries</h1>
         <p className="text-sm text-muted-foreground">
-          Everyone who has got in touch with {organisation.name}, newest first.
+          Everyone who has emailed {organisation.name} to ask about something, newest first.
         </p>
       </section>
 
       {/**
-       * ⚠️ THE PRODUCT CANNOT ANSWER ANYONE YET, AND THE SCREEN SAYS SO.
-       * Eva does not read a mailbox and does not reply until 3.1c. A book that
-       * quietly listed enquiries would let somebody assume they were being
-       * answered — the money-bug family, where a screen implies an outcome that
-       * does not happen. Removed the day Eva can actually reply.
+       * ⚠️ THE PRODUCT CANNOT DO EITHER HALF OF ITS JOB YET, AND THE SCREEN
+       * SAYS BOTH. Nothing arrives until the mailbox is forwarding (3.1b) and
+       * nothing is answered until Eva replies (3.1c). A book that quietly
+       * listed enquiries would let somebody assume they were being answered —
+       * the money-bug family, where a screen implies an outcome that does not
+       * happen. Removed the day Eva can actually reply.
        */}
       <p className="w-full rounded-[var(--radius-card)] border border-border bg-surface px-6 py-3 text-sm text-muted-foreground">
-        Eva is not answering these yet — she cannot read your mailbox or reply until the next two
-        pieces are built. What she does today is keep the record, and the proof behind it.
+        Enquiries will land here once your mailbox is forwarding to Eva, and she will answer them
+        once that part is built. Neither is switched on yet. What she does today is keep the record,
+        and the proof behind it.
       </p>
-
-      {canWrite && (
-        <LogEnquiryForm
-          organisationId={organisation.id}
-          timezone={timezone}
-          nowValue={nowForInput(timezone)}
-        />
-      )}
 
       <section className="flex w-full flex-col gap-3">
         {/**
@@ -174,14 +163,17 @@ export default async function EnquiryBookPage() {
           <p className="text-sm text-muted-foreground">{bookCountLine(leads.length)}</p>
         )}
 
+        {/**
+         * ⚠️ ONE SENTENCE, NOT TWO BY PERMISSION. Until 2026-08-21 the empty
+         * state said something different to somebody who could write, because
+         * there was a form for them to use. There is no longer anything anyone
+         * can do from this screen — an enquiry arrives by email or not at all —
+         * so a role-dependent message would only be inventing a difference.
+         */}
         {leads.length === 0 ? (
           <EmptyState
             headline="No enquiries yet."
-            detail={
-              canWrite
-                ? "When somebody rings and you miss them, or an existing client asks about something new, log it here so there is a record and Eva has it when she starts answering."
-                : "Nothing has been logged yet. Your role can see enquiries but not add them."
-            }
+            detail="Once your mailbox forwards to Eva, every new enquiry will appear here with the proof of who sent it and when."
           />
         ) : (
           <div className="w-full overflow-x-auto rounded-[var(--radius-card)] border border-border bg-surface px-6 py-3">

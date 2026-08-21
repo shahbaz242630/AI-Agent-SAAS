@@ -9,10 +9,19 @@ import { LeadsService, type LeadDetail, type LeadSummary } from "./leads.service
 /**
  * The lead book (Slice 3.1a).
  *
- * ⚠️ NO UPDATE AND NO DELETE, DELIBERATELY. 3.1a can log an enquiry and record
- * a do-not-contact request, and those are the only two things that can happen
- * to a lead until Eva can answer one. An edit endpoint with no screen behind it
- * is a way to change a compliance record that nothing tests.
+ * ⚠️ NO UPDATE AND NO DELETE, DELIBERATELY. A lead can be created and it can be
+ * marked do-not-contact, and those are the only two things that can happen to
+ * one until Eva can answer it. An edit endpoint with no screen behind it is a
+ * way to change a compliance record that nothing tests.
+ *
+ * ⚠️ `POST` HAS NO SCREEN BEHIND IT EITHER, SINCE 2026-08-21, AND THAT IS ON
+ * PURPOSE. The manual "Log an enquiry" form was removed with the three
+ * call-shaped sources it offered — founder ruling: Lead Follow-up by Email is
+ * one mailbox in and a reply out, so an enquiry arrives by email or not at all.
+ * The route stays because 3.1b's mailbox poller needs exactly this
+ * lead-plus-evidence-plus-audit transaction, and because it is what proves that
+ * transaction works before the poller exists. It now accepts `email_enquiry`
+ * and nothing else, so it cannot be used to smuggle a phone lead back in.
  */
 @Controller("organisations/:organisationId/leads")
 @OwnedBy("platform")

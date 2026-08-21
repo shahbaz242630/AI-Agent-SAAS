@@ -9,28 +9,38 @@ import {
   leadSourceLabel,
   leadStatusLabel,
   leadStatusTone,
-  nowForInput,
-  wallClockToInstant,
   type AlsoAffected,
 } from "@/products/lead-follow-up/lead-book";
 
 describe("lead vocabulary", () => {
-  it("says each manual source the way a person would", () => {
-    expect(leadSourceLabel("missed_call")).toBe("Missed call");
-    expect(leadSourceLabel("existing_customer")).toBe("Existing client");
+  it("says the source this product produces the way a person would", () => {
+    expect(leadSourceLabel("email_enquiry")).toBe("Email enquiry");
+  });
+
+  /**
+   * ⚠️ THESE THREE ARE RETIRED, NOT GONE, AND ONE IS SITTING IN PRODUCTION.
+   * They were removed from Lead Follow-up by Email on 2026-08-21 — all three
+   * are call-shaped and belong to Lead Follow-up by Call — but migration 0027
+   * widened the CHECK rather than narrowing it, because lead `cc1c3243` is a
+   * `callback_request` and evidence must never be rewritten. So the book still
+   * has to render them, and rendering `callback_request` at a customer is the
+   * same defect as "modules" leaking onto the sidebar.
+   */
+  it("still reads the retired call sources, because one is in the database", () => {
     expect(leadSourceLabel("callback_request")).toBe("Callback request");
+    expect(leadSourceLabel("missed_call")).toBe("Missed call");
+    expect(leadSourceLabel("existing_customer")).toBe("Existing customer");
   });
 
   /**
    * ⚠️ THE WINDOW THIS COVERS IS REAL AND ARRIVES AT 3.1b. The API starts
-   * writing `email_enquiry` the moment Eva can read a mailbox, and web deploys
+   * writing new sources the moment Eva can read a mailbox, and web deploys
    * trail api deploys by minutes. For that window this build has never heard of
    * the value — and a raw database word on a customer's screen is the same
    * defect as "modules" leaking onto the sidebar.
    */
   it("turns a source it has never heard of into English", () => {
-    expect(leadSourceLabel("email_enquiry")).toBe("Email enquiry");
-    expect(leadSourceLabel("website_form")).toBe("Website form");
+    expect(leadSourceLabel("whatsapp_message")).toBe("Whatsapp message");
     expect(leadSourceLabel("")).toBe("Enquiry");
   });
 
@@ -84,11 +94,11 @@ describe("the count line", () => {
 describe("the evidence sentence", () => {
   it("answers why contacting them is lawful, not just what happened", () => {
     const line = evidenceSummary(
-      { channel: "missed_call", occurredAt: "2026-08-19T13:30:00.000Z" },
+      { channel: "email_enquiry", occurredAt: "2026-08-19T13:30:00.000Z" },
       "Europe/London",
     );
     expect(line).toContain("They got in touch themselves");
-    expect(line).toContain("missed call");
+    expect(line).toContain("email enquiry");
     expect(line).toContain("lawful");
   });
 
@@ -121,111 +131,6 @@ describe("moments, in the organisation's timezone", () => {
   it("does not lose the screen to a bad timezone or a bad date", () => {
     expect(describeMoment("2026-08-19T13:30:00.000Z", "Mars/Olympus")).toContain("19 August");
     expect(describeMoment("not-a-date", "Europe/London")).toBe("at an unknown time");
-  });
-});
-
-/**
- * ⚠️ THIS IS THE ONE THAT WOULD HAVE SHIPPED WRONG AND LOOKED FINE.
- *
- * A `datetime-local` box hands back wall-clock digits with no zone attached.
- * Our compute runs in `us-west2`, eight hours behind London, so letting the
- * server parse them files a 9am enquiry at 5pm — and speed-to-lead, the number
- * this whole product is judged on, is measured from exactly this field.
- */
-describe("what somebody typed into the date box", () => {
-  it("reads the digits as the organisation's clock, not the server's", () => {
-    // 14:30 in London during BST is 13:30 UTC.
-    expect(wallClockToInstant("2026-08-20T14:30", "Europe/London")).toBe(
-      "2026-08-20T13:30:00.000Z",
-    );
-  });
-
-  it("handles a zone ahead of UTC", () => {
-    // 14:30 in Dubai (UTC+4) is 10:30 UTC.
-    expect(wallClockToInstant("2026-08-20T14:30", "Asia/Dubai")).toBe("2026-08-20T10:30:00.000Z");
-  });
-
-  it("handles a zone behind UTC", () => {
-    // 14:30 in New York during EDT (UTC-4) is 18:30 UTC.
-    expect(wallClockToInstant("2026-08-20T14:30", "America/New_York")).toBe(
-      "2026-08-20T18:30:00.000Z",
-    );
-  });
-
-  /** London is UTC+0 in January and UTC+1 in July, and both must be right. */
-  it("is right on both sides of a daylight-saving change", () => {
-    expect(wallClockToInstant("2026-01-15T09:00", "Europe/London")).toBe(
-      "2026-01-15T09:00:00.000Z",
-    );
-    expect(wallClockToInstant("2026-07-15T09:00", "Europe/London")).toBe(
-      "2026-07-15T08:00:00.000Z",
-    );
-  });
-
-  /**
-   * ⚠️ THIS IS THE ONE THAT COVERS THE SECOND CORRECTION PASS, AND IT WAS
-   * MISSING. The two tests above pass with a single pass too — I checked by
-   * cutting the loop and watching all 23 stay green, which means the comment
-   * claiming two passes were needed "across a DST boundary" was decoration.
-   *
-   * The pass is only load-bearing in the spring-forward GAP. London jumps
-   * 01:00 → 02:00 on 29 March 2026, so 01:30 is a time that does not exist —
-   * somebody picked it from a date box that does not know that. One pass files
-   * it at 00:30 local, an hour EARLIER than typed, which would date an enquiry
-   * before it arrived. Two passes push it forward to 02:30 local.
-   */
-  it("pushes a time that does not exist forward, never backward", () => {
-    // 01:30 on 29 March 2026 never happens in London. 01:30Z is 02:30 BST.
-    expect(wallClockToInstant("2026-03-29T01:30", "Europe/London")).toBe(
-      "2026-03-29T01:30:00.000Z",
-    );
-    expect(describeMoment("2026-03-29T01:30:00.000Z", "Europe/London")).toBe(
-      "Sunday 29 March at 2:30am",
-    );
-  });
-
-  /** The autumn repeat — 01:30 happens twice — resolves to the first of them. */
-  it("settles on one answer when a time happens twice", () => {
-    expect(wallClockToInstant("2026-10-25T01:30", "Europe/London")).toBe(
-      "2026-10-25T01:30:00.000Z",
-    );
-  });
-
-  it("refuses what it cannot read rather than inventing a date", () => {
-    expect(wallClockToInstant("", "Europe/London")).toBeNull();
-    expect(wallClockToInstant("yesterday", "Europe/London")).toBeNull();
-    expect(wallClockToInstant("20/08/2026 14:30", "Europe/London")).toBeNull();
-  });
-
-  it("keeps what was typed even when the zone is nonsense", () => {
-    expect(wallClockToInstant("2026-08-20T14:30", "Mars/Olympus")).toBe("2026-08-20T14:30:00.000Z");
-  });
-
-  /** The round trip is the property that matters: what they typed is what the
-   *  screen shows back to them afterwards. */
-  it("survives a round trip through the screen's own formatter", () => {
-    const instant = wallClockToInstant("2026-08-20T14:30", "Europe/London");
-    expect(describeMoment(instant!, "Europe/London")).toBe("Thursday 20 August at 2:30pm");
-  });
-});
-
-describe("the date box's starting value", () => {
-  it("opens on the customer's clock, not UTC", () => {
-    const at = new Date("2026-08-20T13:30:00.000Z");
-    expect(nowForInput("Europe/London", at)).toBe("2026-08-20T14:30");
-    expect(nowForInput("Asia/Dubai", at)).toBe("2026-08-20T17:30");
-  });
-
-  /** Midnight renders as hour 24 in some engines; it must not become "24:00",
-   *  which every browser silently rejects, leaving the box empty. */
-  it("writes midnight as 00, not 24", () => {
-    expect(nowForInput("UTC", new Date("2026-08-20T00:15:00.000Z"))).toBe("2026-08-20T00:15");
-  });
-
-  it("produces a value the converter reads back unchanged", () => {
-    const at = new Date("2026-08-20T13:30:00.000Z");
-    const typed = nowForInput("Europe/London", at);
-    expect(wallClockToInstant(typed, "Europe/London")).toBe("2026-08-20T13:30:00.000Z");
   });
 });
 

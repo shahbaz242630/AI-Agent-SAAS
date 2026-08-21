@@ -124,7 +124,6 @@ export type WriteAction =
   | "change-settings"
   | "change-reminder-timing"
   // Slice 3.1a — the enquiry book.
-  | "log-lead"
   | "stop-contacting";
 
 /**
@@ -157,15 +156,15 @@ const REFUSED: Record<WriteAction, string> = {
   // every invoice already being chased. Telling someone the wrong one is the
   // standing §0d mistake — name the thing they were actually refused.
   "change-reminder-timing": "Your role can't change when Eva chases.",
-  "log-lead": "Your role can't log an enquiry.",
   /**
-   * ⚠️ NOT FOLDED INTO `log-lead`, AND THIS IS THE ONE WHERE IT MATTERS MOST.
-   * Both are `leads:write`, so they move together under the default matrix —
-   * which is exactly the coincidence that makes sharing a sentence tempting.
-   * But somebody refused here was trying to honour a person asking not to be
-   * contacted again, and telling them their role "can't log an enquiry" would
-   * send them looking for the wrong thing while a compliance request sits
-   * unactioned. Name what they were refused.
+   * ⚠️ THE ONLY WRITE LEFT ON AN ENQUIRY, SINCE 2026-08-21. `log-lead` sat
+   * beside this until the manual form was removed — Lead Follow-up by Email is
+   * one mailbox in and a reply out, so nobody types an enquiry in. Both were
+   * `leads:write`, and the note here used to explain why they must not share a
+   * sentence; what survives is the reason this one has its own. Somebody
+   * refused here is trying to honour a person asking not to be contacted again,
+   * and a vague refusal sends them looking for the wrong thing while a
+   * compliance request sits unactioned. Name what they were refused.
    */
   "stop-contacting": "Your role can't record a do-not-contact request.",
 };
