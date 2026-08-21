@@ -178,10 +178,27 @@ export function MailboxActions({
 /** The connect form. Hidden entirely when every seat is taken — sending
  *  someone to Microsoft to grant Eva access and THEN telling them it was
  *  pointless is the worst version of this. */
+/**
+ * ⚠️ THE PROVIDER CHOICE LIVES HERE TOO, AND FORGETTING IT WOULD HAVE SHIPPED
+ * GMAIL THAT NOBODY EXISTING COULD REACH (3.1b step 3). The onboarding step has
+ * always had a provider picker; this form never needed one, because there was
+ * only ever Microsoft. Adding Gmail to onboarding alone would mean it worked
+ * for customers signing up TODAY and was invisible to every customer who
+ * already had an account — including the only one we have.
+ *
+ * Caught by reading rather than by a test, which is the uncomfortable part:
+ * nothing failed, because "the settings page does not offer Gmail" is a missing
+ * feature, and a missing feature has no test to break.
+ */
+const CONNECT_PROVIDERS = [
+  { id: "microsoft", name: "Outlook", hint: "Outlook, Hotmail or Microsoft 365" },
+  { id: "google", name: "Gmail", hint: "Gmail or Google Workspace" },
+] as const;
+
 export function ConnectMailboxForm({
   organisationId,
   defaultAddress,
-  label = "Connect Outlook mailbox",
+  label,
   replacesMailboxId,
 }: {
   organisationId: string;
@@ -191,12 +208,42 @@ export function ConnectMailboxForm({
    *  the callback can carry the old mailbox's clients across. */
   replacesMailboxId?: string;
 }) {
+  const [provider, setProvider] = useState<"microsoft" | "google">("microsoft");
+  const chosen = CONNECT_PROVIDERS.find((option) => option.id === provider)!;
+  const destination = provider === "google" ? "Google" : "Microsoft";
+
   return (
     <form action={connectMailbox} className="flex flex-col gap-3">
       <input type="hidden" name="organisationId" value={organisationId} />
-      {/* Rides the signed OAuth state so the return from Microsoft lands back
-          here rather than in the setup flow. */}
+      {/* Rides the signed OAuth state so the return lands back here rather than
+          in the setup flow. */}
       <input type="hidden" name="flow" value="settings" />
+
+      <fieldset className="flex flex-col gap-1">
+        <legend className="text-sm font-medium">Where do you send email from?</legend>
+        <div className="flex flex-wrap gap-2 pt-1">
+          {CONNECT_PROVIDERS.map((option) => (
+            <label
+              key={option.id}
+              className={`cursor-pointer rounded-[var(--radius-card)] px-3.5 py-2 text-sm ${
+                provider === option.id
+                  ? "border-2 border-primary bg-selected-tint font-medium"
+                  : "border border-border hover:bg-chip-hover"
+              }`}
+            >
+              <input
+                type="radio"
+                name="provider"
+                value={option.id}
+                checked={provider === option.id}
+                onChange={() => setProvider(option.id)}
+                className="sr-only"
+              />
+              {option.name}
+            </label>
+          ))}
+        </div>
+      </fieldset>
       {replacesMailboxId && (
         <input type="hidden" name="replacesMailboxId" value={replacesMailboxId} />
       )}
@@ -213,14 +260,17 @@ export function ConnectMailboxForm({
           placeholder="you@yourcompany.co.uk"
           className="w-full max-w-sm rounded-[var(--radius-card)] border border-muted-foreground/30 bg-background px-3 py-2 text-sm outline-none focus:border-primary"
         />
+        {/* ⚠️ NAMES THE PROVIDER THE CUSTOMER ACTUALLY PICKED. "You'll sign in at
+            Microsoft" under a Gmail choice is the small wrongness that makes
+            somebody stop and wonder what else is wrong — and it is the sort of
+            sentence that stays false for months because nothing tests copy. */}
         <p className="text-xs text-muted-foreground">
-          Personal Outlook and Hotmail addresses work too. You&apos;ll sign in at Microsoft — Eva
-          never sees your password.
+          {chosen.hint}. You&apos;ll sign in at {destination} — Eva never sees your password.
         </p>
       </div>
       <div>
         <button type="submit" className={BUTTON_CLASS}>
-          {label}
+          {label ?? `Connect ${chosen.name} mailbox`}
         </button>
       </div>
     </form>
