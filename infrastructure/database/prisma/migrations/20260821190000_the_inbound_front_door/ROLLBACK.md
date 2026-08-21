@@ -4,8 +4,8 @@ Migration 0029 opens the front door: an address each customer publishes, and a
 record of everything delivered to it. Additive only — nothing existing is
 renamed, narrowed or dropped.
 
-| Change    | Detail                                                                    |
-| --------- | ------------------------------------------------------------------------- |
+| Change    | Detail                                                                     |
+| --------- | -------------------------------------------------------------------------- |
 | Added     | `inbound_addresses` — one live address per organisation, never reissued    |
 | Added     | `inbound_messages` — every delivery, written before anything is decided    |
 | Added     | RLS `tenant_isolation` on both, migration 0008's shape                     |
