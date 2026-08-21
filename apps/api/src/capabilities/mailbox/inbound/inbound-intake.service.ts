@@ -138,8 +138,24 @@ export class InboundIntakeService {
       const leadId = await this.convert(organisationId, record.id, {
         providerMessageId,
         deliveredTo,
-        // The fetched `From` is the authority; the webhook's is a summary.
-        from: message.from || payload.data.from || "",
+        /**
+         * ⚠️ THE RAW `From` HEADER FIRST, AND THIS WAS FOUND BY SENDING A REAL
+         * EMAIL (2026-08-21). The header carries
+         * `"Shahbaz Malik" <shahbaz.malik@hotmail.co.uk>`; Resend's API
+         * summarises the same field down to the bare address. Trusting the
+         * summary threw the sender's NAME away, so the first genuine enquiry on
+         * production landed with `contact_name` null and the lead book showed
+         * an email address in the "Who" column.
+         *
+         * Nothing failed. Every test passed, both walls passed, CodeQL passed —
+         * the defect was a real person's name quietly missing from a record
+         * about them, and only a real message had it to lose.
+         *
+         * The parser handles both shapes, so the order is simply
+         * most-informative first: raw header, then the provider's summary, then
+         * the webhook's.
+         */
+        from: message.headers["from"] || message.from || payload.data.from || "",
         subject: message.subject ?? payload.data.subject ?? null,
         text: message.text,
         html: message.html,
@@ -320,10 +336,24 @@ export class InboundIntakeService {
   }
 }
 
-/** The first usable recipient. Forwarding can name several; ours is one of them. */
+/**
+ * The first usable recipient. Forwarding can name several; ours is one of them.
+ *
+ * ⚠️ THE ANGLE BRACKETS ARE STRIPPED BECAUSE THE PROVIDER'S SUMMARY AND THE RAW
+ * HEADER DISAGREE, WHICH WE LEARNED THE HARD WAY ON THE SENDER SIDE
+ * (2026-08-21). Resend reported `received_for` as a bare address in the first
+ * real delivery, but reported the SENDER stripped of its display name while the
+ * raw header carried one — so "the provider always hands us a bare address" is
+ * not a promise, it is an observation of one message. Here the cost of being
+ * wrong is worse than a missing name: `Eva <eva-7k2fq9@…>` would not match any
+ * stored address, the mail would be logged as unroutable, and the enquiry would
+ * be gone with nobody to tell.
+ */
 function firstAddress(candidates: string[] | undefined): string | null {
   const found = candidates?.find((value) => typeof value === "string" && value.includes("@"));
-  return found ? found.trim().toLowerCase() : null;
+  if (!found) return null;
+  const angled = found.match(/<([^<>]+)>/);
+  return (angled ? angled[1]! : found).trim().toLowerCase();
 }
 
 /**
