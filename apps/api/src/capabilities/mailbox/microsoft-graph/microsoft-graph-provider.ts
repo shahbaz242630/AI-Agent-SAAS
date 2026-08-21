@@ -10,35 +10,27 @@
 /** DI token for the active Microsoft Graph provider. */
 export const MICROSOFT_GRAPH_PROVIDER = Symbol("MICROSOFT_GRAPH_PROVIDER");
 
-/** OAuth token set from the Microsoft identity platform. Never logged (BRD 14). */
-export interface OAuthTokens {
-  accessToken: string;
-  refreshToken: string;
-  /** Token lifetime from the token endpoint (`expires_in`). */
-  expiresInSeconds: number;
-  /** Granted scopes, space-split from the token response. */
-  scopes: string[];
-}
+/**
+ * ⚠️ THE SHARED TYPES MOVED TO `../mail-provider.ts` IN 3.1b, for the same
+ * reason the errors did: they describe any mail provider, not Microsoft's. They
+ * are re-exported here so the Microsoft files that use them read naturally,
+ * and so the dependency still points one way — port ← implementation.
+ */
+export type {
+  AuthorizeUrlOptions,
+  MailboxProfile,
+  OAuthTokens,
+  SendMailInput,
+} from "../mail-provider.js";
 
-/** The connected mailbox identity, from Graph /me. */
-export interface MailboxProfile {
-  /** `mail` when present, else `userPrincipalName`. */
-  emailAddress: string;
-  displayName: string | null;
-}
-
-export interface SendMailInput {
-  to: string;
-  subject: string;
-  bodyText: string;
-}
-
-/** Optional targeting for the authorize URL (Slice onboarding Part A, F5). */
-export interface AuthorizeUrlOptions {
-  /** The address the user typed in Eva, passed to Microsoft as `login_hint` so
-   *  someone signed into two accounts lands on the right one. */
-  loginHint?: string;
-}
+// Re-exporting does not bring the names into THIS file scope, and the
+// interface below uses them.
+import type {
+  AuthorizeUrlOptions,
+  MailboxProfile,
+  OAuthTokens,
+  SendMailInput,
+} from "../mail-provider.js";
 
 export interface MicrosoftGraphProvider {
   /** The https://login.microsoftonline.com authorize URL for one state value. */
@@ -58,47 +50,13 @@ export interface MicrosoftGraphProvider {
 }
 
 /**
- * Microsoft says the grant is dead (invalid_grant on exchange/refresh, 401 on
- * Graph): the mailbox must be reconnected. Mapped to health_status
- * 'auth_expired' by the mailboxes module (ruling 10).
+ * ⚠️ THE SHARED ERRORS MOVED TO `../mail-provider.ts` IN 3.1b. `ReauthRequiredError`,
+ * `MailboxUnavailableError` and `MailProviderRequestError` (formerly
+ * `GraphRequestError`) are the port's, not Microsoft's — every provider raises
+ * them and `outbound-mail.ts` routes on them. Import them from there.
  */
-export class ReauthRequiredError extends Error {
-  constructor() {
-    super("Microsoft authorisation expired — reconnect the mailbox");
-    this.name = "ReauthRequiredError";
-  }
-}
-
-/**
- * The grant is fine — the account has no mailbox to use (no Exchange Online
- * licence, or mailbox not hosted in Exchange Online). Graph reports this as a
- * 401, which is why it used to be mistaken for a dead grant (defect F3): the
- * user was told to reconnect, which can never fix it, so they looped forever.
- *
- * Distinct from ReauthRequiredError because the remedy is completely
- * different — connect a different account, or buy a licence.
- */
-/**
- * "We could not open this mailbox." Deliberately NOT "this account has no
- * licence" — that is the likeliest cause but not a provable one. Graph answered
- * the same licence-less account with a bare 401 one day and a 500 the next, so
- * the honest statement is what we observed, not what we inferred.
- */
-export class MailboxUnavailableError extends Error {
-  constructor() {
-    super("Eva couldn't open that mailbox — it may not have an Exchange Online licence");
-    this.name = "MailboxUnavailableError";
-  }
-}
-
-/** Any other Microsoft-side failure. `Retry-After` surfaced for 429 (BRD §4.1). */
-export class GraphRequestError extends Error {
-  constructor(
-    message: string,
-    readonly status: number,
-    readonly retryAfterSeconds: number | null = null,
-  ) {
-    super(message);
-    this.name = "GraphRequestError";
-  }
-}
+export {
+  MailboxUnavailableError,
+  MailProviderRequestError,
+  ReauthRequiredError,
+} from "../mail-provider.js";

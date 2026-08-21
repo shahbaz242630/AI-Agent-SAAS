@@ -38,7 +38,7 @@ import {
 } from "../../common/crypto/token-crypto.js";
 import type { AuthUser } from "../../platform/authentication/current-auth-user.decorator.js";
 import {
-  GraphRequestError,
+  MailProviderRequestError,
   MailboxUnavailableError,
   MICROSOFT_GRAPH_PROVIDER,
   ReauthRequiredError,
@@ -1224,7 +1224,7 @@ export class MailboxesService {
         });
         throw new BadRequestException(AUTH_EXPIRED_MESSAGE);
       }
-      if (error instanceof GraphRequestError) {
+      if (error instanceof MailProviderRequestError) {
         throw new BadGatewayException(
           "Microsoft Graph could not send the test email â€” try again shortly",
         );
