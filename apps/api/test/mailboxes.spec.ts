@@ -5,7 +5,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vites
 import type { EvaPrismaClient } from "@eva/database";
 import { decryptToken, encryptToken } from "../src/common/crypto/token-crypto.js";
 import {
-  GraphRequestError,
+  MailProviderRequestError,
   MailboxUnavailableError,
   ReauthRequiredError,
 } from "../src/capabilities/mailbox/microsoft-graph/microsoft-graph-provider.js";
@@ -1412,7 +1412,7 @@ describe("Mailboxes (Slice 1.6)", () => {
        */
       it("still reports the connection as successful when the test email fails", async () => {
         await startDisconnected();
-        graphStub.sendMail.mockRejectedValueOnce(new GraphRequestError("nope", 500));
+        graphStub.sendMail.mockRejectedValueOnce(new MailProviderRequestError("nope", 500));
 
         const response = await request(app.getHttpServer())
           .get(`/integrations/microsoft/callback?code=fake&state=${await mintState()}`)
@@ -1634,7 +1634,7 @@ describe("Mailboxes (Slice 1.6)", () => {
 
     it("Graph failure â†’ 502", async () => {
       const account = await insertConnectedMailbox(owner, org.id);
-      graphStub.sendMail.mockRejectedValueOnce(new GraphRequestError("nope", 500));
+      graphStub.sendMail.mockRejectedValueOnce(new MailProviderRequestError("nope", 500));
       await request(app.getHttpServer())
         .post(`/organisations/${org.id}/mailboxes/${account.id}/test-email`)
         .set("Authorization", `Bearer ${tokenFor("owner")}`)
@@ -1653,7 +1653,7 @@ describe("Mailboxes (Slice 1.6)", () => {
       const account = await insertConnectedMailbox(owner, org.id, {
         tokenExpiresAt: new Date(Date.now() - 60_000),
       });
-      graphStub.sendMail.mockRejectedValueOnce(new GraphRequestError("nope", 500));
+      graphStub.sendMail.mockRejectedValueOnce(new MailProviderRequestError("nope", 500));
       await request(app.getHttpServer())
         .post(`/organisations/${org.id}/mailboxes/${account.id}/test-email`)
         .set("Authorization", `Bearer ${tokenFor("owner")}`)

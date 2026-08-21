@@ -9,7 +9,7 @@ import type {
   SendMailInput,
 } from "./microsoft-graph-provider.js";
 import {
-  GraphRequestError,
+  MailProviderRequestError,
   MailboxUnavailableError,
   ReauthRequiredError,
 } from "./microsoft-graph-provider.js";
@@ -28,6 +28,18 @@ const SCOPES = "offline_access User.Read Mail.Read Mail.Send";
 
 /** Graph error codes meaning "the grant is fine, this account has no mailbox"
  *  rather than "the grant is dead" (F3). Lower-cased for comparison. */
+/**
+ * ⚠️ CUSTOMER-FACING COPY, AND DELIBERATELY NOT AN ASSERTION. `sendTestEmail`
+ * puts this straight into a `BadRequestException` and into `last_error` on the
+ * mailbox row. A missing Exchange Online licence is the likeliest cause but not
+ * a provable one — the same account answered a bare 401 one day and a 500 the
+ * next — so this says what we observed, not what we inferred (defect F1's rule).
+ * Passed explicitly now the error class belongs to the port and its default is
+ * provider-neutral.
+ */
+const MICROSOFT_MAILBOX_UNAVAILABLE =
+  "Eva couldn't open that mailbox — it may not have an Exchange Online licence";
+
 const MAILBOX_MISSING_CODES = new Set([
   "mailboxnotenabledforrestapi",
   "mailboxnothostedinexchangeonline",
@@ -114,17 +126,26 @@ export class GraphMailProvider implements MicrosoftGraphProvider {
     if (!response.ok) {
       // invalid_grant is the one recoverable-by-reconnecting case (ruling 10).
       if (payload.error === "invalid_grant") throw new ReauthRequiredError();
-      throw new GraphRequestError("Microsoft token endpoint rejected the request", response.status);
+      throw new MailProviderRequestError(
+        "Microsoft token endpoint rejected the request",
+        response.status,
+      );
     }
     const accessToken = payload.access_token;
     const refreshToken = payload.refresh_token;
     // A 200 missing either token would otherwise be coerced to the literal
     // "undefined" and encrypted as though it were real — fail loudly instead.
     if (typeof accessToken !== "string" || accessToken.length === 0) {
-      throw new GraphRequestError("Microsoft token response had no access token", response.status);
+      throw new MailProviderRequestError(
+        "Microsoft token response had no access token",
+        response.status,
+      );
     }
     if (typeof refreshToken !== "string" || refreshToken.length === 0) {
-      throw new GraphRequestError("Microsoft token response had no refresh token", response.status);
+      throw new MailProviderRequestError(
+        "Microsoft token response had no refresh token",
+        response.status,
+      );
     }
     return {
       accessToken,
@@ -144,7 +165,7 @@ export class GraphMailProvider implements MicrosoftGraphProvider {
     }>(accessToken, `${GRAPH_BASE}/me?$select=displayName,mail,userPrincipalName`);
     const emailAddress = payload.mail ?? payload.userPrincipalName;
     if (!emailAddress) {
-      throw new GraphRequestError("Microsoft profile had no mailbox address", 200);
+      throw new MailProviderRequestError("Microsoft profile had no mailbox address", 200);
     }
     return { emailAddress, displayName: payload.displayName ?? null };
   }
@@ -195,7 +216,7 @@ export class GraphMailProvider implements MicrosoftGraphProvider {
        * Mapping only 401 was not enough, and that is not a theory — the SAME
        * licence-less account answered a bare 401 on 2026-07-31 and an
        * HTTP 500 (with `Retry-After: 10`) on 2026-08-01, observed on staging.
-       * The 500 fell through to GraphRequestError and the customer was told
+       * The 500 fell through to MailProviderRequestError and the customer was told
        * "please try again", which for an account with no mailbox is the exact
        * infinite loop F3 exists to remove.
        *
@@ -210,7 +231,7 @@ export class GraphMailProvider implements MicrosoftGraphProvider {
        * a declined consent: when two causes are indistinguishable, say so
        * instead of guessing, because guessing is wrong half the time.
        */
-      throw new MailboxUnavailableError();
+      throw new MailboxUnavailableError(MICROSOFT_MAILBOX_UNAVAILABLE);
     }
   }
 
@@ -239,15 +260,16 @@ export class GraphMailProvider implements MicrosoftGraphProvider {
       // 2. Graph sometimes names the reason in error.code. Read only that enum
       //    field, never the free-text message — Microsoft bodies can quote
       //    request material back, so the no-echo rule still holds.
-      if (unauthorizedMeans === "mailbox_missing") throw new MailboxUnavailableError();
+      if (unauthorizedMeans === "mailbox_missing")
+        throw new MailboxUnavailableError(MICROSOFT_MAILBOX_UNAVAILABLE);
       if (isMailboxMissing(await readGraphErrorCode(response))) {
-        throw new MailboxUnavailableError();
+        throw new MailboxUnavailableError(MICROSOFT_MAILBOX_UNAVAILABLE);
       }
       throw new ReauthRequiredError();
     }
     if (!response.ok) {
       const retryAfter = Number.parseInt(response.headers.get("Retry-After") ?? "", 10);
-      throw new GraphRequestError(
+      throw new MailProviderRequestError(
         "Microsoft Graph rejected the request",
         response.status,
         Number.isNaN(retryAfter) ? null : retryAfter,

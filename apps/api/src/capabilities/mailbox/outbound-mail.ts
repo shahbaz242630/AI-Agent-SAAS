@@ -3,7 +3,7 @@ import { Inject, Injectable } from "@nestjs/common";
 import { MailboxesService } from "./mailboxes.service.js";
 import type { SendingMailboxResolution } from "./mailboxes.service.js";
 import {
-  GraphRequestError,
+  MailProviderRequestError,
   ReauthRequiredError,
 } from "./microsoft-graph/microsoft-graph-provider.js";
 import {
@@ -146,7 +146,7 @@ export class RoutedOutboundMail implements OutboundMail {
     } catch (error) {
       // A rate limit or a provider blip must NOT close the reminder off; only
       // a fault in the message itself is a real failure.
-      if (error instanceof GraphRequestError && isTransient(error.status)) {
+      if (error instanceof MailProviderRequestError && isTransient(error.status)) {
         throw new MailDeliveryDeferredError(error.retryAfterSeconds, error);
       }
       if (error instanceof ReauthRequiredError) throw new MailboxUnusableError(error);

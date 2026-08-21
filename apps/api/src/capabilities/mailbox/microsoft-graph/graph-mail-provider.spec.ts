@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ApiEnv } from "../../../config/env.js";
 import { GraphMailProvider } from "./graph-mail-provider.js";
 import {
-  GraphRequestError,
+  MailProviderRequestError,
   MailboxUnavailableError,
   ReauthRequiredError,
 } from "./microsoft-graph-provider.js";
@@ -120,9 +120,9 @@ describe("GraphMailProvider (Slice 1.6, ruling 3 — hand-rolled OAuth)", () => 
   // instead of persisting garbage that breaks the next refresh.
   it("rejects a 200 token response missing access_token or refresh_token", async () => {
     stubFetch(() => jsonResponse(200, { access_token: "only-access", expires_in: 3600 }));
-    await expect(provider.exchangeCode("code")).rejects.toBeInstanceOf(GraphRequestError);
+    await expect(provider.exchangeCode("code")).rejects.toBeInstanceOf(MailProviderRequestError);
     stubFetch(() => jsonResponse(200, { refresh_token: "only-refresh", expires_in: 3600 }));
-    await expect(provider.exchangeCode("code")).rejects.toBeInstanceOf(GraphRequestError);
+    await expect(provider.exchangeCode("code")).rejects.toBeInstanceOf(MailProviderRequestError);
   });
 
   it("getProfile prefers mail, falls back to userPrincipalName", async () => {
@@ -169,9 +169,9 @@ describe("GraphMailProvider (Slice 1.6, ruling 3 — hand-rolled OAuth)", () => 
     const error = await provider
       .sendMail("access-1", { to: "t@example.com", subject: "s", bodyText: "b" })
       .catch((caught: unknown) => caught);
-    expect(error).toBeInstanceOf(GraphRequestError);
-    expect((error as GraphRequestError).status).toBe(429);
-    expect((error as GraphRequestError).retryAfterSeconds).toBe(17);
+    expect(error).toBeInstanceOf(MailProviderRequestError);
+    expect((error as MailProviderRequestError).status).toBe(429);
+    expect((error as MailProviderRequestError).retryAfterSeconds).toBe(17);
   });
 
   it("maps Graph 401 to ReauthRequiredError", async () => {
@@ -179,18 +179,18 @@ describe("GraphMailProvider (Slice 1.6, ruling 3 — hand-rolled OAuth)", () => 
     await expect(provider.getProfile("expired")).rejects.toBeInstanceOf(ReauthRequiredError);
   });
 
-  it("other failures throw GraphRequestError with the status", async () => {
+  it("other failures throw MailProviderRequestError with the status", async () => {
     stubFetch(() => jsonResponse(500, { error: { message: "boom" } }));
     const error = await provider.getProfile("x").catch((caught: unknown) => caught);
-    expect(error).toBeInstanceOf(GraphRequestError);
-    expect((error as GraphRequestError).status).toBe(500);
+    expect(error).toBeInstanceOf(MailProviderRequestError);
+    expect((error as MailProviderRequestError).status).toBe(500);
   });
 
   it("never leaks the access token or Microsoft body text into error messages", async () => {
     stubFetch(() => jsonResponse(500, { error: { message: "secret-internal-detail" } }));
     const error = (await provider
       .getProfile("super-secret-access-token")
-      .catch((caught: unknown) => caught)) as GraphRequestError;
+      .catch((caught: unknown) => caught)) as MailProviderRequestError;
     expect(error.message).not.toContain("super-secret-access-token");
     expect(error.message).not.toContain("secret-internal-detail");
   });
@@ -270,6 +270,25 @@ describe("GraphMailProvider — a missing mailbox is not an expired grant (F3)",
   });
 
   /**
+   * ⚠️ CUSTOMER-FACING COPY, PINNED — AND IT WAS NOT PINNED UNTIL 3.1b.
+   * `sendTestEmail` throws `BadRequestException(error.message)` and writes the
+   * same string into `last_error`, so this sentence is read by whoever is
+   * trying to connect a mailbox. It was found unpinned while moving the error
+   * class to the shared port — at the exact moment a careless provider-neutral
+   * default would have replaced it and nothing would have failed.
+   *
+   * It says "may not have" rather than "does not have" on purpose (defect F1):
+   * the same licence-less account answered a bare 401 one day and a 500 the
+   * next, so a missing licence is the likeliest cause and not a provable one.
+   */
+  it("says what we observed rather than asserting the cause", async () => {
+    stubFetch(() => mailboxless("MailboxNotEnabledForRESTAPI"));
+    await expect(provider.probeMailbox("valid-token")).rejects.toThrow(
+      "Eva couldn't open that mailbox — it may not have an Exchange Online licence",
+    );
+  });
+
+  /**
    * THE case that matters, and the one the first implementation got wrong.
    *
    * Observed against a real licence-less account on 2026-07-31: Graph answers
@@ -295,7 +314,7 @@ describe("GraphMailProvider — a missing mailbox is not an expired grant (F3)",
    *
    * The very same licence-less account that answered a bare 401 on 2026-07-31
    * answered HTTP 500 with `Retry-After: 10` the next day. Only 401 was mapped
-   * to "no mailbox", so the 500 fell through to GraphRequestError and the
+   * to "no mailbox", so the 500 fell through to MailProviderRequestError and the
    * customer was told "please try again" — the identical infinite loop F3 was
    * written to remove, just wearing a different message.
    *
@@ -317,7 +336,7 @@ describe("GraphMailProvider — a missing mailbox is not an expired grant (F3)",
   });
 
   it("treats a probe that cannot reach Microsoft at all as a missing mailbox", async () => {
-    // A thrown fetch never produced a GraphRequestError, so it used to escape
+    // A thrown fetch never produced a MailProviderRequestError, so it used to escape
     // handleCallback's MailboxUnavailableError branch entirely.
     stubFetch(() => {
       throw new TypeError("network down");
@@ -333,10 +352,10 @@ describe("GraphMailProvider — a missing mailbox is not an expired grant (F3)",
     // would tell a user with a perfectly good mailbox that they have none.
     stubFetch(() => new Response(null, { status: 500 }));
 
-    await expect(provider.getProfile("valid")).rejects.toBeInstanceOf(GraphRequestError);
+    await expect(provider.getProfile("valid")).rejects.toBeInstanceOf(MailProviderRequestError);
     await expect(
       provider.sendMail("valid", { to: "t@example.com", subject: "s", bodyText: "b" }),
-    ).rejects.toBeInstanceOf(GraphRequestError);
+    ).rejects.toBeInstanceOf(MailProviderRequestError);
   });
 
   it("a bare 401 ANYWHERE ELSE is still a dead grant", async () => {

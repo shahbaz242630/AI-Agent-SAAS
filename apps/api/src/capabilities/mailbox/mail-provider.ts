@@ -1,9 +1,42 @@
-import type {
-  AuthorizeUrlOptions,
-  MailboxProfile,
-  OAuthTokens,
-  SendMailInput,
-} from "./microsoft-graph/microsoft-graph-provider.js";
+/**
+ * OAuth token set from a mail provider. Never logged (BRD 14).
+ *
+ * ⚠️ THESE TYPES LIVE HERE RATHER THAN IN THE MICROSOFT FOLDER, AND NOT ONLY
+ * FOR TIDINESS. The port already re-exports the shared ERRORS; had it kept
+ * importing its types back out of `microsoft-graph-provider.ts` the two files
+ * would import each other, and `no-circular` — one of the two walls — fails the
+ * build on exactly that. A port that depends on one of its implementations is
+ * not a port, and the cruiser is what says so out loud.
+ */
+export interface OAuthTokens {
+  accessToken: string;
+  refreshToken: string;
+  /** Token lifetime from the token endpoint (`expires_in`). */
+  expiresInSeconds: number;
+  /** Granted scopes, space-split from the token response. */
+  scopes: string[];
+}
+
+/** The connected mailbox's identity, as the provider reports it. */
+export interface MailboxProfile {
+  emailAddress: string;
+  displayName: string | null;
+}
+
+export interface SendMailInput {
+  to: string;
+  subject: string;
+  bodyText: string;
+}
+
+/** Optional targeting for the authorize URL (onboarding Part A, F5). */
+export interface AuthorizeUrlOptions {
+  /**
+   * The address the user typed in Eva, passed to the provider as `login_hint`
+   * so somebody signed into two accounts lands on the right one.
+   */
+  loginHint?: string;
+}
 
 /**
  * The mailbox capability's provider port (Slice 3.1b, step 2).
@@ -43,6 +76,61 @@ export interface MailProvider {
    * reminder. Throws MailboxUnavailableError when there is none.
    */
   probeMailbox(accessToken: string): Promise<void>;
+}
+
+/**
+ * The grant is dead — the mailbox must be reconnected.
+ *
+ * ⚠️ MOVED HERE FROM THE MICROSOFT MODULE (3.1b step 2). It was never
+ * Microsoft's: `outbound-mail.ts` catches it for any provider, and
+ * `mailboxes.service.ts` maps it to `health_status = 'auth_expired'` for any
+ * mailbox. Leaving it behind would have meant a Gmail adapter importing an
+ * error out of the Microsoft folder in order to say something that has nothing
+ * to do with Microsoft.
+ */
+export class ReauthRequiredError extends Error {
+  constructor() {
+    super("Authorisation expired — reconnect the mailbox");
+    this.name = "ReauthRequiredError";
+  }
+}
+
+/**
+ * The grant is fine — there is no usable mailbox behind it.
+ *
+ * ⚠️ THE MESSAGE IS THE PROVIDER'S, NOT OURS, AND IT REACHES THE CUSTOMER.
+ * `sendTestEmail` puts it straight into a `BadRequestException` and into
+ * `last_error` on the mailbox row. Microsoft's wording was chosen carefully
+ * under defect F1's rule — when two causes are indistinguishable, say so rather
+ * than guess — so it is passed in rather than replaced by something generic.
+ */
+export class MailboxUnavailableError extends Error {
+  constructor(message = "Eva couldn't open that mailbox") {
+    super(message);
+    this.name = "MailboxUnavailableError";
+  }
+}
+
+/**
+ * Any other provider-side failure. `Retry-After` is surfaced for 429 (BRD §4.1)
+ * so the sender can defer rather than fail a reminder.
+ *
+ * ⚠️ RENAMED FROM `GraphRequestError`. `outbound-mail.ts` decides whether a
+ * failed send is retryable by testing for this class — so a Gmail adapter that
+ * threw anything else would silently lose Google's rate limits and 5xxs into
+ * the "permanent failure" branch, and a customer's chaser would be binned the
+ * first time Google had a busy minute. The old name would have made throwing it
+ * from a Google adapter look wrong, which is exactly how that bug gets written.
+ */
+export class MailProviderRequestError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+    readonly retryAfterSeconds: number | null = null,
+  ) {
+    super(message);
+    this.name = "MailProviderRequestError";
+  }
 }
 
 /** DI token for the map of provider key → adapter. */

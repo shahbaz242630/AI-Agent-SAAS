@@ -4,7 +4,7 @@ import request from "supertest";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { EvaPrismaClient } from "@eva/database";
 import { encryptToken } from "../src/common/crypto/token-crypto.js";
-import { GraphRequestError } from "../src/capabilities/mailbox/microsoft-graph/microsoft-graph-provider.js";
+import { MailProviderRequestError } from "../src/capabilities/mailbox/microsoft-graph/microsoft-graph-provider.js";
 import type {
   MicrosoftGraphProvider,
   SendMailInput,
@@ -57,10 +57,12 @@ const graphDouble: MicrosoftGraphProvider = {
   getProfile: () => Promise.resolve({ emailAddress: "sandbox@example.com", displayName: null }),
   sendMail: (accessToken: string, input: SendMailInput) => {
     if (sendTransientStatus !== null) {
-      return Promise.reject(new GraphRequestError("too many requests", sendTransientStatus, 30));
+      return Promise.reject(
+        new MailProviderRequestError("too many requests", sendTransientStatus, 30),
+      );
     }
     // 400 — a fault in the message itself, which WILL fail again next time.
-    if (sendShouldFail) return Promise.reject(new GraphRequestError("rejected", 400, null));
+    if (sendShouldFail) return Promise.reject(new MailProviderRequestError("rejected", 400, null));
     sentMail.push({ accessToken, ...input });
     return Promise.resolve();
   },
