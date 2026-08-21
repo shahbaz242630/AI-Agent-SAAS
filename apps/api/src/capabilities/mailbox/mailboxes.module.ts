@@ -8,7 +8,9 @@ import { MailboxesController } from "./mailboxes.controller.js";
 import { MailboxesService } from "./mailboxes.service.js";
 import { MicrosoftOAuthController } from "./microsoft-oauth.controller.js";
 import { RoutedOutboundMail, OUTBOUND_MAIL } from "./outbound-mail.js";
-import { MAIL_PROVIDERS, type MailProviderRegistry } from "./mail-provider.js";
+import { MAIL_PROVIDERS, type MailProvider, type MailProviderRegistry } from "./mail-provider.js";
+import { GmailProvider } from "./google/gmail-provider.js";
+import { GoogleOAuthController } from "./google/google-oauth.controller.js";
 import { InboundAddressesController } from "./inbound/inbound-addresses.controller.js";
 import { InboundAddressesService } from "./inbound/inbound-addresses.service.js";
 import { InboundWebhookController } from "./inbound/inbound-webhook.controller.js";
@@ -24,6 +26,7 @@ import type { ApiEnv } from "../../config/env.js";
     MicrosoftOAuthController,
     InboundAddressesController,
     InboundWebhookController,
+    GoogleOAuthController,
   ],
   providers: [
     MailboxesService,
@@ -56,11 +59,18 @@ import type { ApiEnv } from "../../config/env.js";
      *
      * The map is the one place a new provider is added. Gmail is one entry.
      */
+    GmailProvider,
     {
       provide: MAIL_PROVIDERS,
-      inject: [MICROSOFT_GRAPH_PROVIDER],
-      useFactory: (microsoft: GraphMailProvider): MailProviderRegistry =>
-        new Map([["microsoft", microsoft]]),
+      inject: [MICROSOFT_GRAPH_PROVIDER, GmailProvider],
+      useFactory: (microsoft: GraphMailProvider, google: GmailProvider): MailProviderRegistry =>
+        // Annotated: without it the Map infers its value type from the FIRST
+        // entry, so adding a second provider is a type error rather than an
+        // entry — which reads as "Gmail does not fit" instead of "annotate me".
+        new Map<string, MailProvider>([
+          ["microsoft", microsoft],
+          ["google", google],
+        ]),
     },
   ],
   /**

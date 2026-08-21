@@ -68,6 +68,23 @@ export const apiEnvSchema = z.object({
    * refuses when this is empty, and a test proves it.
    */
   RESEND_WEBHOOK_SECRET: z.string().default(""),
+  /**
+   * Slice 3.1b step 3 — Gmail sending (ruling 25: the CHEAP scope).
+   *
+   * ⚠️ OPTIONAL AT BOOT AND REFUSED AT USE, THE SAME SHAPE AS THE INBOUND
+   * DOMAIN AND FOR THE SAME REASON. Required would mean the API refuses to
+   * start on any environment without Google credentials — including the one
+   * running the product we already sell. A default is impossible here anyway:
+   * there is no plausible client id.
+   *
+   * Unset, the Gmail card stays as it has always been — greyed out, "soon" —
+   * and no authorize URL can be built. Microsoft is untouched either way.
+   */
+  GOOGLE_CLIENT_ID: z.string().default(""),
+  GOOGLE_CLIENT_SECRET: z.string().default(""),
+  GOOGLE_OAUTH_REDIRECT_URI: z
+    .string()
+    .default("http://localhost:3001/integrations/google/callback"),
 });
 
 export type ApiEnv = z.infer<typeof apiEnvSchema>;

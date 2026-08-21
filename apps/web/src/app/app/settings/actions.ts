@@ -37,6 +37,26 @@ function readFlow(formData: FormData): ConnectFlow {
   return CONNECT_FLOWS.includes(value as ConnectFlow) ? (value as ConnectFlow) : "settings";
 }
 
+/**
+ * Which mailbox provider the customer picked (Slice 3.1b step 3).
+ *
+ * Re-checked here rather than forwarded as typed, for the same reason as the
+ * flow above: a server action is reachable by direct POST, so a form field is
+ * untrusted input even though our own UI renders the only form. Anything
+ * unrecognised falls back to Microsoft — the provider that has always worked —
+ * rather than erroring, because a garbled field should not cost somebody their
+ * connection.
+ */
+const CONNECT_PROVIDERS = ["microsoft", "google"] as const;
+type ConnectProvider = (typeof CONNECT_PROVIDERS)[number];
+
+function readProvider(formData: FormData): ConnectProvider {
+  const value = String(formData.get("provider") ?? "");
+  return CONNECT_PROVIDERS.includes(value as ConnectProvider)
+    ? (value as ConnectProvider)
+    : "microsoft";
+}
+
 export interface MailboxActionState {
   error?: string;
   success?: string;
@@ -59,6 +79,7 @@ async function resolveConnectTarget(
   accessToken: string,
   emailAddress: string,
   flow: ConnectFlow,
+  provider: ConnectProvider,
   replacesMailboxId: string | null = null,
 ): Promise<string> {
   try {
@@ -70,6 +91,7 @@ async function resolveConnectTarget(
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           ...(emailAddress ? { emailAddress } : {}),
+          provider,
           flow,
           ...(replacesMailboxId ? { replacesMailboxId } : {}),
         }),
@@ -108,6 +130,7 @@ export async function connectMailbox(formData: FormData): Promise<void> {
       accessToken,
       emailAddress,
       readFlow(formData),
+      readProvider(formData),
       // Present only on the Replace form (slice 1.6b, ruling 3). Empty means an
       // ordinary connect, which is the overwhelmingly common case.
       String(formData.get("replacesMailboxId") ?? "").trim() || null,

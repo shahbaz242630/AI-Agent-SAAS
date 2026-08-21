@@ -27,6 +27,21 @@ export interface SendMailInput {
   to: string;
   subject: string;
   bodyText: string;
+  /**
+   * The connected mailbox's own address.
+   *
+   * ⚠️ CARRIED RATHER THAN LOOKED UP, BECAUSE GMAIL COMPOSES THE WHOLE MESSAGE.
+   * Graph sends as the authenticated user and needs no `From`; Gmail is handed
+   * a complete RFC 5322 message, which has one. The first cut fetched the
+   * profile inside `sendMail` to find it — an extra network round trip on every
+   * single email, and one more thing that can fail between a customer's chaser
+   * and their debtor. The caller has always had this to hand.
+   *
+   * Optional because Microsoft ignores it, and because Gmail fills in the
+   * authenticated address itself when the header is absent — so a missing value
+   * degrades to correct rather than to wrong.
+   */
+  from?: string;
 }
 
 /** Optional targeting for the authorize URL (onboarding Part A, F5). */
@@ -147,7 +162,7 @@ export const MAIL_PROVIDERS = Symbol("MAIL_PROVIDERS");
  * failure announces itself, and both are invisible until a customer's mail
  * stops.
  */
-export const MAIL_PROVIDER_KEYS = ["microsoft"] as const;
+export const MAIL_PROVIDER_KEYS = ["microsoft", "google"] as const;
 
 export type MailProviderKey = (typeof MAIL_PROVIDER_KEYS)[number];
 

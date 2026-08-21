@@ -593,6 +593,15 @@ export type MicrosoftCallbackQuery = z.infer<typeof microsoftCallbackQuerySchema
  */
 export const mailboxConnectSchema = z
   .object({
+    /**
+     * Which provider to connect (Slice 3.1b step 3).
+     *
+     * ⚠️ DEFAULTS TO `microsoft` SO EVERY EXISTING CALLER KEEPS WORKING. The
+     * settings screen and onboarding both called this endpoint with no provider
+     * for months; making it required would 400 them all, and the failure would
+     * land on the product we already sell rather than on the new one.
+     */
+    provider: z.enum(["microsoft", "google"]).optional(),
     emailAddress: z.string().trim().email().max(320).optional(),
     /** Which Eva screen this was started from, so the callback returns the user
      *  there. A closed enum, never a URL — the API maps it to a path from its
