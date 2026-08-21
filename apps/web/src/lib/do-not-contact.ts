@@ -36,11 +36,20 @@ export function recordedByLine(recordedBy: string | null): string {
   return recordedBy ?? "someone who has since left";
 }
 
-/** The count line above the list. */
+/**
+ * The count line above the list.
+ *
+ * ⚠️ IT COUNTS ADDRESSES AND NUMBERS, NOT PEOPLE, AND IT USED TO SAY "people".
+ * Found by walking production on 2026-08-21: one do-not-contact on one enquiry
+ * put an address AND a number on the list, and the screen announced "2 people
+ * Eva will not contact" about a single person. We cannot know which values
+ * belong to the same human — suppression is by value, deliberately — so the
+ * honest count is of entries, and the wording has to match what is counted.
+ */
 export function doNotContactCountLine(total: number): string {
   if (total === 0) return "Nobody is on this list.";
-  if (total === 1) return "1 person Eva will not contact.";
-  return `${total} people Eva will not contact.`;
+  if (total === 1) return "One address or number Eva will not use.";
+  return `${total} addresses and numbers Eva will not use.`;
 }
 
 /**

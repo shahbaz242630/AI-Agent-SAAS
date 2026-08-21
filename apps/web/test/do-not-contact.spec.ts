@@ -54,10 +54,18 @@ describe("how a do-not-contact entry reads", () => {
     expect(recordedByLine("Priya Raman")).toBe("Priya Raman");
   });
 
-  it("counts people the way a person would", () => {
+  /**
+   * ⚠️ ENTRIES, NOT PEOPLE. One do-not-contact on one enquiry puts an address
+   * AND a number on the list, and the old wording announced "2 people Eva will
+   * not contact" about a single person — walked on production 2026-08-21.
+   * Suppression is by value on purpose, so we cannot know which entries belong
+   * to the same human; the count has to say what it actually counted.
+   */
+  it("counts addresses and numbers, never claiming to count people", () => {
     expect(doNotContactCountLine(0)).toBe("Nobody is on this list.");
-    expect(doNotContactCountLine(1)).toBe("1 person Eva will not contact.");
-    expect(doNotContactCountLine(4)).toBe("4 people Eva will not contact.");
+    expect(doNotContactCountLine(1)).toBe("One address or number Eva will not use.");
+    expect(doNotContactCountLine(2)).toBe("2 addresses and numbers Eva will not use.");
+    expect(doNotContactCountLine(4)).not.toContain("people");
   });
 });
 

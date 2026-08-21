@@ -9,6 +9,7 @@ import { requirePermission } from "../permissions/permissions.js";
 import { writeAuditLog } from "../audit/audit-log.js";
 import type { AuthUser } from "../authentication/current-auth-user.decorator.js";
 import { correctSuppression, listSuppressed, normaliseSuppressionValue } from "./suppression.js";
+import { revertLeadsAfterCorrection } from "../leads/lead-suppression-reconcile.js";
 
 /** One person Eva is not contacting, as a screen reads it. */
 export interface SuppressionRow {
@@ -106,6 +107,21 @@ export class SuppressionService {
         throw new NotFoundException("That is not currently a do-not-contact entry");
       }
 
+      /**
+       * ⚠️ THE LABEL HAS TO FOLLOW THE GATE, OR THE SCREEN LIES. An enquiry
+       * marked "Do not contact" stays marked after its suppression is lifted
+       * unless something puts it back — which is exactly what the first
+       * correction ever made on production did (2026-08-21). Only reverts an
+       * enquiry when NOTHING about that person is suppressed any more; see the
+       * reconcile for why one channel is not enough.
+       */
+      const revertedLeads = await revertLeadsAfterCorrection(tx, {
+        organisationId,
+        channel: input.channel,
+        value: input.value,
+        actorUserId: user.id,
+      });
+
       await writeAuditLog(tx, {
         organisationId,
         actorUserId: user.id,
@@ -122,7 +138,7 @@ export class SuppressionService {
         // ⚠️ THE REASON IS THE POINT OF THIS ENTRY. "Somebody undid a
         // do-not-contact" without why is a line that raises a question and
         // answers none.
-        metadata: { channel: input.channel, reason: input.reason },
+        metadata: { channel: input.channel, reason: input.reason, revertedLeads },
       });
 
       return { corrected: true };
