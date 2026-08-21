@@ -8,6 +8,10 @@ import { API_ENV } from "../src/config/config.module.js";
 import type { ApiEnv } from "../src/config/env.js";
 import { JwksService } from "../src/platform/authentication/jwks.service.js";
 import {
+  RECEIVED_MAIL,
+  type ReceivedMail,
+} from "../src/capabilities/mailbox/inbound/received-mail.js";
+import {
   MICROSOFT_GRAPH_PROVIDER,
   type MicrosoftGraphProvider,
 } from "../src/capabilities/mailbox/microsoft-graph/microsoft-graph-provider.js";
@@ -37,6 +41,14 @@ export const TEST_TOKEN_ENCRYPTION_KEY = Buffer.from("0123456789abcdef0123456789
   "base64",
 );
 export const TEST_OAUTH_STATE_SECRET = "test-oauth-state-secret-0123456789abcdef"; // gitleaks:allow — fake test fixture
+/**
+ * Slice 3.1b fixtures. The webhook secret must be base64 behind `whsec_`,
+ * because that is the shape the verifier decodes — a fixture that is not would
+ * let every signature test agree with a verifier wrong in the same way.
+ */
+export const TEST_RESEND_API_KEY = "re_test_0123456789abcdef"; // gitleaks:allow — fake test fixture
+export const TEST_RESEND_WEBHOOK_SECRET =
+  "whsec_" + Buffer.from("eva-test-webhook-secret").toString("base64"); // gitleaks:allow — fake test fixture
 
 const testEnv: ApiEnv = {
   NODE_ENV: "test",
@@ -54,6 +66,11 @@ const testEnv: ApiEnv = {
   MICROSOFT_CLIENT_SECRET: "test-microsoft-client-secret", // gitleaks:allow — fake test fixture
   MICROSOFT_TENANT: "common",
   MICROSOFT_OAUTH_REDIRECT_URI: "http://localhost:3001/integrations/microsoft/callback",
+  // Slice 3.1b — the domain a customer's enquiries are delivered to. Ruling 34
+  // starts on Resend's free `*.resend.app`; a fixture value stands in here.
+  INBOUND_EMAIL_DOMAIN: "test-inbound.eva.local",
+  RESEND_API_KEY: TEST_RESEND_API_KEY,
+  RESEND_WEBHOOK_SECRET: TEST_RESEND_WEBHOOK_SECRET,
 };
 
 interface TestKeys {
@@ -120,12 +137,29 @@ export function unsignedToken(claims: { sub: string; email: string }): string {
  * permissions, crypto, state JWTs).
  */
 export async function createTestApp(
-  options: { graphProvider?: MicrosoftGraphProvider; discovery?: MicrosoftDiscovery } = {},
+  options: {
+    graphProvider?: MicrosoftGraphProvider;
+    discovery?: MicrosoftDiscovery;
+    /**
+     * Environment overrides for THIS app instance. Added for 3.1b, where the
+     * behaviour worth proving is what happens when `INBOUND_EMAIL_DOMAIN` is
+     * NOT set: an environment with no inbound domain must refuse to issue an
+     * address rather than invent one, and that path is unreachable without a
+     * way to unset it.
+     */
+    env?: Partial<ApiEnv>;
+    /**
+     * The inbound mail seam (3.1b). Resend's webhook carries metadata only, so
+     * the intake path makes a second call to fetch the message — stubbed here
+     * so specs prove the intake logic rather than the network.
+     */
+    receivedMail?: ReceivedMail;
+  } = {},
 ): Promise<INestApplication> {
   const { getKey } = await testKeys();
   let builder = Test.createTestingModule({ imports: [AppModule] })
     .overrideProvider(API_ENV)
-    .useValue(testEnv)
+    .useValue({ ...testEnv, ...options.env })
     .overrideProvider(JwksService)
     .useValue({ getKey: () => getKey });
   if (options.graphProvider) {
@@ -137,8 +171,13 @@ export async function createTestApp(
   builder = builder
     .overrideProvider(MICROSOFT_DISCOVERY)
     .useValue(options.discovery ?? { describeDomain: async () => UNKNOWN_DOMAIN });
+  if (options.receivedMail) {
+    builder = builder.overrideProvider(RECEIVED_MAIL).useValue(options.receivedMail);
+  }
   const moduleRef = await builder.compile();
-  const app = moduleRef.createNestApplication();
+  // rawBody matches main.ts: the inbound webhook guard verifies an HMAC over
+  // the exact bytes received, and a test app without it would prove nothing.
+  const app = moduleRef.createNestApplication({ rawBody: true });
   await app.init();
   return app;
 }

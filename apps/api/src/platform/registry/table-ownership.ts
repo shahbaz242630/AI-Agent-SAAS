@@ -42,18 +42,41 @@ export const PLATFORM_TABLES = [
    * (`PERMISSION_MODULES`), so a customer holding only invoice chasing gets
    * nothing — the table being shared is not the same as the data being open.
    *
-   * What the lead PRODUCT will own is the machinery of answering: reading the
-   * mailbox, classifying an enquiry, sending the reply. That lives under
-   * `products/` when 3.1b and 3.1c build it.
+   * What the lead PRODUCT will own is the machinery of ANSWERING: classifying
+   * an enquiry (ruling 32 — reply to genuine enquiries, never to spam), the
+   * templates a customer edits, and sending the reply. That lives under
+   * `products/` when 3.1c builds it.
+   *
+   * ⚠️ AMENDED 2026-08-21: THIS USED TO SAY "READING THE MAILBOX" TOO, AND
+   * 3.1b PUT THAT SOMEWHERE ELSE. Receiving mail turned out to be the same KIND
+   * of thing as sending it, so it sits in the mailbox CAPABILITY beside
+   * `emailAccount` — which is why there is still no `products/` folder for
+   * leads after 3.1b. A product folder whose only content is a call into the
+   * platform is a folder pretending to be a boundary.
    */
   "lead",
   "leadEvidence",
   "consentText",
 ] as const;
 
-/** Shared machinery. Owned by a capability, not by any product. */
+/**
+ * Shared machinery. Owned by a capability, not by any product.
+ *
+ * ⚠️ THE INBOUND PAIR IS THE CAPABILITY'S, NOT THE LEAD PRODUCT'S, AND THAT IS
+ * A DELIBERATE CALL (3.1b, 2026-08-21). Receiving mail is the same KIND of
+ * thing as sending it — `emailAccount` is already here for the sending half —
+ * and the split falls where it does for sending too: the machinery moves the
+ * message, the product decides what it MEANS. `inbound_addresses` is a door we
+ * own; `inbound_messages` is what came through it. Neither knows what a lead is.
+ *
+ * The practical consequence is the point: when Lead Follow-up by CALL or the
+ * CRM wants mail, nothing moves. And a product is still free to read these —
+ * "products may use machinery they pay for" is the rule `architecture.spec.ts`
+ * encodes — so the lead product marking a message converted is ordinary use,
+ * not a crossing.
+ */
 export const CAPABILITY_TABLES = {
-  mailbox: ["emailAccount"],
+  mailbox: ["emailAccount", "inboundAddress", "inboundMessage"],
 } as const;
 
 /**

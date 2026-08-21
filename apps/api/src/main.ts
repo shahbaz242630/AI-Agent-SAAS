@@ -11,7 +11,16 @@ import { apiEnvSchema } from "./config/env.js";
 async function bootstrap(): Promise<void> {
   const env = loadEnv(apiEnvSchema);
 
-  const app = await NestFactory.create(AppModule, { bufferLogs: true });
+  /**
+   * ⚠️ `rawBody` IS LOAD-BEARING, NOT A PERFORMANCE OPTION. Slice 3.1b's inbound
+   * webhook is authenticated by an HMAC over the EXACT bytes Resend sent, and
+   * `JSON.stringify` of the parsed body is a different string (key order,
+   * unicode escaping, whitespace). Without this, every genuine webhook is
+   * rejected as forged, and the only symptom is enquiries silently not
+   * arriving. `createTestApp` sets it too, so the tests cannot pass while
+   * production fails.
+   */
+  const app = await NestFactory.create(AppModule, { bufferLogs: true, rawBody: true });
   app.useLogger(app.get(Logger));
   app.use(helmet());
   app.enableShutdownHooks();
