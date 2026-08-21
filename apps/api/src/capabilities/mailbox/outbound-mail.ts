@@ -2,12 +2,16 @@ import { Inject, Injectable } from "@nestjs/common";
 // eslint-disable-next-line @typescript-eslint/consistent-type-imports
 import { MailboxesService } from "./mailboxes.service.js";
 import type { SendingMailboxResolution } from "./mailboxes.service.js";
-import { MICROSOFT_GRAPH_PROVIDER } from "./microsoft-graph/microsoft-graph-provider.js";
-import type { MicrosoftGraphProvider } from "./microsoft-graph/microsoft-graph-provider.js";
 import {
   GraphRequestError,
   ReauthRequiredError,
 } from "./microsoft-graph/microsoft-graph-provider.js";
+import {
+  MAIL_PROVIDERS,
+  providerFor,
+  UnknownMailProviderError,
+  type MailProviderRegistry,
+} from "./mail-provider.js";
 
 /**
  * The seam ANY product sends mail through, from the organisation's own mailbox.
@@ -95,12 +99,27 @@ export interface OutboundMail {
   deliver(delivery: OutboundMailDelivery): Promise<void>;
 }
 
-/** The Microsoft 365 implementation of the port. */
+/**
+ * Delivers through whichever provider the MAILBOX was connected with.
+ *
+ * ⚠️ THE PROVIDER COMES FROM THE ROW, NEVER FROM CONFIGURATION. A mailbox
+ * connected through Microsoft is sent through Microsoft for the rest of its
+ * life, whatever else is registered afterwards. Choosing per-send from anything
+ * else — a default, an env var, "the newest adapter" — would mean a customer's
+ * chaser going out through an account that never granted us anything.
+ *
+ * ⚠️ RENAMED FROM `GraphOutboundMail` (3.1b step 2). The old name was the same
+ * trap this file already documents about `reminder-mail-sender`: naming shared
+ * machinery after its only implementation. Whoever added Gmail under that name
+ * would reasonably have written a second sender, and the retry, rate-limit and
+ * reauth handling below — all of which was learned the hard way — would have
+ * had to be learned again.
+ */
 @Injectable()
-export class GraphOutboundMail implements OutboundMail {
+export class RoutedOutboundMail implements OutboundMail {
   constructor(
     private readonly mailboxes: MailboxesService,
-    @Inject(MICROSOFT_GRAPH_PROVIDER) private readonly graph: MicrosoftGraphProvider,
+    @Inject(MAIL_PROVIDERS) private readonly providers: MailProviderRegistry,
   ) {}
 
   async deliver(delivery: OutboundMailDelivery): Promise<void> {
@@ -119,18 +138,32 @@ export class GraphOutboundMail implements OutboundMail {
       throw error;
     }
     try {
-      await this.graph.sendMail(accessToken, {
+      await providerFor(this.providers, delivery.account.provider).sendMail(accessToken, {
         to: delivery.to,
         subject: delivery.subject,
         bodyText: delivery.bodyText,
       });
     } catch (error) {
-      // A rate limit or a Microsoft blip must NOT close the reminder off; only
+      // A rate limit or a provider blip must NOT close the reminder off; only
       // a fault in the message itself is a real failure.
       if (error instanceof GraphRequestError && isTransient(error.status)) {
         throw new MailDeliveryDeferredError(error.retryAfterSeconds, error);
       }
       if (error instanceof ReauthRequiredError) throw new MailboxUnusableError(error);
+      /**
+       * ⚠️ HELD, NOT FAILED — AND NOT PRESENTED AS "RECONNECT THIS MAILBOX".
+       * A provider with no adapter is OUR missing piece, not a dead grant, so
+       * telling the customer to reconnect would repeat defect F3: advice that
+       * can never work, followed forever. Deferring keeps the reminder alive
+       * and lets a deploy that ships the adapter heal it.
+       *
+       * Unreachable while `MAIL_PROVIDER_KEYS` and the database CHECK agree,
+       * which `mailbox-providers.spec.ts` enforces. This is what happens if
+       * that guard is ever removed.
+       */
+      if (error instanceof UnknownMailProviderError) {
+        throw new MailDeliveryDeferredError(null, error);
+      }
       throw error;
     }
   }

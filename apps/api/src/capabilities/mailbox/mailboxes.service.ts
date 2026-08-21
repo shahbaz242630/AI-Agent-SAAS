@@ -51,6 +51,12 @@ import type {
 import { MICROSOFT_DISCOVERY, UNKNOWN_DOMAIN } from "./microsoft-graph/microsoft-discovery.js";
 import type { MicrosoftDiscovery } from "./microsoft-graph/microsoft-discovery.js";
 import {
+  MAIL_PROVIDERS,
+  providerFor,
+  type MailProvider,
+  type MailProviderRegistry,
+} from "./mail-provider.js";
+import {
   DEFAULT_OAUTH_FLOW,
   signOAuthState,
   verifyOAuthState,
@@ -174,8 +180,40 @@ export class MailboxesService {
     @Inject(API_ENV) private readonly env: ApiEnv,
     @Inject(MICROSOFT_GRAPH_PROVIDER) private readonly graph: MicrosoftGraphProvider,
     @Inject(MICROSOFT_DISCOVERY) private readonly discovery: MicrosoftDiscovery,
+    @Inject(MAIL_PROVIDERS) private readonly providers: MailProviderRegistry,
   ) {
     this.logger.setContext(MailboxesService.name);
+  }
+
+  /**
+   * The adapter for one mailbox's provider (3.1b step 2).
+   *
+   * ⚠️ EVERY SEND AND EVERY REFRESH GOES THROUGH HERE RATHER THAN THROUGH
+   * `this.graph`, SO THAT ADDING GMAIL CHANGES THIS FILE IN NO PLACE AT ALL.
+   * The rule that makes it safe is that the provider comes from the ROW — a
+   * mailbox connected through Microsoft is refreshed and sent through Microsoft
+   * forever, whatever else is registered later.
+   *
+   * ⚠️ FOUR CALLS STILL GO THROUGH `this.graph` AND THAT IS DELIBERATE, NOT A
+   * MISS. They are the ones with no row to read a provider FROM, because the
+   * mailbox does not exist yet: `connect` (building the authorize URL) and
+   * `handleCallback` (exchange, profile, probe), plus the welcome email sent
+   * with the token that callback just minted. All four sit behind
+   * `/integrations/microsoft/…`, which is Microsoft's registered redirect URI
+   * and — per the 3.0 handoff — a URL the founder has configured on production
+   * and that must not move.
+   *
+   * When Gmail lands it gets its OWN callback route (Google's redirect URI is
+   * registered separately anyway) and the provider becomes a parameter of these
+   * two methods. Doing that now, with nothing to call it with, would be a
+   * branch no test could reach.
+   *
+   * Admin consent and domain discovery stay on `this.graph` permanently: they
+   * are Microsoft's model of an organisation approving an app, and Google has
+   * no equivalent to widen the port for.
+   */
+  private providerFor(provider: string): MailProvider {
+    return providerFor(this.providers, provider);
   }
 
   /** GET .../mailboxes â€” mailbox:read. Sanitized; tokens NEVER leave the
@@ -1162,7 +1200,10 @@ export class MailboxesService {
       // 2. Token. Any rotation is committed before we send (see below).
       const accessToken = await this.ensureAccessToken(organisationId, user.id, account);
       // 3. Send. No transaction open.
-      await this.graph.sendMail(accessToken, { to: account.emailAddress, ...TEST_EMAIL });
+      await this.providerFor(account.provider).sendMail(accessToken, {
+        to: account.emailAddress,
+        ...TEST_EMAIL,
+      });
     } catch (error) {
       // The licence was removed after connecting (connect itself now probes,
       // F3). Not auth_expired â€” reconnecting cannot conjure a mailbox â€” so it
@@ -1252,7 +1293,7 @@ export class MailboxesService {
     if (account.tokenExpiresAt.getTime() - Date.now() > TOKEN_EXPIRY_BUFFER_MS) {
       return this.decryptStoredToken(account.accessTokenEncrypted, key);
     }
-    const tokens = await this.graph.refreshTokens(
+    const tokens = await this.providerFor(account.provider).refreshTokens(
       this.decryptStoredToken(account.refreshTokenEncrypted, key),
     );
     await withTenant(this.prisma.db, { organisationId, userId }, async (tx) => {
