@@ -242,9 +242,27 @@ export default async function EnquiryDetailPage({
           </p>
         ) : (
           <>
+            {/**
+             * ⚠️ "THERE IS NO UNDO" USED TO BE THE LAST SENTENCE HERE, AND IT
+             * STOPPED BEING TRUE ON 2026-08-21 — the hour the correction path
+             * shipped. Found by walking production immediately afterwards. A
+             * screen that overstates permanence is not the safe kind of wrong:
+             * somebody who believes a mis-click is unfixable does not go
+             * looking for the screen that fixes it.
+             *
+             * ⚠️ AND THE REPLACEMENT MUST NOT UNDERSTATE IT EITHER. A genuine
+             * request still stands forever; the correction exists for an entry
+             * that should never have been made. Both halves, in that order, so
+             * nobody reads this as "press it, it is reversible".
+             */}
             <p className="text-sm">
-              This is immediate and permanent, and it applies to every way of reaching them, not
-              just this enquiry. There is no undo.
+              This is immediate, and it applies to every way of reaching them, not just this
+              enquiry. If someone asks not to be contacted, that stands forever.
+            </p>
+            <p className="text-sm">
+              If you press this by mistake, an owner or administrator can record that under Settings
+              → Do not contact. It is not a way to change your mind about a request somebody
+              actually made.
             </p>
             {/**
              * ⚠️ THE NAMED CONSEQUENCE, AND THE REASON THIS PANEL WAS CHANGED.

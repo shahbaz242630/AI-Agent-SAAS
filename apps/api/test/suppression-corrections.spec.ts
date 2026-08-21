@@ -242,6 +242,132 @@ describe("Do-not-contact: the correction path", () => {
   });
 
   /**
+   * ⚠️ THE FIRST CORRECTION EVER MADE ON PRODUCTION LEFT A LIE ON THE SCREEN
+   * (2026-08-21). The founder pressed do-not-contact on their own enquiry, both
+   * channels went on the list, both were corrected — and the enquiry book still
+   * showed a red "Do not contact" pill on somebody Eva was by then perfectly
+   * willing to write to. Two records of one fact: `suppression_events` is the
+   * gate Eva obeys, `leads.status` is only a label, and the label did not
+   * follow. Found by walking, not by any of the 821 tests.
+   */
+  describe("the enquiry the entry came from", () => {
+    /** Puts a lead on the list with BOTH channels, the way the product does. */
+    const suppressLeadWithBoth = async (email: string, phone: string): Promise<string> => {
+      const lead = await request(app.getHttpServer())
+        .post(`/organisations/${org.id}/leads`)
+        .set("Authorization", `Bearer ${tokens.get("sales")!}`)
+        .send({
+          source: "email_enquiry",
+          contactEmail: email,
+          contactPhone: phone,
+          receivedAt: "2026-08-17T09:30:00.000Z",
+        })
+        .expect(201);
+
+      await request(app.getHttpServer())
+        .post(`/organisations/${org.id}/leads/${lead.body.id}/do-not-contact`)
+        .set("Authorization", `Bearer ${tokens.get("sales")!}`)
+        .expect(201);
+
+      return lead.body.id as string;
+    };
+
+    const statusOf = async (leadId: string): Promise<string> => {
+      const detail = await request(app.getHttpServer())
+        .get(`/organisations/${org.id}/leads/${leadId}`)
+        .set("Authorization", `Bearer ${tokens.get("owner")!}`)
+        .expect(200);
+      return detail.body.status as string;
+    };
+
+    it("stops saying do-not-contact once nothing about them is suppressed", async () => {
+      const leadId = await suppressLeadWithBoth("both-channels@example.com", "07700 900321");
+      expect(await statusOf(leadId)).toBe("do_not_contact");
+
+      await correct(tokens.get("owner")!, {
+        channel: "email",
+        value: "both-channels@example.com",
+        reason: "Pressed on the wrong enquiry entirely",
+      }).expect(201);
+      await correct(tokens.get("owner")!, {
+        channel: "call",
+        value: "07700 900321",
+        reason: "Pressed on the wrong enquiry entirely",
+      }).expect(201);
+
+      expect(
+        await statusOf(leadId),
+        "the enquiry still reads do-not-contact after everything was corrected",
+      ).toBe("new");
+    });
+
+    /**
+     * ⚠️ AND IT MUST NOT COME BACK EARLY. `doNotContact` suppresses every
+     * channel it holds, so correcting the address alone leaves the person still
+     * unreachable by phone. An enquiry flipped back to `new` at that point
+     * would promise Eva will contact them while she still refuses to — the same
+     * defect as before, pointing the other way.
+     */
+    it("keeps saying do-not-contact while any channel is still suppressed", async () => {
+      const leadId = await suppressLeadWithBoth("half-corrected@example.com", "07700 900654");
+
+      await correct(tokens.get("owner")!, {
+        channel: "email",
+        value: "half-corrected@example.com",
+        reason: "Only the address was recorded in error",
+      }).expect(201);
+
+      expect(
+        await statusOf(leadId),
+        "the enquiry came back while their phone number was still suppressed",
+      ).toBe("do_not_contact");
+    });
+
+    it("names the enquiries it put back, in the audit trail", async () => {
+      const leadId = await suppressLeadWithBoth("audited-revert@example.com", "07700 900987");
+      await correct(tokens.get("owner")!, {
+        channel: "email",
+        value: "audited-revert@example.com",
+        reason: "Recorded against the wrong enquiry",
+      }).expect(201);
+      await correct(tokens.get("owner")!, {
+        channel: "call",
+        value: "07700 900987",
+        reason: "Recorded against the wrong enquiry",
+      }).expect(201);
+
+      const entry = await owner.auditLog.findFirst({
+        where: {
+          organisationId: org.id,
+          action: "lead.do_not_contact_reverted",
+          entityId: leadId,
+        },
+      });
+      expect(entry, "an enquiry changed state with nothing in the audit trail").not.toBeNull();
+    });
+
+    /** Somebody else's enquiry must not be dragged back by an unrelated fix. */
+    it("leaves other people's enquiries alone", async () => {
+      const mine = await suppressLeadWithBoth("mine@example.com", "07700 900111");
+      const theirs = await suppressLeadWithBoth("theirs@example.com", "07700 900222");
+
+      await correct(tokens.get("owner")!, {
+        channel: "email",
+        value: "mine@example.com",
+        reason: "Only this one was a mistake",
+      }).expect(201);
+      await correct(tokens.get("owner")!, {
+        channel: "call",
+        value: "07700 900111",
+        reason: "Only this one was a mistake",
+      }).expect(201);
+
+      expect(await statusOf(mine)).toBe("new");
+      expect(await statusOf(theirs)).toBe("do_not_contact");
+    });
+  });
+
+  /**
    * ⚠️ THE CORRECTION HAS TO REACH THE PRODUCT THAT WAS BLOCKED, OR IT IS A
    * SCREEN THAT LIES. Suppression is cross-product: an entry recorded on an
    * enquiry stops invoice chasers to the same address. If undoing it did not
