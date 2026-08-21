@@ -144,7 +144,10 @@ export const AUTH_PANELS = {
        * describes this form, which is verifiable by looking at it.
        */
       "You'll need your current password first — that is what proves it is you.",
-      "Your mailbox connection is separate — it stays connected at Microsoft.",
+      // Named the provider until 3.1b. It is now Microsoft OR Google, and
+      // "your email provider" is true of both without listing them on a screen
+      // about changing a password.
+      "Your mailbox connection is separate — it stays connected at your email provider.",
     ],
   },
   resetPassword: {

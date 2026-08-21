@@ -84,7 +84,7 @@ export const MODULES = [
 export const STEPS = [
   {
     title: "Connect your mailbox",
-    body: "Sign in at Microsoft — Eva never sees your password. She sends from your address, so replies land back with you.",
+    body: "Sign in at Microsoft or Google — Eva never sees your password. She sends from your address, so replies land back with you.",
   },
   {
     title: "Add your invoices",
@@ -172,12 +172,12 @@ export const FAQ = [
   {
     question: "Where does Eva send from?",
     answer:
-      "Your own mailbox — Outlook, Hotmail or Microsoft 365 today. Replies come straight back to you, not to a robot.",
+      "Your own mailbox — Outlook, Hotmail, Microsoft 365 or Gmail. Replies come straight back to you, not to a robot.",
   },
   {
     question: "Does Eva ever see my password?",
     answer:
-      "No. You sign in at Microsoft; Eva only gets permission to send, which you can withdraw any time.",
+      "No. You sign in at Microsoft or Google; Eva only gets permission to send, which you can withdraw any time.",
   },
   {
     question: "What exactly does Eva chase?",
