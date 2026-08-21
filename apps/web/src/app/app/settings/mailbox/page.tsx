@@ -264,11 +264,12 @@ export default async function MailboxSettingsPage({
             <ConnectMailboxForm
               organisationId={organisation.id}
               defaultAddress={attemptedAddress}
-              label={
-                status.mailboxes.length === 0
-                  ? "Connect Outlook mailbox"
-                  : "Connect another mailbox"
-              }
+              /* ⚠️ NO LABEL ON THE FIRST CONNECT SINCE 3.1b. It used to read
+                 "Connect Outlook mailbox", which stopped being true the moment
+                 Gmail became selectable — so the form names whichever provider
+                 the customer actually picked. The SECOND-mailbox wording is
+                 still fixed, because "another" is true of either. */
+              {...(status.mailboxes.length === 0 ? {} : { label: "Connect another mailbox" })}
             />
           )}
         </section>
