@@ -74,8 +74,9 @@ describe("Leads: the record, the evidence and the refusal", () => {
 
   it("logs an enquiry and returns it with its evidence", async () => {
     const response = await logLead(tokens.get("sales")!, {
-      source: "missed_call",
+      source: "email_enquiry",
       contactName: "Priya Raman",
+      contactEmail: "priya.raman@example.com",
       contactPhone: "07700 900123",
       enquiry: "Wants a quote for a kitchen refit",
       receivedAt,
@@ -83,7 +84,7 @@ describe("Leads: the record, the evidence and the refusal", () => {
 
     expect(response.body.status).toBe("new");
     expect(response.body.hasEvidence).toBe(true);
-    expect(response.body.evidence.channel).toBe("missed_call");
+    expect(response.body.evidence.channel).toBe("email_enquiry");
     // ⚠️ THEIR CLOCK. The enquiry happened on the 17th; logging it later must
     // not restate it as having just arrived, or every speed-to-lead target
     // computed from it is a fiction.
@@ -99,7 +100,7 @@ describe("Leads: the record, the evidence and the refusal", () => {
    */
   it("never creates a lead without the evidence behind it", async () => {
     const response = await logLead(tokens.get("sales")!, {
-      source: "callback_request",
+      source: "email_enquiry",
       contactEmail: "priya@example.com",
       receivedAt,
     }).expect(201);
@@ -138,7 +139,7 @@ describe("Leads: the record, the evidence and the refusal", () => {
    */
   it("suppresses every channel we hold for them, not just the lead", async () => {
     const created = await logLead(tokens.get("reception")!, {
-      source: "missed_call",
+      source: "email_enquiry",
       contactName: "Alex Byrne",
       contactEmail: "Alex.Byrne@Example.com",
       contactPhone: "07700 900456",
@@ -167,7 +168,7 @@ describe("Leads: the record, the evidence and the refusal", () => {
 
   it("is idempotent: asking twice does not fail and does not duplicate", async () => {
     const created = await logLead(tokens.get("sales")!, {
-      source: "callback_request",
+      source: "email_enquiry",
       contactEmail: "twice@example.com",
       receivedAt,
     }).expect(201);
@@ -191,16 +192,58 @@ describe("Leads: the record, the evidence and the refusal", () => {
 
   it("refuses a lead with no way to reach the person", async () => {
     await logLead(tokens.get("sales")!, {
-      source: "missed_call",
+      source: "email_enquiry",
       contactName: "No Contact Details",
       receivedAt,
     }).expect(400);
   });
 
-  it("refuses a source we cannot yet produce", async () => {
-    // `email` arrives in 3.1b, when there is a mailbox reader to create one.
+  /**
+   * ⚠️ A PHONE NUMBER IS NOT A WAY TO ANSWER AN EMAIL ENQUIRY, AND THIS IS THE
+   * TEST THAT SAYS SO. Until 2026-08-21 the rule was "an email address OR a
+   * phone number", which let a lead nobody could ever reply to sit in the book
+   * of a product whose only ability is to reply. Lead Follow-up by Call is a
+   * separate purchase and is not built, so a number here reaches nothing.
+   *
+   * The phone number stays welcome ALONGSIDE an address — enquiry emails say
+   * "call me on…" all the time — it just cannot be the only thing we hold.
+   */
+  it("refuses a lead we could only ring, in the product that can only write", async () => {
     await logLead(tokens.get("sales")!, {
-      source: "email",
+      source: "email_enquiry",
+      contactName: "Phone Only",
+      contactPhone: "07700 900999",
+      receivedAt,
+    }).expect(400);
+  });
+
+  /**
+   * ⚠️ THE SCOPE LEAK THIS PINS SHIPPED, AND THE FOUNDER FOUND IT BY ASKING WHY
+   * THEY WERE TYPING ENQUIRIES IN BY HAND (2026-08-21). All three of these were
+   * offered on a form inside Lead Follow-up by Email — a product whose blurb is
+   * "Answers new enquiries from your mailbox" — and all three are call-shaped.
+   * They belong to Lead Follow-up by Call (`lead_follow_up_voice`).
+   *
+   * ⚠️ THE DATABASE STILL ACCEPTS THEM AND MUST KEEP DOING SO, so this API
+   * refusal is the ONLY thing standing between the two products. Migration 0027
+   * widened rather than narrowed the CHECK because lead `cc1c3243` on
+   * production is a `callback_request` and evidence must never be rewritten.
+   * Delete this test and the wall is gone with nothing else failing.
+   */
+  it.each(["missed_call", "existing_customer", "callback_request"])(
+    "refuses %s — that is the call product's, not this one's",
+    async (source) => {
+      await logLead(tokens.get("sales")!, {
+        source,
+        contactEmail: "someone@example.com",
+        receivedAt,
+      }).expect(400);
+    },
+  );
+
+  it("refuses a source nothing produces at all", async () => {
+    await logLead(tokens.get("sales")!, {
+      source: "carrier_pigeon",
       contactEmail: "someone@example.com",
       receivedAt,
     }).expect(400);
@@ -239,7 +282,7 @@ describe("Leads: the record, the evidence and the refusal", () => {
     it("names a client who shares the email address", async () => {
       const customer = await clientWithSharedEmail("shared-books@example.com");
       const created = await logLead(tokens.get("owner")!, {
-        source: "callback_request",
+        source: "email_enquiry",
         contactEmail: "shared-books@example.com",
         receivedAt,
       }).expect(201);
@@ -259,7 +302,7 @@ describe("Leads: the record, the evidence and the refusal", () => {
     it("matches an address that differs only in case, exactly as the action does", async () => {
       const customer = await clientWithSharedEmail("mixed-case@example.com");
       const created = await logLead(tokens.get("owner")!, {
-        source: "callback_request",
+        source: "email_enquiry",
         contactEmail: "Mixed-Case@Example.com",
         receivedAt,
       }).expect(201);
@@ -276,7 +319,7 @@ describe("Leads: the record, the evidence and the refusal", () => {
 
     it("says nobody when the enquiry is from someone new", async () => {
       const created = await logLead(tokens.get("owner")!, {
-        source: "missed_call",
+        source: "email_enquiry",
         contactEmail: "a-total-stranger@example.com",
         receivedAt,
       }).expect(201);
@@ -300,7 +343,12 @@ describe("Leads: the record, the evidence and the refusal", () => {
     it("does not claim a client is affected when the action would not silence them", async () => {
       await clientWithSharedEmail("plus-format@example.com", "+447700900999");
       const created = await logLead(tokens.get("owner")!, {
-        source: "missed_call",
+        source: "email_enquiry",
+        // ⚠️ DELIBERATELY NOT THE CLIENT'S ADDRESS. Every lead now carries an
+        // email, so this test would pass for the wrong reason if it shared one:
+        // `alsoAffects` would be empty because of the phone OR because of the
+        // address, and the phone blind spot below would stop being pinned.
+        contactEmail: "a-different-person@example.com",
         contactPhone: "07700 900999",
         receivedAt,
       }).expect(201);
@@ -329,7 +377,7 @@ describe("Leads: the record, the evidence and the refusal", () => {
         });
       }
       const created = await logLead(tokens.get("owner")!, {
-        source: "callback_request",
+        source: "email_enquiry",
         contactEmail: "one-inbox@example.com",
         receivedAt,
       }).expect(201);
@@ -350,17 +398,23 @@ describe("Leads: the record, the evidence and the refusal", () => {
     it("lets sales and reception log an enquiry — it is their job", async () => {
       for (const role of ["sales", "reception", "owner"]) {
         await logLead(tokens.get(role)!, {
-          source: "callback_request",
-          contactPhone: `07700 9007${role.length}0`,
+          source: "email_enquiry",
+          contactEmail: `enquiry-from-${role}@example.com`,
           receivedAt,
         }).expect(201);
       }
     });
 
+    /**
+     * ⚠️ THE BODY HAS TO BE VALID FOR THIS TO PROVE ANYTHING. Validation runs
+     * in the pipe, before the controller and therefore before the permission
+     * check, so a lead missing its email address returns 400 and the 403 this
+     * test exists for never happens — it would pass while testing nothing.
+     */
     it("refuses write to a role that only reads", async () => {
       await logLead(tokens.get("read_only")!, {
-        source: "callback_request",
-        contactPhone: "07700 900999",
+        source: "email_enquiry",
+        contactEmail: "read-only-should-not-manage-this@example.com",
         receivedAt,
       }).expect(403);
     });

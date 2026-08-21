@@ -5,17 +5,20 @@ import { redirect } from "next/navigation";
 import { moduleHref } from "@eva/types";
 import { ApiError, apiFetch } from "@/lib/api";
 import { humanRefusal } from "@/lib/permissions";
-import { wallClockToInstant } from "@/products/lead-follow-up/lead-book";
 import { createClient } from "@/lib/supabase/server";
 
 /**
- * Logging an enquiry, and recording a request never to be contacted again
- * (Slice 3.1a).
+ * Recording a request never to be contacted again (Slice 3.1a).
  *
- * ⚠️ NOTHING HERE DECIDES ANYTHING. The API writes the lead and its evidence in
- * one transaction, refuses a lead with no way to reach the person, and writes
- * the suppression list on every channel it holds. This layer moves a form to it
- * and turns what comes back into a sentence.
+ * ⚠️ `logEnquiry` USED TO LIVE HERE AND WAS REMOVED ON 2026-08-21 with the
+ * manual entry form it served. Founder ruling: Lead Follow-up by Email is one
+ * mailbox in and a reply out, so an enquiry either arrives in that mailbox or
+ * it does not — there is nothing for a person to type in. The three sources
+ * the form offered were all call-shaped and belong to a different product.
+ *
+ * ⚠️ NOTHING HERE DECIDES ANYTHING. The API writes the suppression list on
+ * every channel it holds for the person. This layer moves a form to it and
+ * turns what comes back into a sentence.
  */
 
 /** Built from the catalogue, never written out — see `app-links.spec.ts`. */
@@ -30,75 +33,6 @@ async function getAccessToken(): Promise<string | null> {
   const supabase = await createClient();
   const { data } = await supabase.auth.getSession();
   return data.session?.access_token ?? null;
-}
-
-/**
- * Log an enquiry that arrived some other way.
- *
- * ⚠️ `receivedAt` IS WHEN IT HAPPENED, NOT WHEN IT WAS TYPED, and the
- * conversion is the part that would go wrong in silence. The form sends
- * wall-clock digits with no timezone; our compute runs eight hours behind
- * London. `wallClockToInstant` reads them in the ORGANISATION's timezone —
- * see the reasoning and the tests on that function, because every
- * speed-to-lead figure this product will ever report is measured from here.
- */
-export async function logEnquiry(
-  _prevState: LeadActionState,
-  formData: FormData,
-): Promise<LeadActionState> {
-  const organisationId = String(formData.get("organisationId") ?? "");
-  const timezone = String(formData.get("timezone") ?? "Europe/London");
-
-  const text = (key: string): string | undefined => {
-    const value = String(formData.get(key) ?? "").trim();
-    return value === "" ? undefined : value;
-  };
-
-  const contactEmail = text("contactEmail");
-  const contactPhone = text("contactPhone");
-  /**
-   * Checked here as well as at the API and in the database, because the
-   * alternative is a round trip to be told the obvious. The API's refusal is
-   * still the one that counts.
-   */
-  if (!contactEmail && !contactPhone) {
-    return { error: "Add an email address or a phone number, or Eva has no way to answer them." };
-  }
-
-  const receivedAtRaw = String(formData.get("receivedAt") ?? "");
-  const receivedAt = wallClockToInstant(receivedAtRaw, timezone);
-  if (!receivedAt) {
-    return { error: "Choose when the enquiry came in." };
-  }
-
-  const accessToken = await getAccessToken();
-  if (!accessToken) redirect("/sign-in");
-
-  try {
-    await apiFetch(`/organisations/${organisationId}/leads`, accessToken, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        source: text("source") ?? "missed_call",
-        ...(text("contactName") ? { contactName: text("contactName") } : {}),
-        ...(contactEmail ? { contactEmail } : {}),
-        ...(contactPhone ? { contactPhone } : {}),
-        ...(text("enquiry") ? { enquiry: text("enquiry") } : {}),
-        receivedAt,
-      }),
-    });
-  } catch (error) {
-    if (error instanceof ApiError && error.status === 401) redirect("/sign-in");
-    return {
-      error:
-        error instanceof ApiError
-          ? (humanRefusal(error.status, "log-lead") ?? error.message)
-          : "Something went wrong. Please try again.",
-    };
-  }
-
-  revalidatePath(BOOK);
-  return { success: "Enquiry logged." };
 }
 
 /**

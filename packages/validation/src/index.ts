@@ -639,61 +639,77 @@ export type SetModuleInput = z.infer<typeof setModuleSchema>;
 // --- Slice 3.1a: the lead record ---
 
 /**
- * The channels a person can log an enquiry from BY HAND today (BRD 4.3
- * "Eligible lead sources").
+ * Where a lead in **Lead Follow-up by Email** can come from.
  *
- * ⚠️ THREE, NOT ELEVEN. The BRD lists every channel the product will eventually
- * accept, but a mailbox reader (3.1b) and a voice stack (Phase 2) do not exist,
- * and a source nothing can produce is a value that only ever appears in a
- * dropdown. These three are the ones a human genuinely enters: the phone rang
- * and nobody got to it, an existing client asked for something new, somebody
- * asked to be called back.
+ * ⚠️ ONE SOURCE, AND IT IS AN EMAIL — founder ruling 2026-08-21. This product
+ * is one mailbox in and a reply out. A business puts a single address on its
+ * website and on its enquiry form, so a web-form lead ARRIVES AS EMAIL. There
+ * is no second intake pipeline to model, which is why `website_form` is absent
+ * rather than pending.
+ *
+ * ⚠️ `missed_call`, `existing_customer` AND `callback_request` WERE HERE AND
+ * WERE A SCOPE LEAK. All three are call-shaped, and 3.1a offered them on a form
+ * inside a product that can only answer by email — so a lead with a phone
+ * number and no address was creatable in a product with no way to ring anybody.
+ * They belong to Lead Follow-up by Call (`lead_follow_up_voice`), a separate
+ * purchase that is not built.
+ *
+ * ⚠️ THE DATABASE STILL ACCEPTS ALL THREE, DELIBERATELY. One real enquiry was
+ * logged as `callback_request` on 2026-08-20, and `lead_evidence` is immutable
+ * by design — the app role holds no UPDATE on it, and rewriting the channel
+ * would be falsifying the proof of how somebody got in touch. History stays
+ * legal; what changed is that nothing produces those values any more.
  */
-export const MANUAL_LEAD_SOURCES = [
-  "missed_call",
-  "existing_customer",
-  "callback_request",
-] as const;
+export const LEAD_SOURCES = ["email_enquiry"] as const;
 
-export type ManualLeadSource = (typeof MANUAL_LEAD_SOURCES)[number];
+export type LeadSource = (typeof LEAD_SOURCES)[number];
 
 /**
- * POST /organisations/:organisationId/leads — log an enquiry that arrived some
- * other way (Slice 3.1a).
+ * POST /organisations/:organisationId/leads — record an enquiry that arrived
+ * in the customer's mailbox.
+ *
+ * ⚠️ NO SCREEN CALLS THIS. The manual "Log an enquiry" form was removed on
+ * 2026-08-21 with the call sources it existed to offer. This stays as the seam
+ * 3.1b wires the forwarded mailbox to, and as the only way to prove the
+ * lead-plus-evidence transaction end to end until then.
  *
  * ⚠️ `receivedAt` IS REQUIRED AND IS NOT "NOW". Speed-to-lead (BRD 4.3) is
- * measured from when the enquiry HAPPENED. Somebody logging Friday's missed
- * call on Monday morning must be able to say so, or the record claims a
- * three-day-old enquiry arrived this instant and every response target
- * computed from it is a fiction.
+ * measured from when the enquiry HAPPENED, which for a forwarded email is the
+ * header date, not the moment our poller noticed it. Getting this from the
+ * clock would make every response target this product reports a fiction.
  *
- * ⚠️ AT LEAST ONE WAY TO REACH THEM. A lead with a name and no contact details
- * cannot be followed up and would sit in the book forever looking like work
- * nobody did. The database enforces it too — belt and braces, because this one
- * is the difference between a lead and a note.
+ * ⚠️ AN EMAIL ADDRESS IS REQUIRED, NOT "ONE OF EMAIL OR PHONE". Until
+ * 2026-08-21 either would do, which is how a lead reachable ONLY by phone
+ * could be created inside a product that can only answer by email — a record
+ * that sits in the book forever looking like work nobody did, because there is
+ * genuinely nothing Eva can do with it. An `email_enquiry` always has a sender,
+ * so requiring it costs nothing real and closes the hole.
+ *
+ * ⚠️ THE DATABASE STILL SAYS "EMAIL OR PHONE" AND IS NOT WRONG. `leads` is a
+ * platform table shared with Lead Follow-up by Call, where a missed call has a
+ * number and no address. The narrower rule belongs to this product, so it lives
+ * in this schema; the CHECK stays the backstop for both.
+ *
+ * `contactPhone` stays optional and is worth keeping: enquiry emails routinely
+ * say "call me on…", and the call product will want it.
  */
-export const createLeadRequestSchema = z
-  .object({
-    source: z.enum(MANUAL_LEAD_SOURCES),
-    contactName: z.string().trim().min(1).max(200).optional(),
-    contactEmail: z.email().max(320).optional(),
-    contactPhone: z.string().trim().min(1).max(50).optional(),
-    /** What they asked for, in their words where we have them. */
-    enquiry: z.string().trim().min(1).max(4000).optional(),
-    receivedAt: z.iso.datetime(),
-    /** Set when the enquiry is recognised as coming from an existing client. */
-    customerId: z.uuid().optional(),
-    /**
-     * Verbatim evidence of the enquiry — the note taken from the call, the
-     * message they left. Kept in `lead_evidence`, which nothing can edit.
-     */
-    evidenceExcerpt: z.string().trim().min(1).max(4000).optional(),
-    /** The channel's own reference where one exists: a call id, a ticket id. */
-    evidenceExternalId: z.string().trim().min(1).max(200).optional(),
-  })
-  .refine((value) => Boolean(value.contactEmail ?? value.contactPhone), {
-    message: "A lead needs an email address or a phone number to be followed up.",
-    path: ["contactPhone"],
-  });
+export const createLeadRequestSchema = z.object({
+  source: z.enum(LEAD_SOURCES),
+  contactName: z.string().trim().min(1).max(200).optional(),
+  contactEmail: z.email().max(320),
+  contactPhone: z.string().trim().min(1).max(50).optional(),
+  /** What they asked for, in their words where we have them. */
+  enquiry: z.string().trim().min(1).max(4000).optional(),
+  receivedAt: z.iso.datetime(),
+  /** Set when the enquiry is recognised as coming from an existing client. */
+  customerId: z.uuid().optional(),
+  /**
+   * Verbatim evidence of the enquiry — the note taken from the call, the
+   * message they left. Kept in `lead_evidence`, which nothing can edit.
+   */
+  evidenceExcerpt: z.string().trim().min(1).max(4000).optional(),
+  /** The channel's own reference where one exists — a Graph message id. */
+  evidenceExternalId: z.string().trim().min(1).max(200).optional(),
+});
 
 export type CreateLeadRequest = z.infer<typeof createLeadRequestSchema>;

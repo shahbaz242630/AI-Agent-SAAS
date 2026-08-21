@@ -129,7 +129,7 @@ export class LeadsService {
   }
 
   /**
-   * Logs an enquiry that arrived some other way — leads:write.
+   * Records an enquiry that arrived in the customer's mailbox — leads:write.
    *
    * ⚠️ THE LEAD AND ITS EVIDENCE ARE WRITTEN IN ONE TRANSACTION, AND THAT IS
    * THE COMPLIANCE RULE, NOT TIDINESS. BRD 4.3: "A lead without complete

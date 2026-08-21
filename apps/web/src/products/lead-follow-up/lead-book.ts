@@ -10,56 +10,33 @@
  */
 
 /**
- * The three ways a human can log an enquiry by hand.
+ * How an enquiry came in, in English.
  *
- * ⚠️ THE SAME THREE THE API'S CHECK CONSTRAINT ALLOWS, AND NO MORE. `source`
- * is a CHECK in the database, so a fourth value invented here does not render
- * a new option — it produces a 400 at the moment somebody presses Save. 3.1b
- * widens the constraint when Eva can read a mailbox; the list grows then, in
- * the migration, and here afterwards.
+ * ⚠️ THERE IS NO LOOKUP TABLE HERE ANY MORE, AND THAT IS A SIMPLIFICATION, NOT
+ * AN OVERSIGHT. Until 2026-08-21 this mapped three hand-logged sources —
+ * `missed_call`, `existing_customer`, `callback_request` — which were removed
+ * with the manual form when the founder ruled that this product is one mailbox
+ * in and a reply out. The one source it now produces, `email_enquiry`, reads
+ * correctly straight out of `sentenceCase` ("Email enquiry"), so a map would be
+ * three lines that restate what the function below already does.
+ *
+ * A map comes back the moment a source needs wording `sentenceCase` cannot
+ * reach — the retired `existing_customer` was exactly that, because it had to
+ * read "Existing client".
  */
-export const MANUAL_LEAD_SOURCES = [
-  "missed_call",
-  "existing_customer",
-  "callback_request",
-] as const;
-
-export type ManualLeadSource = (typeof MANUAL_LEAD_SOURCES)[number];
-
-/**
- * ⚠️ `Record<ManualLeadSource, …>` IS THE EXHAUSTIVENESS GUARANTEE, the same
- * device `humanRefusal` uses for write actions: adding a source without a
- * sentence for it is a compile error rather than a raw `missed_call` appearing
- * on a screen a customer is reading.
- */
-const SOURCE_LABELS: Record<ManualLeadSource, string> = {
-  missed_call: "Missed call",
-  existing_customer: "Existing client",
-  callback_request: "Callback request",
-};
-
-/** What each source means, for the person choosing between them on a form. */
-const SOURCE_HINTS: Record<ManualLeadSource, string> = {
-  missed_call: "They rang and nobody picked up.",
-  existing_customer: "Somebody you already work for, asking about something new.",
-  callback_request: "They asked to be called back — a note, a text, a message passed on.",
-};
-
 export function leadSourceLabel(source: string): string {
-  return SOURCE_LABELS[source as ManualLeadSource] ?? sentenceCase(source);
-}
-
-export function leadSourceHint(source: ManualLeadSource): string {
-  return SOURCE_HINTS[source];
+  return sentenceCase(source);
 }
 
 /**
- * ⚠️ AN UNKNOWN SOURCE MUST STILL READ AS ENGLISH. 3.1b starts writing sources
- * this build has never heard of — `email_enquiry` and whatever follows it — and
- * a web deploy always trails an API deploy by a few minutes. For that window
- * the screen shows "Email enquiry", not `email_enquiry`. Falling back to the
- * raw key is how a database word reaches a customer, which is the same defect
- * as "modules" leaking onto the sidebar.
+ * ⚠️ AN UNKNOWN SOURCE MUST STILL READ AS ENGLISH, AND ONE IS ALREADY IN THE
+ * DATABASE. The retired call sources stay legal in Postgres — migration 0027
+ * widened rather than narrowed, because lead `cc1c3243` on production is a
+ * `callback_request` and evidence must not be rewritten — so this screen still
+ * renders them, as "Callback request". The same fallback covers a web deploy
+ * trailing an API deploy that has started writing a source this build has never
+ * heard of. Printing the raw key is how a database word reaches a customer,
+ * which is the same defect as "modules" leaking onto the sidebar.
  */
 function sentenceCase(value: string): string {
   const words = value.replace(/_/g, " ").trim();
@@ -177,129 +154,6 @@ function formatIn(at: Date, timeZone: string): string {
     .replace(/\s/g, "")
     .toLowerCase();
   return `${day} at ${time}`;
-}
-
-/**
- * Turn what somebody typed into a `datetime-local` box into a real instant.
- *
- * ⚠️ A `datetime-local` VALUE CARRIES NO TIMEZONE, AND THE SERVER'S GUESS IS
- * WRONG BY EIGHT HOURS. The browser hands us `2026-08-20T14:30` — wall-clock
- * digits and nothing else. `new Date("2026-08-20T14:30")` on our API host reads
- * that as 2:30pm in `us-west2`, i.e. 10:30pm in London, so Friday's missed call
- * gets filed at the wrong time and every response target computed from it is
- * wrong by the offset. The person typing meant 2:30pm where THEY are, which is
- * the organisation's timezone.
- *
- * The method: guess that the wall clock is UTC, ask what that instant looks
- * like in the target zone, and correct by the difference.
- *
- * ⚠️ THE SECOND PASS EARNS ITS KEEP IN EXACTLY ONE CASE, AND IT IS NOT THE ONE
- * THIS COMMENT FIRST CLAIMED. The original text said two passes are "what makes
- * it right across a DST boundary". That is false, and it was proved false by
- * cutting the loop to one pass — all 23 tests still passed. A single pass is
- * already correct for every time that actually exists, on both sides of a
- * transition, because a real local time and its UTC instant only straddle the
- * boundary when the local time is one that never occurs.
- *
- * What the second pass actually settles is the spring-forward GAP. On
- * 29 March 2026 London jumps 01:00 → 02:00, so "01:30" is a time nobody can
- * have meant — but a date box will happily offer it. One pass files it an hour
- * EARLIER than typed (00:30 local), which would date an enquiry before it
- * arrived; two passes push it forward past the gap (02:30 local). Pinned by a
- * test in `lead-book.spec.ts` that fails if the loop is cut back.
- *
- * Returns `null` for anything unparseable, so the caller can refuse rather than
- * invent a date.
- */
-export function wallClockToInstant(value: string, timezone: string): string | null {
-  const match = value.trim().match(/^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2}))?$/);
-  if (!match) return null;
-
-  const [, year, month, day, hour, minute, second] = match;
-  const asUtc = Date.UTC(
-    Number(year),
-    Number(month) - 1,
-    Number(day),
-    Number(hour),
-    Number(minute),
-    Number(second ?? "0"),
-  );
-  if (Number.isNaN(asUtc)) return null;
-
-  let instant = asUtc;
-  try {
-    for (let pass = 0; pass < 2; pass += 1) {
-      instant = asUtc - offsetOf(instant, timezone);
-    }
-  } catch {
-    // An unknown zone falls back to treating the digits as UTC, which is the
-    // only honest answer left — and never throws away what somebody typed.
-    return new Date(asUtc).toISOString();
-  }
-  return new Date(instant).toISOString();
-}
-
-/** How far `timezone` is ahead of UTC at a given instant, in milliseconds. */
-function offsetOf(instant: number, timeZone: string): number {
-  const parts = new Intl.DateTimeFormat("en-GB", {
-    timeZone,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    hour12: false,
-  }).formatToParts(new Date(instant));
-
-  const find = (type: string): number => Number(parts.find((part) => part.type === type)?.value);
-  const local = Date.UTC(
-    find("year"),
-    find("month") - 1,
-    find("day"),
-    // `hour12: false` renders midnight as 24 in some engines; normalise it.
-    find("hour") % 24,
-    find("minute"),
-    find("second"),
-  );
-  return local - instant;
-}
-
-/**
- * The default the "when did this arrive" box opens on — now, in the
- * organisation's timezone, formatted the way the input expects.
- *
- * ⚠️ NOT `new Date().toISOString().slice(0, 16)`. That is UTC, so a customer in
- * Dubai opens the form on a time four hours behind their own clock and either
- * corrects it every time or, more likely, does not notice.
- */
-export function nowForInput(timezone: string, now: Date = new Date()): string {
-  const parts = (() => {
-    try {
-      return new Intl.DateTimeFormat("en-GB", {
-        timeZone: timezone,
-        year: "numeric",
-        month: "2-digit",
-        day: "2-digit",
-        hour: "2-digit",
-        minute: "2-digit",
-        hour12: false,
-      }).formatToParts(now);
-    } catch {
-      return new Intl.DateTimeFormat("en-GB", {
-        timeZone: "UTC",
-        year: "numeric",
-        month: "2-digit",
-        day: "2-digit",
-        hour: "2-digit",
-        minute: "2-digit",
-        hour12: false,
-      }).formatToParts(now);
-    }
-  })();
-  const get = (type: string): string => parts.find((part) => part.type === type)?.value ?? "00";
-  const hour = String(Number(get("hour")) % 24).padStart(2, "0");
-  return `${get("year")}-${get("month")}-${get("day")}T${hour}:${get("minute")}`;
 }
 
 /** A client who shares this person's email address or phone number. */
