@@ -339,6 +339,101 @@ describe("Inbound webhook: an email becomes an enquiry", () => {
     });
   });
 
+  /**
+   * ⚠️ EVERY CASE HERE CAME FROM ONE REAL EMAIL, SENT FROM OUTLOOK TO
+   * PRODUCTION ON 2026-08-21. The suite was green, both walls were green,
+   * CodeQL was green — and the first genuine enquiry still landed with the
+   * sender's NAME missing, because Resend's API summarises `from` down to a
+   * bare address while the raw header carries `"Shahbaz Malik" <…>`.
+   *
+   * The lesson is not "parse harder". It is that a provider's convenience
+   * fields and its raw headers are different data, and the raw header is the
+   * one the sender actually wrote.
+   */
+  describe("what a real email actually looks like", () => {
+    it("takes the sender's name from the raw header, not the provider's summary", async () => {
+      nextMessage = {
+        ...nextMessage,
+        // Exactly what Resend returned: the summary has no display name...
+        from: "shahbaz.malik@hotmail.co.uk",
+        // ...while the header it also handed us does.
+        headers: {
+          ...nextMessage.headers,
+          from: '"Shahbaz Malik" <shahbaz.malik@hotmail.co.uk>',
+        },
+      };
+      const payload = emailReceived({ from: "shahbaz.malik@hotmail.co.uk" });
+      await post(payload).expect(200);
+
+      const lead = await owner.lead.findFirst({
+        where: { evidence: { externalId: payload.data.email_id } },
+      });
+      expect(lead!.contactName, "the person's name must survive").toBe("Shahbaz Malik");
+      expect(lead!.contactEmail).toBe("shahbaz.malik@hotmail.co.uk");
+    });
+
+    it("still works when only the bare address is available anywhere", async () => {
+      nextMessage = {
+        ...nextMessage,
+        from: "nobody@example.com",
+        headers: { "message-id": "<bare@example.com>" },
+      };
+      const payload = emailReceived();
+      await post(payload).expect(200);
+
+      const lead = await owner.lead.findFirst({
+        where: { evidence: { externalId: payload.data.email_id } },
+      });
+      expect(lead!.contactName).toBeNull();
+      expect(lead!.contactEmail).toBe("nobody@example.com");
+    });
+
+    /**
+     * ⚠️ THE SAME MISTAKE, POINTING AT THE RECIPIENT, WHERE IT COSTS MORE. A
+     * display name on the sender loses a name; a display name on the RECIPIENT
+     * matches no stored address, so the mail is logged unroutable and the
+     * enquiry is gone with nobody to tell.
+     */
+    it("routes correctly even if the recipient arrives with a display name", async () => {
+      const payload = emailReceived({
+        received_for: [`Enquiries <${address}>`],
+        to: [`Enquiries <${address}>`],
+      });
+      const response = await post(payload).expect(200);
+      expect(response.body.status).toBe("converted");
+
+      const message = await owner.inboundMessage.findFirst({
+        where: { providerMessageId: payload.data.email_id },
+      });
+      expect(message!.deliveredTo).toBe(address);
+    });
+
+    /**
+     * Resend runs on SES and passes its spam verdict through as a header. Not
+     * used yet — ruling 32's classifier is 3.1c — but it is captured, and this
+     * pins that it keeps being captured.
+     */
+    it("keeps the provider's own spam verdict for the classifier to use later", async () => {
+      nextMessage = {
+        ...nextMessage,
+        headers: {
+          ...nextMessage.headers,
+          "x-ses-spam-verdict": "PASS",
+          "received-spf": "pass (spfCheck: domain of hotmail.co.uk designates ...)",
+        },
+      };
+      await post(emailReceived()).expect(200);
+
+      const message = await owner.inboundMessage.findFirst({
+        where: { organisationId: org.id },
+        orderBy: { createdAt: "desc" },
+      });
+      const headers = message!.headers as Record<string, string>;
+      expect(headers["x-ses-spam-verdict"]).toBe("PASS");
+      expect(headers["received-spf"]).toContain("pass");
+    });
+  });
+
   // -------------------------------------------------------------------------
   describe("exactly once", () => {
     /**
