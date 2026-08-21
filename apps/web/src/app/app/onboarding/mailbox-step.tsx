@@ -7,12 +7,13 @@ import { PrimaryButton } from "@/components/ui";
 import { connectMailbox } from "../settings/actions";
 
 /**
- * Step two: pick a provider, say which mailbox, go to Microsoft.
+ * Step two: pick a provider, say which mailbox, go and approve it there.
  *
- * Gmail is named and visibly disabled rather than omitted. Eva is not a
- * Microsoft-only product and a picker that offers exactly one thing reads like
- * one that always will — showing the second option sets the expectation without
- * shipping a line of Gmail code.
+ * ⚠️ GMAIL WAS NAMED HERE AND DISABLED FOR MONTHS, AND 3.1b MADE IT REAL. The
+ * card was shown greyed out deliberately — a picker offering exactly one thing
+ * reads like one that always will — and it is now simply a second option. If
+ * this ever goes back to one provider, take the card out rather than re-greying
+ * it: an option that has worked and stopped is a fault, not a roadmap.
  *
  * ⚠️ THERE IS NO "BACK" ON THIS STEP, AND THE DESIGN DRAWS ONE. Reaching here
  * means the organisation already exists — the flow reads its position from
@@ -39,7 +40,7 @@ const PROVIDERS: Provider[] = [
     id: "google",
     name: "Gmail",
     detail: "Google Workspace and personal Gmail",
-    available: false,
+    available: true,
   },
 ];
 
@@ -64,14 +65,16 @@ function LockIcon() {
   );
 }
 
-function SubmitButton() {
+function SubmitButton({ destination }: { destination: string }) {
   // Minting the authorize URL is a round trip to our API before the browser
-  // leaves for Microsoft, so without this the button looks dead for a moment on
-  // the one click that matters most.
+  // leaves, so without this the button looks dead for a moment on the one click
+  // that matters most. It names where they are going, because "Taking you to
+  // Microsoft…" while they are connecting Gmail is the kind of small wrongness
+  // that makes somebody stop and wonder what else is wrong.
   const { pending } = useFormStatus();
   return (
     <PrimaryButton disabled={pending}>
-      {pending ? "Taking you to Microsoft…" : "Connect mailbox"}
+      {pending ? `Taking you to ${destination}…` : "Connect mailbox"}
     </PrimaryButton>
   );
 }
@@ -102,10 +105,11 @@ export function MailboxStep({
           in this flow rather than on the settings page. */}
       <input type="hidden" name="flow" value="onboarding" />
 
-      {/* The picker is a choice about what to show, not a value the API reads:
-          Outlook is the only selectable option and the connect endpoint is
-          Microsoft-only. When Gmail lands it needs a different endpoint, not a
-          different string in this field. */}
+      {/* ⚠️ THIS FIELD IS NOW READ BY THE API, WHICH IT WAS NOT BEFORE 3.1b.
+          It picks which provider's authorize URL gets built, and the server
+          action re-validates it against a closed list — a server action is
+          reachable by direct POST, so this is untrusted input however our own
+          UI renders it. Anything unrecognised falls back to Microsoft. */}
       <fieldset aria-labelledby="mailbox-provider" className="flex flex-wrap gap-3 pt-[22px]">
         {PROVIDERS.map((option) => {
           const selected = provider === option.id;
@@ -213,7 +217,7 @@ export function MailboxStep({
         >
           I&apos;ll do this later
         </Link>
-        <SubmitButton />
+        <SubmitButton destination={provider === "google" ? "Google" : "Microsoft"} />
       </div>
     </form>
   );

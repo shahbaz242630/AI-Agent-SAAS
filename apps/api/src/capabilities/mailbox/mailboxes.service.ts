@@ -54,6 +54,7 @@ import {
   MAIL_PROVIDERS,
   providerFor,
   type MailProvider,
+  type MailProviderKey,
   type MailProviderRegistry,
 } from "./mail-provider.js";
 import {
@@ -435,8 +436,27 @@ export class MailboxesService {
       ...(input.flow ? { flow: input.flow } : {}),
       ...(input.replacesMailboxId ? { replacesMailboxId: input.replacesMailboxId } : {}),
     });
+    const chosen = input.provider ?? "microsoft";
+    /**
+     * ⚠️ REFUSED WHEN UNCONFIGURED, NOT SILENTLY ATTEMPTED. Without a client id
+     * we would build an authorize URL with an empty one and send the customer
+     * to a Google error page they cannot act on — having already told them Eva
+     * supports Gmail. The same shape as `INBOUND_EMAIL_DOMAIN`: optional at
+     * boot so the API still starts, refused at the moment it is needed.
+     */
+    if (chosen === "google" && !this.env.GOOGLE_CLIENT_ID) {
+      throw new BadRequestException("Gmail is not configured on this environment yet");
+    }
+
+    /**
+     * ⚠️ THE PROVIDER IS CHOSEN HERE AND NEVER AGAIN. Each provider has its own
+     * registered redirect URI, so the callback route already knows which one
+     * came back — the state does not need to carry it, and deliberately does
+     * not: a provider name riding in a signed token is one more thing that can
+     * disagree with the URL the browser actually returned to.
+     */
     return {
-      authorizeUrl: this.graph.buildAuthorizeUrl(state, {
+      authorizeUrl: this.providerFor(chosen).buildAuthorizeUrl(state, {
         ...(input.emailAddress ? { loginHint: input.emailAddress } : {}),
       }),
     };
@@ -497,7 +517,10 @@ export class MailboxesService {
    * never holds a DB connection; the upsert + audit commit together.
    * Codes/state are never logged (BRD 14).
    */
-  async handleCallback(query: MicrosoftCallbackQuery): Promise<string> {
+  async handleCallback(
+    query: MicrosoftCallbackQuery,
+    provider: MailProviderKey = "microsoft",
+  ): Promise<string> {
     // Read the state BEFORE branching. Every return below needs the flow to
     // know where it is going, including the decline path, which fires before
     // the state is verified for real. Failure is fine and expected here â€” an
@@ -571,14 +594,14 @@ export class MailboxesService {
     let tokens: OAuthTokens;
     let profile: MailboxProfile;
     try {
-      tokens = await this.graph.exchangeCode(query.code);
-      profile = await this.graph.getProfile(tokens.accessToken);
+      tokens = await this.providerFor(provider).exchangeCode(query.code);
+      profile = await this.providerFor(provider).getProfile(tokens.accessToken);
       // Defect F3: an account with no Exchange licence consents perfectly
       // happily and only fails at the first send â€” where it surfaced as
       // "authorisation expired", advice that can never work, so the user
       // looped forever. Prove there is a mailbox BEFORE storing anything:
       // a dead connection stored here is one 1.7 would try to send through.
-      await this.graph.probeMailbox(tokens.accessToken);
+      await this.providerFor(provider).probeMailbox(tokens.accessToken);
     } catch (error) {
       if (error instanceof MailboxUnavailableError) {
         this.logger.info("mailbox connection rejected â€” account has no mailbox");
@@ -589,7 +612,7 @@ export class MailboxesService {
     }
     const key = this.env.TOKEN_ENCRYPTION_KEY;
     const data = {
-      provider: "microsoft",
+      provider,
       emailAddress: profile.emailAddress,
       displayName: profile.displayName,
       accessTokenEncrypted: encryptToken(tokens.accessToken, key),
@@ -842,6 +865,7 @@ export class MailboxesService {
       accountId,
       profile.emailAddress,
       tokens.accessToken,
+      provider,
     );
     return `${base}?connected=1&test_email=${sent ? "sent" : "failed"}${degraded}`;
   }
@@ -874,9 +898,14 @@ export class MailboxesService {
     accountId: string,
     emailAddress: string,
     accessToken: string,
+    provider: MailProviderKey,
   ): Promise<boolean> {
     try {
-      await this.graph.sendMail(accessToken, { to: emailAddress, ...TEST_EMAIL });
+      await this.providerFor(provider).sendMail(accessToken, {
+        from: emailAddress,
+        to: emailAddress,
+        ...TEST_EMAIL,
+      });
     } catch (error) {
       this.logger.warn({ err: error }, "mailbox connected but its test email could not be sent");
       return false;
@@ -1201,6 +1230,7 @@ export class MailboxesService {
       const accessToken = await this.ensureAccessToken(organisationId, user.id, account);
       // 3. Send. No transaction open.
       await this.providerFor(account.provider).sendMail(accessToken, {
+        from: account.emailAddress,
         to: account.emailAddress,
         ...TEST_EMAIL,
       });

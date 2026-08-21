@@ -33,7 +33,10 @@ export const HERO = {
    * yet, made to somebody deciding whether we are honest. Restore it when
    * there is a price and it is true — not before.
    */
-  reassurance: "Connect your Outlook or Microsoft 365 mailbox. Gmail is not supported yet.",
+  // ⚠️ SAID "Gmail is not supported yet." UNTIL 3.1b SHIPPED GMAIL SENDING.
+  // A landing page that under-sells is not harmless: this sentence turned away
+  // exactly the sole traders the product is aimed at.
+  reassurance: "Connect your Outlook, Microsoft 365 or Gmail mailbox.",
 } as const;
 
 /**

@@ -71,6 +71,10 @@ const testEnv: ApiEnv = {
   INBOUND_EMAIL_DOMAIN: "test-inbound.eva.local",
   RESEND_API_KEY: TEST_RESEND_API_KEY,
   RESEND_WEBHOOK_SECRET: TEST_RESEND_WEBHOOK_SECRET,
+  // Slice 3.1b step 3 — Gmail. Format-valid, non-secret.
+  GOOGLE_CLIENT_ID: "test-google-client-id.apps.googleusercontent.com",
+  GOOGLE_CLIENT_SECRET: "test-google-client-secret", // gitleaks:allow — fake test fixture
+  GOOGLE_OAUTH_REDIRECT_URI: "http://localhost:3001/integrations/google/callback",
 };
 
 interface TestKeys {

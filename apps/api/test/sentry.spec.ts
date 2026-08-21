@@ -30,6 +30,9 @@ const baseEnv: ApiEnv = {
   INBOUND_EMAIL_DOMAIN: "",
   RESEND_API_KEY: "",
   RESEND_WEBHOOK_SECRET: "",
+  GOOGLE_CLIENT_ID: "",
+  GOOGLE_CLIENT_SECRET: "",
+  GOOGLE_OAUTH_REDIRECT_URI: "http://localhost:3001/integrations/google/callback",
 };
 
 describe("initSentry (BRD 14)", () => {

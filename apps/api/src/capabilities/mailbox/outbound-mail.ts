@@ -139,6 +139,7 @@ export class RoutedOutboundMail implements OutboundMail {
     }
     try {
       await providerFor(this.providers, delivery.account.provider).sendMail(accessToken, {
+        from: delivery.account.emailAddress,
         to: delivery.to,
         subject: delivery.subject,
         bodyText: delivery.bodyText,
