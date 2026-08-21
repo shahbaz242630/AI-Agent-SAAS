@@ -74,6 +74,22 @@ export const PERMISSION_KEYS = [
    */
   "leads:read",
   "leads:write",
+  /**
+   * Slice 3.1a follow-up. Seeing the do-not-contact record, and recording that
+   * an entry on it was made in error.
+   *
+   * ⚠️ DELIBERATELY NOT HELD BY THE ROLES THAT CAN CREATE ONE. Sales and
+   * reception carry `leads:write`, which is what presses the do-not-contact
+   * button; undoing a mis-click is a DIFFERENT act and belongs to whoever
+   * answers for the organisation's compliance. If the person who made the
+   * mistake could also erase it, the record would only be as good as their
+   * embarrassment. Owner and administrator, and nobody else by default.
+   *
+   * ⚠️ ONE KEY FOR READING AND CORRECTING, ON PURPOSE. The list names people
+   * who asked a business to leave them alone. There is no audience that should
+   * browse it but not be trusted to fix it.
+   */
+  "suppression:manage",
 ] as const;
 
 export type PermissionKey = (typeof PERMISSION_KEYS)[number];
@@ -116,12 +132,16 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<OrganisationRole, readonly Permiss
   /**
    * ⚠️ SALES AND RECEPTION CAN WRITE LEADS, AND THEY ARE THE ONLY TWO (3.1a).
    *
-   * Enquiries are sales' actual job, and reception is who takes the missed
-   * call that becomes one — BRD 4.3 lists "missed inbound call" as an eligible
-   * source, and it is logged by hand by whoever answered the phone. Both roles
-   * are otherwise read-only across this product, which is why these are their
-   * first write permissions and why they are worth stating rather than
-   * inheriting.
+   * Enquiries are sales' actual job, and reception is who fields them when
+   * sales cannot. Both roles are otherwise read-only across this product, which
+   * is why these are their first write permissions and why they are worth
+   * stating rather than inheriting.
+   *
+   * ⚠️ WHAT `leads:write` MEANS NARROWED ON 2026-08-21. It used to include
+   * logging a missed call by hand; that form is gone, because Lead Follow-up by
+   * Email is one mailbox in and a reply out. What it now carries is recording a
+   * do-not-contact — and NOT undoing one, which is `suppression:manage` and
+   * belongs to a different set of people on purpose.
    *
    * Finance is deliberately left out: an unanswered enquiry is not a
    * receivable, and a permission granted "just in case" is one nobody can
@@ -244,6 +264,16 @@ export const PERMISSION_MODULES: Record<
    */
   "leads:read": ["lead_follow_up_email"],
   "leads:write": ["lead_follow_up_email"],
+  /**
+   * ⚠️ `core`, AND NOT BECAUSE IT IS CONVENIENT. Do-not-contact is
+   * organisation-wide and crosses every product by BRD design — an entry
+   * recorded on an enquiry stops invoice chasers to the same address. Tying it
+   * to the lead product would mean a business that later switches lead
+   * follow-up off loses the ability to SEE, let alone fix, a list that is still
+   * silencing its invoice chasers. A compliance record you cannot reach is
+   * worse than one you never made.
+   */
+  "suppression:manage": "core",
 };
 
 /**

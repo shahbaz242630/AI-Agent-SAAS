@@ -29,11 +29,19 @@ import Link from "next/link";
  * The `key` and `href` stay as they are: they are internal, no customer reads
  * them, and renaming routes would break every link and bookmark to buy nothing.
  */
+/**
+ * ⚠️ "DO NOT CONTACT" IS A FIFTH TAB AND NOT A LEAD SCREEN (2026-08-21).
+ * Suppression is organisation-wide and crosses every product: an entry recorded
+ * on an enquiry also stops invoice chasers to the same address. Reaching it
+ * only from the lead it came from would be a correction nobody could find — and
+ * the entry might not have come from a lead at all.
+ */
 export const SETTINGS_TABS = [
   { key: "reminders", href: "/app/settings/reminders", label: "Reminders" },
   { key: "mailbox", href: "/app/settings/mailbox", label: "Mailbox" },
   { key: "invoices", href: "/app/settings/invoices", label: "Currency" },
   { key: "modules", href: "/app/settings/modules", label: "Products" },
+  { key: "do-not-contact", href: "/app/settings/do-not-contact", label: "Do not contact" },
 ] as const;
 
 export type SettingsTabKey = (typeof SETTINGS_TABS)[number]["key"];

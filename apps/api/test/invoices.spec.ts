@@ -1129,7 +1129,7 @@ describe("Invoices: reminder scheduling hooks (Slice 1.5 — plan §3 recompute 
 
     // Contact email on the permanent suppression list.
     const suppressedEmail = `hook-sup-${randomUUID().slice(0, 8)}@example.test`;
-    await owner.suppressionEntry.create({
+    await owner.suppressionEvent.create({
       data: { organisationId: org.id, channel: "email", value: suppressedEmail },
     });
     const suppressed = await createDraft({ contactId: await createContact(suppressedEmail) });
@@ -2488,7 +2488,7 @@ describe("Invoices: chaseBlockedReason (does Eva actually chase this?)", () => {
 
   it("says suppressed when the contact asked not to be emailed", async () => {
     const contact = await makeContact();
-    await owner.suppressionEntry.create({
+    await owner.suppressionEvent.create({
       data: {
         organisationId: org.id,
         channel: "email",

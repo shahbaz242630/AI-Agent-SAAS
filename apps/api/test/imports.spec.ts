@@ -495,7 +495,7 @@ describe("Imports: upload, staging and validation", () => {
   });
 
   it("flags suppressed contact and customer emails (BRD hard rule); rows stay importable (§7.4)", async () => {
-    await owner.suppressionEntry.create({
+    await owner.suppressionEvent.create({
       data: {
         id: randomUUID(),
         organisationId: org.id,
@@ -503,7 +503,7 @@ describe("Imports: upload, staging and validation", () => {
         value: "suppressed-contact@test.eva.local",
       },
     });
-    await owner.suppressionEntry.create({
+    await owner.suppressionEvent.create({
       data: {
         id: randomUUID(),
         organisationId: org.id,

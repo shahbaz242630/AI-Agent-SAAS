@@ -32,7 +32,7 @@ model Organisation {
   imports         Import[]
   importRows      ImportRow[]
   invoiceDocuments InvoiceDocument[]
-  suppressionList SuppressionEntry[]
+  suppressionEvents SuppressionEvent[]
   rolePermissions OrganisationRolePermission[]
   reminderSequences ReminderSequence[]
   reminderSteps     ReminderStep[]
@@ -406,26 +406,46 @@ model InvoiceDocument {
   @@map("invoice_documents")
 }
 
-/// Permanent, cross-channel do-not-contact record (BRD hard rule: actioned
-/// immediately and permanently, across all channels). No updated_at/deleted_at:
-/// entries are NEVER updated or deleted — migration 0005 also revokes
-/// UPDATE/DELETE from the runtime role so permanence holds at the database
-/// layer, not just in app code. Channels: email | call (whatsapp added
-/// additively when Phase 3 needs it).
-model SuppressionEntry {
+/// Cross-channel do-not-contact, as an APPEND-ONLY LOG OF EVENTS rather than a
+/// list of values (migration 0028). BRD hard rule: a request is actioned
+/// immediately and permanently, across all channels.
+///
+/// ⚠️ A ROW IS NOT "THIS VALUE IS SUPPRESSED". It is "on this date, somebody
+/// did this". `action` is `suppress` or `correct`, and the CURRENT state of a
+/// value is whatever its NEWEST row says — never `EXISTS(...)`, which was the
+/// right question up to 0027 and is a bug after it. Read it through
+/// `suppression.ts`; a hand-written query that ignores `action` will silently
+/// treat a corrected entry as live.
+///
+/// ⚠️ NO updated_at / deleted_at, AND `eva_app` HOLDS NO UPDATE OR DELETE
+/// (migration 0005, re-asserted by 0028). That is what makes "permanent" a
+/// database fact rather than an app convention, and it is exactly why undoing
+/// a mis-click had to become a new row rather than an edit.
+///
+/// ⚠️ THE UNIQUE KEY ON (org, channel, value) WAS DROPPED BY 0028 and could not
+/// survive: a value that is suppressed, corrected, then genuinely asked for
+/// again needs a SECOND `suppress` row, and a genuine request that silently did
+/// nothing is the worst bug this table could have. Idempotency moved into
+/// `addSuppression`, which does not write when the value is already suppressed.
+///
+/// Channels: email | call (whatsapp added additively when Phase 3 needs it).
+model SuppressionEvent {
   id             String       @id @default(uuid()) @db.Uuid
   organisationId String       @map("organisation_id") @db.Uuid
+  /// `suppress` | `correct` — CHECK-constrained in migration 0028.
+  action         String       @default("suppress")
   channel        String
-  /// The suppressed address/number, normalised by the application layer.
+  /// The address/number, normalised by the application layer.
   value          String
+  /// Why. Optional on a suppression, REQUIRED on a correction (CHECK).
   reason         String?
   createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
   createdBy      String?      @map("created_by") @db.Uuid
   organisation   Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
 
-  /// Re-adding the same value on the same channel is idempotent (upsert key).
-  @@unique([organisationId, channel, value])
-  @@map("suppression_list")
+  /// The lookup every send path makes: newest row for one value on one channel.
+  @@index([organisationId, channel, value, createdAt])
+  @@map("suppression_events")
 }
 
 /// Per-organisation role→permission grants (BRD 7 amendment, Slice 1.1 plan

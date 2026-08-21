@@ -46,7 +46,10 @@ import {
   type InvoiceLifecycleAction,
 } from "./invoice-state-machine.js";
 import { resolveChaseBlockedReason, type ChaseBlockedReason } from "./chase-blockers.js";
-import { normaliseSuppressionValue } from "../../../platform/suppression/suppression.js";
+import {
+  normaliseSuppressionValue,
+  suppressedValues,
+} from "../../../platform/suppression/suppression.js";
 import {
   cancelInvoiceReminders,
   recomputeInvoiceReminders,
@@ -1226,16 +1229,19 @@ export class InvoicesService {
 
     if (undecided.length === 0) return blockers;
 
-    const values = [
-      ...new Set(undecided.map((row) => normaliseSuppressionValue("email", row.email))),
-    ];
-    const suppressed = new Set(
-      (
-        await tx.suppressionEntry.findMany({
-          where: { organisationId, channel: "email", value: { in: values } },
-          select: { value: true },
-        })
-      ).map((row) => row.value),
+    /**
+     * ⚠️ THROUGH `suppressedValues`, NOT A `findMany` OF ITS OWN. This used to
+     * read the table directly, which was correct while a row meant "suppressed"
+     * and became a lie the moment corrections existed (migration 0028): a
+     * corrected entry still has its `suppress` row, so the book would have
+     * printed "suppressed" on invoices Eva was perfectly happy to chase. Still
+     * one query, whatever the length of the list.
+     */
+    const suppressed = await suppressedValues(
+      tx,
+      organisationId,
+      "email",
+      undecided.map((row) => row.email),
     );
 
     const stillUndecided = undecided.filter((row) => {

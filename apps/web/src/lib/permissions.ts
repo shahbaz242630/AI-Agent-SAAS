@@ -124,7 +124,8 @@ export type WriteAction =
   | "change-settings"
   | "change-reminder-timing"
   // Slice 3.1a — the enquiry book.
-  | "stop-contacting";
+  | "stop-contacting"
+  | "correct-suppression";
 
 /**
  * ⚠️ `Record<WriteAction, string>` IS THE EXHAUSTIVENESS GUARANTEE. Adding a
@@ -167,4 +168,13 @@ const REFUSED: Record<WriteAction, string> = {
    * compliance request sits unactioned. Name what they were refused.
    */
   "stop-contacting": "Your role can't record a do-not-contact request.",
+  /**
+   * ⚠️ SEPARATE FROM `stop-contacting` BECAUSE THE PERMISSION IS SEPARATE, AND
+   * THAT IS THE SAFEGUARD. Recording a do-not-contact is `leads:write`, which
+   * sales and reception hold; saying one was a mistake is `suppression:manage`,
+   * which they do not. Somebody refused here has to know it is a different
+   * permission from the one they used ten seconds ago, or they will read it as
+   * a fault.
+   */
+  "correct-suppression": "Your role can't undo a do-not-contact. Ask an owner or administrator.",
 };

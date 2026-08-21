@@ -284,7 +284,7 @@ describe("Invoice documents: confirm and cancel (the §7.7 hybrid)", () => {
   });
 
   it("flags suppressed emails in the response; the invoice still lands as Draft", async () => {
-    await owner.suppressionEntry.create({
+    await owner.suppressionEvent.create({
       data: {
         id: randomUUID(),
         organisationId: org.id,

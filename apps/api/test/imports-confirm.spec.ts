@@ -290,7 +290,7 @@ describe("Imports: confirm and cancel", () => {
   });
 
   it("imports suppressed rows as Draft and keeps the suppressed flag (§7.4)", async () => {
-    await owner.suppressionEntry.create({
+    await owner.suppressionEvent.create({
       data: {
         id: randomUUID(),
         organisationId: org.id,
