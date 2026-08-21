@@ -31,6 +31,43 @@ export const apiEnvSchema = z.object({
   MICROSOFT_CLIENT_SECRET: z.string().min(1),
   MICROSOFT_TENANT: z.string().min(1).default("common"),
   MICROSOFT_OAUTH_REDIRECT_URI: z.string().url(),
+  /**
+   * Slice 3.1b — the domain a customer's enquiries are delivered to (ruling
+   * 25: an address WE own, never their mailbox). Ruling 34 starts this on
+   * Resend's free `<id>.resend.app` and moves it to a domain we own before the
+   * first sale.
+   *
+   * ⚠️ OPTIONAL AT BOOT, AND REFUSED AT USE — NOT THE OTHER WAY AROUND, AND
+   * NOT DEFAULTED. Two failure modes were available here and both are worse
+   * than this one. Making it REQUIRED means an API that will not start until
+   * every environment has it, and merging auto-deploys staging against
+   * production's database — so a missing value takes the whole product down to
+   * ship a feature nobody has switched on yet. Giving it a plausible DEFAULT is
+   * worse still: addresses would be issued on a domain that receives nothing,
+   * printed on a customer's website, and every enquiry sent to one would
+   * vanish with no error anywhere. Unset, the front door simply cannot be
+   * opened and says so.
+   */
+  INBOUND_EMAIL_DOMAIN: z.string().default(""),
+  /**
+   * Slice 3.1b — reading the message itself. Resend's `email.received` webhook
+   * carries METADATA ONLY: no body, no headers, no attachments. Turning an
+   * arrival into a lead therefore takes a second, authenticated call, and this
+   * is what authenticates it.
+   */
+  RESEND_API_KEY: z.string().default(""),
+  /**
+   * Slice 3.1b — the Svix signing secret for the inbound webhook (`whsec_…`).
+   *
+   * ⚠️ UNSET MEANS REFUSE EVERYTHING, NEVER ACCEPT EVERYTHING. This value is
+   * the ONLY authentication on a route the public internet can reach: there is
+   * no JWT, no session and no organisation on an inbound webhook. An empty
+   * secret that fell through to "no verification configured, allow it" would
+   * turn the front door into an open one, and it would do so silently on
+   * exactly the environment where somebody forgot to set it. `InboundWebhook`
+   * refuses when this is empty, and a test proves it.
+   */
+  RESEND_WEBHOOK_SECRET: z.string().default(""),
 });
 
 export type ApiEnv = z.infer<typeof apiEnvSchema>;

@@ -43,6 +43,8 @@ model Organisation {
   leads           Lead[]
   leadEvidence    LeadEvidence[]
   consentTexts    ConsentText[]
+  inboundAddresses InboundAddress[]
+  inboundMessages  InboundMessage[]
 
   @@map("organisations")
 }
@@ -667,8 +669,11 @@ model OrganisationModule {
 model Lead {
   id             String    @id @default(uuid()) @db.Uuid
   organisationId String    @map("organisation_id") @db.Uuid
-  /// The BRD 4.3 channel this arrived through. Narrow on purpose: only what a
-  /// person can log by hand today. 3.1b adds `email` when a reader exists.
+  /// The BRD 4.3 channel this arrived through. `email_enquiry` is the only
+  /// value this product produces (ruling 29 — one mailbox in, a reply out); the
+  /// three call-shaped sources were retired in #100 and stay legal only for the
+  /// rows that already carry them. Migration 0027 explains why widening a CHECK
+  /// is not the same as reopening a door: the API is what refuses them now.
   source         String
   contactName    String?   @map("contact_name")
   contactEmail   String?   @map("contact_email")
@@ -693,6 +698,10 @@ model Lead {
   organisation   Organisation  @relation(fields: [organisationId], references: [id], onDelete: Cascade)
   customer       Customer?     @relation(fields: [customerId], references: [id], onDelete: SetNull)
   evidence       LeadEvidence?
+  /// The delivery this lead was derived from (3.1b). A list on the Prisma side
+  /// because a foreign key has no cardinality of its own; in practice one, and
+  /// `inbound_messages.provider_message_id` being unique is what keeps it one.
+  inboundMessages InboundMessage[]
 
   @@index([organisationId])
   @@index([organisationId, receivedAt(sort: Desc)])
@@ -757,4 +766,99 @@ model ConsentText {
   @@unique([organisationId, version])
   @@index([organisationId])
   @@map("consent_texts")
+}
+
+/// Where a customer's enquiries land — the front door (Slice 3.1b, ruling 29).
+///
+/// ⚠️ AN ADDRESS WE OWN, NOT THE CUSTOMER'S MAILBOX (ruling 25). The business
+/// puts this one address on their website and their lead forms; mail arriving
+/// here becomes a lead, and Eva's reply goes out from the customer's own
+/// mailbox. Nobody is ever asked for a restricted Google scope.
+///
+/// ⚠️ `domain` IS A COLUMN BECAUSE IT WILL CHANGE ONCE. Ruling 34 starts this on
+/// Resend's free `*.resend.app` domain and moves it to one we own before the
+/// first sale. Stored, that move is an UPDATE; derived, it would silently
+/// invalidate every address already printed on a customer's website.
+///
+/// The unique index on `address` covers revoked rows too, and migration 0029
+/// explains why at length: an address we have ever issued is spent forever.
+model InboundAddress {
+  id             String    @id @default(uuid()) @db.Uuid
+  organisationId String    @map("organisation_id") @db.Uuid
+  /// Lowercased, and the database enforces it — a service that forgets fails on
+  /// INSERT rather than quietly issuing a second, unroutable door.
+  address        String    @unique
+  localPart      String    @map("local_part")
+  domain         String
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy      String?   @map("created_by") @db.Uuid
+  /// Revoking is a soft delete plus a NEW row. One live address per
+  /// organisation, enforced by a partial unique index migration 0029 carries
+  /// and schema.prisma cannot express (the 0011/0013/0017 precedent).
+  deletedAt      DateTime? @map("deleted_at") @db.Timestamptz(6)
+  organisation   Organisation     @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+  messages       InboundMessage[]
+
+  @@index([organisationId])
+  @@map("inbound_addresses")
+}
+
+/// What arrived at the front door, written before anything is decided about it.
+///
+/// ⚠️ THIS IS THE ONLY COPY. The enquiry was forwarded to us; the customer's own
+/// mailbox is not somewhere we can go back and re-read it from (ruling 25). So
+/// the row is written from the webhook's metadata at the moment of arrival, and
+/// the body is fetched into it afterwards — because Resend's `email.received`
+/// webhook carries METADATA ONLY, and that second call can fail on its own.
+///
+/// ⚠️ NOT EVIDENCE, AND NOT APPEND-ONLY. `LeadEvidence` is the record PECR
+/// expects us to show and the database refuses to change it. This is the
+/// working record of a delivery: it keeps UPDATE because the body lands late
+/// and the status moves. If anything here is ever cited as proof that somebody
+/// made contact, it belongs in `LeadEvidence` instead.
+model InboundMessage {
+  id                String    @id @default(uuid()) @db.Uuid
+  organisationId    String    @map("organisation_id") @db.Uuid
+  inboundAddressId  String    @map("inbound_address_id") @db.Uuid
+  provider          String    @default("resend")
+  /// ⚠️ THE IDEMPOTENCY KEY. Webhooks retry — on a non-2xx, on a timeout, and
+  /// on successes the sender never heard about. Unique per provider, so the
+  /// second delivery of the same message is a no-op instead of a duplicate
+  /// enquiry in somebody's book.
+  providerMessageId String    @map("provider_message_id")
+  /// The sender's own RFC 5322 Message-ID. Not our key (the sender chooses it
+  /// and a forwarder may rewrite it) but it is what a reply quotes to thread.
+  rfcMessageId      String?   @map("rfc_message_id")
+  fromAddress       String    @map("from_address")
+  /// The address the provider says it delivered to, verbatim. Kept beside the
+  /// resolved `inboundAddressId` because the two disagreeing is the routing bug
+  /// that is invisible without both halves written down.
+  deliveredTo       String    @map("delivered_to")
+  subject           String?
+  textBody          String?   @map("text_body")
+  htmlBody          String?   @map("html_body")
+  /// ⚠️ THE LOOP-STOPPER (ruling 32). `Auto-Submitted`, `Precedence: bulk` and
+  /// `List-*` are how Eva will know not to answer another machine — and
+  /// answering another auto-responder is a loop that runs on the CUSTOMER'S
+  /// domain, in their name. Captured from this slice onward, before the rules
+  /// that read them exist, because a header not kept at arrival is gone.
+  headers           Json?
+  /// received | converted | ignored | failed. Only states that can occur —
+  /// migration 0029 sets out what produces each one.
+  status            String    @default("received")
+  failureReason     String?   @map("failure_reason")
+  leadId            String?   @map("lead_id") @db.Uuid
+  /// ⚠️ THEIR CLOCK, NOT OURS — the same rule as `Lead.receivedAt`.
+  receivedAt        DateTime  @map("received_at") @db.Timestamptz(6)
+  createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  organisation      Organisation   @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+  address           InboundAddress @relation(fields: [inboundAddressId], references: [id], onDelete: Restrict)
+  lead              Lead?          @relation(fields: [leadId], references: [id], onDelete: SetNull)
+
+  @@unique([provider, providerMessageId])
+  @@index([organisationId])
+  @@index([organisationId, status, receivedAt(sort: Desc)])
+  @@map("inbound_messages")
 }

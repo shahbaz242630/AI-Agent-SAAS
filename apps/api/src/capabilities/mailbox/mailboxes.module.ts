@@ -8,12 +8,38 @@ import { MailboxesController } from "./mailboxes.controller.js";
 import { MailboxesService } from "./mailboxes.service.js";
 import { MicrosoftOAuthController } from "./microsoft-oauth.controller.js";
 import { GraphOutboundMail, OUTBOUND_MAIL } from "./outbound-mail.js";
+import { InboundAddressesController } from "./inbound/inbound-addresses.controller.js";
+import { InboundAddressesService } from "./inbound/inbound-addresses.service.js";
+import { InboundWebhookController } from "./inbound/inbound-webhook.controller.js";
+import { InboundIntakeService } from "./inbound/inbound-intake.service.js";
+import { RECEIVED_MAIL, ResendReceivedMail } from "./inbound/received-mail.js";
+import { API_ENV } from "../../config/config.module.js";
+import type { ApiEnv } from "../../config/env.js";
 
 @Module({
   imports: [UsersModule],
-  controllers: [MailboxesController, MicrosoftOAuthController],
+  controllers: [
+    MailboxesController,
+    MicrosoftOAuthController,
+    InboundAddressesController,
+    InboundWebhookController,
+  ],
   providers: [
     MailboxesService,
+    InboundAddressesService,
+    InboundIntakeService,
+    /**
+     * ⚠️ BUILT FROM ENV RATHER THAN `useClass`, so the API key is read once at
+     * wiring time instead of being reached for on every fetch — and so a test
+     * can replace the whole seam with a stub. Ruling 34 moves off Resend's
+     * domain before the first sale; if the provider changes with it, this is
+     * the one line that changes.
+     */
+    {
+      provide: RECEIVED_MAIL,
+      inject: [API_ENV],
+      useFactory: (env: ApiEnv) => new ResendReceivedMail(env.RESEND_API_KEY),
+    },
     { provide: MICROSOFT_GRAPH_PROVIDER, useClass: GraphMailProvider },
     { provide: MICROSOFT_DISCOVERY, useClass: MicrosoftDiscoveryService },
     { provide: OUTBOUND_MAIL, useClass: GraphOutboundMail },

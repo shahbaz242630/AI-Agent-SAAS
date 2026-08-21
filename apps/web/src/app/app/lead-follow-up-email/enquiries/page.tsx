@@ -14,6 +14,7 @@ import {
   leadStatusTone,
 } from "@/products/lead-follow-up/lead-book";
 import { describeMoment } from "@/lib/today";
+import { EnquiryAddressPanel } from "@/capabilities/mailbox/enquiry-address-panel";
 
 /**
  * The enquiry book (Slice 3.1a).
@@ -118,6 +119,29 @@ export default async function EnquiryBookPage() {
     );
   }
 
+  /**
+   * ⚠️ FETCHED SEPARATELY, AND A FAILURE HERE MUST NOT TAKE THE BOOK DOWN.
+   * The address and the enquiries answer two different questions — "where do
+   * they arrive" and "what has arrived" — and an environment with no inbound
+   * domain configured answers 503 to the first while the second is perfectly
+   * fine. Letting that 503 escape would blank a screen full of real enquiries
+   * to report that a panel could not be drawn.
+   */
+  let inboundAddress: string | null = null;
+  if (!forbidden && !notEntitled) {
+    try {
+      const response = await apiFetch(
+        `/organisations/${organisation.id}/inbound-address`,
+        accessToken,
+      );
+      inboundAddress = ((await response.json()) as { address: string }).address;
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 401) redirect("/sign-in");
+      // 402, 403 and 503 all mean "no address to show", and the book still stands.
+      else if (!(error instanceof ApiError)) throw error;
+    }
+  }
+
   if (forbidden || !leads) {
     return (
       <Shell>
@@ -138,18 +162,19 @@ export default async function EnquiryBookPage() {
       </section>
 
       {/**
-       * ⚠️ THE PRODUCT CANNOT DO EITHER HALF OF ITS JOB YET, AND THE SCREEN
-       * SAYS BOTH. Nothing arrives until the mailbox is forwarding (3.1b) and
-       * nothing is answered until Eva replies (3.1c). A book that quietly
-       * listed enquiries would let somebody assume they were being answered —
-       * the money-bug family, where a screen implies an outcome that does not
-       * happen. Removed the day Eva can actually reply.
+       * ⚠️ THIS REPLACED A SENTENCE THIS SLICE MADE FALSE. Until 3.1b the
+       * screen said enquiries would land here "once your mailbox is forwarding
+       * to Eva… neither is switched on yet". Half of that stopped being true
+       * the moment the front door opened: mail sent to the address below DOES
+       * now become an enquiry. The other half — that Eva does not reply — is
+       * still true and is said inside the panel, where somebody reading it is
+       * about to publish the address.
+       *
+       * ⚠️ ABSENT RATHER THAN BROKEN WHEN THERE IS NO ADDRESS. An environment
+       * with no inbound domain configured has nothing honest to show here, and
+       * an empty box with a heading would read as a fault.
        */}
-      <p className="w-full rounded-[var(--radius-card)] border border-border bg-surface px-6 py-3 text-sm text-muted-foreground">
-        Enquiries will land here once your mailbox is forwarding to Eva, and she will answer them
-        once that part is built. Neither is switched on yet. What she does today is keep the record,
-        and the proof behind it.
-      </p>
+      {inboundAddress && <EnquiryAddressPanel address={inboundAddress} />}
 
       <section className="flex w-full flex-col gap-3">
         {/**
@@ -173,7 +198,19 @@ export default async function EnquiryBookPage() {
         {leads.length === 0 ? (
           <EmptyState
             headline="No enquiries yet."
-            detail="Once your mailbox forwards to Eva, every new enquiry will appear here with the proof of who sent it and when."
+            /**
+             * ⚠️ TWO SENTENCES BECAUSE THERE ARE TWO SITUATIONS, NOT TO BE
+             * CLEVER. "The address above" is a lie when the panel above is not
+             * there — and it is not there whenever this environment has no
+             * inbound domain configured. Pointing somebody at something that
+             * is not on their screen is the same defect as telling them there
+             * is no undo when there is.
+             */
+            detail={
+              inboundAddress
+                ? "Send an email to the address above — or point your website's enquiry form at it — and it will appear here with the proof of who sent it and when."
+                : "Enquiries will appear here, with the proof of who sent them and when, as soon as your enquiry address is set up."
+            }
           />
         ) : (
           <div className="w-full overflow-x-auto rounded-[var(--radius-card)] border border-border bg-surface px-6 py-3">

@@ -27,6 +27,9 @@ const baseEnv: ApiEnv = {
   MICROSOFT_CLIENT_SECRET: "test-microsoft-client-secret", // gitleaks:allow — fake test fixture
   MICROSOFT_TENANT: "common",
   MICROSOFT_OAUTH_REDIRECT_URI: "http://localhost:3001/integrations/microsoft/callback",
+  INBOUND_EMAIL_DOMAIN: "",
+  RESEND_API_KEY: "",
+  RESEND_WEBHOOK_SECRET: "",
 };
 
 describe("initSentry (BRD 14)", () => {

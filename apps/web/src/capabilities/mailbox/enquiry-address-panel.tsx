@@ -1,0 +1,73 @@
+"use client";
+
+import { useState } from "react";
+
+/**
+ * The address a customer puts on their website (Slice 3.1b, ruling 29).
+ *
+ * ⚠️ THIS IS THE ONE THING ON THE SCREEN THAT HAS TO BE COPIED EXACTLY. A
+ * mistyped character is not a validation error — it is a website quietly
+ * sending every enquiry to an address nobody owns, with nothing failing
+ * anywhere to say so. So: monospace, selectable, and a copy button, rather than
+ * a sentence with an address embedded in it that somebody will re-type.
+ *
+ * ⚠️ CLIENT COMPONENT ONLY BECAUSE OF THE COPY BUTTON. The address itself is
+ * rendered by the server and passed in; nothing here fetches anything.
+ */
+export function EnquiryAddressPanel({ address }: { address: string }) {
+  const [copied, setCopied] = useState(false);
+
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(address);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 2000);
+    } catch {
+      /**
+       * ⚠️ SILENT ON PURPOSE, AND THE ADDRESS IS STILL SELECTABLE. The
+       * clipboard API is refused outright in some browsers and over plain
+       * HTTP. An error message here would be alarming and useless — the
+       * address is right there to select by hand, which is what somebody does
+       * anyway when a copy button does not respond.
+       */
+      setCopied(false);
+    }
+  }
+
+  return (
+    <section className="flex w-full flex-col gap-3 rounded-[var(--radius-card)] border border-border bg-surface px-6 py-4">
+      <div className="flex flex-col gap-1">
+        <h2 className="text-[13.5px] font-semibold">Your enquiry address</h2>
+        <p className="text-sm text-muted-foreground">
+          Put this on your website and on your enquiry forms, or forward your existing enquiries to
+          it. Anything sent here becomes an enquiry below.
+        </p>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-3">
+        <code className="flex-1 rounded-[var(--radius-card)] border border-hairline bg-muted px-3.5 py-2.5 font-mono text-[13.5px] break-all select-all">
+          {address}
+        </code>
+        <button
+          type="button"
+          onClick={copy}
+          className="rounded-[var(--radius-card)] bg-primary px-4 py-2 text-sm font-medium text-primary-foreground"
+        >
+          {copied ? "Copied" : "Copy"}
+        </button>
+      </div>
+
+      {/**
+       * ⚠️ SAYS WHAT EVA DOES NOT DO YET, AND STAYS UNTIL SHE DOES. Enquiries
+       * now genuinely arrive here — but nothing is answered until 3.1c. A panel
+       * that only said "put this on your website" would let a customer believe
+       * their enquiries were being replied to, which is the money-bug family:
+       * a screen implying an outcome that does not happen.
+       */}
+      <p className="text-[12.5px] text-muted-foreground">
+        Eva records every enquiry that arrives here, with the proof of who sent it and when. She
+        does not reply to them yet — that part is still being built.
+      </p>
+    </section>
+  );
+}

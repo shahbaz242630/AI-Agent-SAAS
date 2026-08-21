@@ -89,6 +89,8 @@ describe("Schema conventions (BRD 10)", () => {
       "human_escalations",
       "import_rows",
       "imports",
+      "inbound_addresses",
+      "inbound_messages",
       "invoice_documents",
       "invoices",
       "lead_evidence",
