@@ -99,8 +99,13 @@ export default async function MailboxSettingsPage({
     <main className="flex w-full max-w-[1080px] flex-1 flex-col gap-[26px] px-10 pt-8 pb-9">
       <section className="flex w-full max-w-2xl flex-col gap-2">
         <h1 className="font-display text-[29px] leading-tight font-semibold">Mailbox settings</h1>
+        {/* ⚠️ SAID "the Microsoft 365 mailbox" UNTIL 3.1b. Spotted on the live
+            page immediately after shipping the Gmail picker directly beneath
+            it — a heading promising Microsoft above a control offering Gmail.
+            The third sentence this slice made false, and the third found by
+            looking at the screen rather than by a test. */}
         <p className="text-sm text-muted-foreground">
-          Connect the Microsoft 365 mailbox Eva sends reminders from.
+          Connect the mailbox Eva sends from — Outlook, Microsoft 365 or Gmail.
         </p>
       </section>
 
