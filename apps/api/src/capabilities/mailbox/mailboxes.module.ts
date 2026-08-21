@@ -7,7 +7,8 @@ import { MicrosoftDiscoveryService } from "./microsoft-graph/microsoft-discovery
 import { MailboxesController } from "./mailboxes.controller.js";
 import { MailboxesService } from "./mailboxes.service.js";
 import { MicrosoftOAuthController } from "./microsoft-oauth.controller.js";
-import { GraphOutboundMail, OUTBOUND_MAIL } from "./outbound-mail.js";
+import { RoutedOutboundMail, OUTBOUND_MAIL } from "./outbound-mail.js";
+import { MAIL_PROVIDERS, type MailProviderRegistry } from "./mail-provider.js";
 import { InboundAddressesController } from "./inbound/inbound-addresses.controller.js";
 import { InboundAddressesService } from "./inbound/inbound-addresses.service.js";
 import { InboundWebhookController } from "./inbound/inbound-webhook.controller.js";
@@ -42,7 +43,25 @@ import type { ApiEnv } from "../../config/env.js";
     },
     { provide: MICROSOFT_GRAPH_PROVIDER, useClass: GraphMailProvider },
     { provide: MICROSOFT_DISCOVERY, useClass: MicrosoftDiscoveryService },
-    { provide: OUTBOUND_MAIL, useClass: GraphOutboundMail },
+    { provide: OUTBOUND_MAIL, useClass: RoutedOutboundMail },
+    /**
+     * The provider registry (3.1b step 2).
+     *
+     * ⚠️ BUILT *FROM* `MICROSOFT_GRAPH_PROVIDER` RATHER THAN BESIDE IT, AND
+     * THAT IS WHAT KEEPS THE EXISTING TESTS HONEST. Every mailbox spec
+     * substitutes a stub with `overrideProvider(MICROSOFT_GRAPH_PROVIDER)`;
+     * registering a separately-constructed adapter here would leave those
+     * overrides pointing at nothing while the real Graph client ran underneath,
+     * and the suite would go green against the live Microsoft endpoints.
+     *
+     * The map is the one place a new provider is added. Gmail is one entry.
+     */
+    {
+      provide: MAIL_PROVIDERS,
+      inject: [MICROSOFT_GRAPH_PROVIDER],
+      useFactory: (microsoft: GraphMailProvider): MailProviderRegistry =>
+        new Map([["microsoft", microsoft]]),
+    },
   ],
   /**
    * Exported for 1.7's sender:
