@@ -225,8 +225,13 @@ export class LeadsService {
    * exactly the complaint that makes a regulator interested.
    *
    * Every address and number we hold for them goes on the list. Re-adding an
-   * existing entry is a no-op by design (`SuppressionEntry` is unique on
-   * channel+value), so this is safe to repeat and safe to race.
+   * already-suppressed value is a no-op by design, so this is safe to repeat.
+   *
+   * ⚠️ IT IS ALSO WHAT RE-ASSERTS A REQUEST AFTER A CORRECTION (0028). If this
+   * address was suppressed by mistake and corrected, and the person then
+   * genuinely asks, this writes a new `suppress` event that supersedes the
+   * correction. Under the old unique-key upsert it would have done nothing at
+   * all and left them contactable — a real request that silently failed.
    */
   async doNotContact(
     authUser: AuthUser,

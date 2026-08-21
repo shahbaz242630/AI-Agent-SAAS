@@ -22,7 +22,7 @@ export const PLATFORM_TABLES = [
   "auditLog",
   "customer",
   "contact",
-  "suppressionEntry",
+  "suppressionEvent",
   "organisationRolePermission",
   "organisationModule",
   /**

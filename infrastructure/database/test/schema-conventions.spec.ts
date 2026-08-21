@@ -102,7 +102,7 @@ describe("Schema conventions (BRD 10)", () => {
       "reminder_steps",
       "roles",
       "scheduled_actions",
-      "suppression_list",
+      "suppression_events",
       "users",
     ]);
   });
@@ -117,7 +117,7 @@ describe("Schema conventions (BRD 10)", () => {
     "imports",
     "import_rows",
     "invoice_documents",
-    "suppression_list",
+    "suppression_events",
     "organisation_role_permissions",
     "reminder_sequences",
     "reminder_steps",
@@ -831,8 +831,8 @@ describe("Schema conventions (BRD 10)", () => {
     expect(names).not.toContain("deleted_at");
   });
 
-  it("suppression_list is permanent: created_at only, no updated_at/deleted_at", async () => {
-    const names = (await columnsOf("suppression_list")).map((c) => c.column_name);
+  it("suppression_events is permanent: created_at only, no updated_at/deleted_at", async () => {
+    const names = (await columnsOf("suppression_events")).map((c) => c.column_name);
     expect(names).toContain("created_at");
     expect(names).toContain("created_by");
     expect(names).not.toContain("updated_at");

@@ -8,7 +8,6 @@ import { BackChip, StatusPill } from "@/components/ui";
 import {
   alsoAffectsLine,
   contactLine,
-  describeMoment,
   evidenceSummary,
   leadName,
   leadSourceLabel,
@@ -16,6 +15,7 @@ import {
   leadStatusTone,
   type AlsoAffected,
 } from "@/products/lead-follow-up/lead-book";
+import { describeMoment } from "@/lib/today";
 import { StopContactingControl } from "./stop-contacting-control";
 
 /**

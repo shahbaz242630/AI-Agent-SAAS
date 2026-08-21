@@ -9,6 +9,8 @@
  * worth getting right lives in this file instead, where a test can reach it.
  */
 
+import { describeMoment } from "@/lib/today";
+
 /**
  * How an enquiry came in, in English.
  *
@@ -114,46 +116,6 @@ export function evidenceSummary(
   }
   const when = describeMoment(evidence.occurredAt, timezone);
   return `They got in touch themselves — ${leadSourceLabel(evidence.channel).toLowerCase()}, ${when}. That is what makes contacting them lawful.`;
-}
-
-/**
- * A moment, in the ORGANISATION's timezone: "Tuesday 19 August at 2:30pm".
- *
- * ⚠️ NEVER THE SERVER'S CLOCK — `lib/today.ts` carries the full reasoning, and
- * it bites harder here than on a dashboard heading. Speed-to-lead (BRD §4.3) is
- * measured from this exact moment, and our compute runs eight hours behind
- * London. An enquiry logged at 9am in Manchester printed as 1am is not a
- * cosmetic slip: it is the number every response target is derived from.
- */
-export function describeMoment(iso: string, timezone: string): string {
-  const at = new Date(iso);
-  if (Number.isNaN(at.getTime())) return "at an unknown time";
-  try {
-    return formatIn(at, timezone);
-  } catch {
-    // An unrecognised zone costs the reader a few hours of accuracy. Throwing
-    // costs them the whole screen.
-    return formatIn(at, "UTC");
-  }
-}
-
-function formatIn(at: Date, timeZone: string): string {
-  const day = new Intl.DateTimeFormat("en-GB", {
-    timeZone,
-    weekday: "long",
-    day: "numeric",
-    month: "long",
-  }).format(at);
-  const time = new Intl.DateTimeFormat("en-GB", {
-    timeZone,
-    hour: "numeric",
-    minute: "2-digit",
-    hour12: true,
-  })
-    .format(at)
-    .replace(/\s/g, "")
-    .toLowerCase();
-  return `${day} at ${time}`;
 }
 
 /** A client who shares this person's email address or phone number. */

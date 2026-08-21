@@ -8,12 +8,12 @@ import { EmptyState, StatusPill } from "@/components/ui";
 import {
   bookCountLine,
   contactLine,
-  describeMoment,
   leadName,
   leadSourceLabel,
   leadStatusLabel,
   leadStatusTone,
 } from "@/products/lead-follow-up/lead-book";
+import { describeMoment } from "@/lib/today";
 
 /**
  * The enquiry book (Slice 3.1a).

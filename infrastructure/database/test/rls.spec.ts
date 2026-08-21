@@ -35,7 +35,7 @@ beforeAll(async () => {
   await seed(owner);
   // Suppression rows are permanent and may be left by earlier test runs; clean
   // the deterministic fixture orgs so cross-tenant SELECT assertions are sound.
-  await owner.$executeRaw`DELETE FROM suppression_list WHERE organisation_id IN (${ORG_A}::uuid, ${ORG_B}::uuid)`;
+  await owner.$executeRaw`DELETE FROM suppression_events WHERE organisation_id IN (${ORG_A}::uuid, ${ORG_B}::uuid)`;
   // POSITIVE CONTROL for email_accounts (Slice 1.6): unlike customers/invoices,
   // seed() creates no mailbox rows, so "tenant A cannot SELECT tenant B's
   // email_accounts" would pass against an empty table whether the
@@ -78,7 +78,7 @@ const TENANT_TABLES = [
   "imports",
   "import_rows",
   "invoice_documents",
-  "suppression_list",
+  "suppression_events",
   "organisation_role_permissions",
   "reminder_sequences",
   "reminder_steps",
@@ -110,7 +110,7 @@ describe("RLS: connection role hardening", () => {
       WHERE relname IN (
         'organisations', 'organisation_settings', 'organisation_memberships',
         'users', 'audit_logs', 'customers', 'contacts', 'invoices',
-        'imports', 'import_rows', 'invoice_documents', 'suppression_list',
+        'imports', 'import_rows', 'invoice_documents', 'suppression_events',
         'organisation_role_permissions', 'reminder_sequences', 'reminder_steps',
         'scheduled_actions', 'human_escalations', 'email_accounts',
         'organisation_modules', 'leads', 'lead_evidence', 'consent_texts'
@@ -128,7 +128,7 @@ describe("RLS: connection role hardening", () => {
       WHERE tablename IN (
         'organisations', 'organisation_settings', 'organisation_memberships',
         'users', 'audit_logs', 'customers', 'contacts', 'invoices',
-        'imports', 'import_rows', 'invoice_documents', 'suppression_list',
+        'imports', 'import_rows', 'invoice_documents', 'suppression_events',
         'organisation_role_permissions', 'reminder_sequences', 'reminder_steps',
         'scheduled_actions', 'human_escalations', 'email_accounts',
         'organisation_modules', 'leads', 'lead_evidence', 'consent_texts'
@@ -147,7 +147,7 @@ describe("RLS: cross-tenant attacks are refused by Postgres itself", () => {
     "imports",
     "import_rows",
     "invoice_documents",
-    "suppression_list",
+    "suppression_events",
     "organisation_role_permissions",
     "reminder_sequences",
     "reminder_steps",
@@ -370,12 +370,12 @@ describe("RLS: list_active_organisations sweep enumeration (migration 0010, plan
 });
 
 describe("RLS: suppression list permanence (BRD hard rule)", () => {
-  it("runtime role has UPDATE and DELETE revoked on suppression_list", async () => {
+  it("runtime role has UPDATE and DELETE revoked on suppression_events", async () => {
     await expect(
       asTenant(
         ORG_A,
         async (tx) =>
-          tx.$executeRaw`UPDATE suppression_list SET reason = 'tampered' WHERE organisation_id = ${ORG_A}::uuid`,
+          tx.$executeRaw`UPDATE suppression_events SET reason = 'tampered' WHERE organisation_id = ${ORG_A}::uuid`,
       ),
     ).rejects.toThrow(/permission denied|cannot update/i);
 
@@ -383,7 +383,7 @@ describe("RLS: suppression list permanence (BRD hard rule)", () => {
       asTenant(
         ORG_A,
         async (tx) =>
-          tx.$executeRaw`DELETE FROM suppression_list WHERE organisation_id = ${ORG_A}::uuid`,
+          tx.$executeRaw`DELETE FROM suppression_events WHERE organisation_id = ${ORG_A}::uuid`,
       ),
     ).rejects.toThrow(/permission denied|cannot delete/i);
   });

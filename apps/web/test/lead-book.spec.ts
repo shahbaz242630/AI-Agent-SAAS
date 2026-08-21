@@ -3,7 +3,6 @@ import {
   alsoAffectsLine,
   bookCountLine,
   contactLine,
-  describeMoment,
   evidenceSummary,
   leadName,
   leadSourceLabel,
@@ -11,6 +10,7 @@ import {
   leadStatusTone,
   type AlsoAffected,
 } from "@/products/lead-follow-up/lead-book";
+import { describeMoment } from "@/lib/today";
 
 describe("lead vocabulary", () => {
   it("says the source this product produces the way a person would", () => {

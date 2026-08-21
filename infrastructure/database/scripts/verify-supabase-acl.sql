@@ -89,7 +89,7 @@ WHERE n.nspname = 'public' AND c.relkind = 'r' AND a.grantee = 0
 ORDER BY kind, name;
 
 \echo == FINDING IF ANY ROWS: eva_app cannot read/write a tenant table ==
--- Not a privilege-count check: suppression_list deliberately holds only
+-- Not a privilege-count check: suppression_events deliberately holds only
 -- SELECT + INSERT (migration 20260724061409 revokes UPDATE/DELETE so
 -- do-not-contact entries are permanent), so counting to 4 would flag correct
 -- design. Assert the floor the runtime actually needs instead.
@@ -114,11 +114,11 @@ FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
 WHERE n.nspname = 'public' AND p.proname = 'list_active_organisations'
   AND NOT has_function_privilege('eva_app', p.oid, 'EXECUTE');
 
-\echo == FINDING IF ANY ROWS: suppression_list is no longer append-only ==
+\echo == FINDING IF ANY ROWS: suppression_events is no longer append-only ==
 -- BRD compliance: a do-not-contact entry must never be editable or erasable by
 -- the runtime role.
-SELECT 'suppression_list' AS table_name,
-       has_table_privilege('eva_app', 'suppression_list', 'UPDATE') AS can_update,
-       has_table_privilege('eva_app', 'suppression_list', 'DELETE') AS can_delete
-WHERE has_table_privilege('eva_app', 'suppression_list', 'UPDATE')
-   OR has_table_privilege('eva_app', 'suppression_list', 'DELETE');
+SELECT 'suppression_events' AS table_name,
+       has_table_privilege('eva_app', 'suppression_events', 'UPDATE') AS can_update,
+       has_table_privilege('eva_app', 'suppression_events', 'DELETE') AS can_delete
+WHERE has_table_privilege('eva_app', 'suppression_events', 'UPDATE')
+   OR has_table_privilege('eva_app', 'suppression_events', 'DELETE');

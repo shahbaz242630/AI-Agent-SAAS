@@ -713,3 +713,37 @@ export const createLeadRequestSchema = z.object({
 });
 
 export type CreateLeadRequest = z.infer<typeof createLeadRequestSchema>;
+
+// --- Slice 3.1a follow-up: correcting a do-not-contact ---
+
+/**
+ * The channels a do-not-contact covers. Mirrors `SUPPRESSION_CHANNELS` in the
+ * API's suppression module and the CHECK behind it.
+ *
+ * ⚠️ `call`, NOT `phone`. Slice 1.1 settled that vocabulary and the database
+ * enforces it; a hand-written "phone" is refused by a path nothing exercises
+ * until a real person asks not to be contacted.
+ */
+export const SUPPRESSION_CHANNEL_KEYS = ["email", "call"] as const;
+
+/**
+ * POST /organisations/:organisationId/suppression/corrections — record that a
+ * do-not-contact entry was made in error.
+ *
+ * ⚠️ THE ENTRY IS IDENTIFIED BY CHANNEL AND VALUE, NOT BY AN ID, because after
+ * migration 0028 there is no row with a lifetime to point at — the table is a
+ * log of events about a value. The value IS the identity.
+ *
+ * ⚠️ THE REASON IS REQUIRED, HERE AND AT THE DATABASE. Undoing somebody's
+ * do-not-contact is the one action in this area that has to be answerable for
+ * later, and a CHECK constraint keeps that true for callers that never pass
+ * through this schema. 10 characters minimum so "mistake" alone will not do:
+ * the audit line has to mean something to whoever reads it in a year.
+ */
+export const correctSuppressionRequestSchema = z.object({
+  channel: z.enum(SUPPRESSION_CHANNEL_KEYS),
+  value: z.string().trim().min(1).max(320),
+  reason: z.string().trim().min(10).max(500),
+});
+
+export type CorrectSuppressionRequest = z.infer<typeof correctSuppressionRequestSchema>;

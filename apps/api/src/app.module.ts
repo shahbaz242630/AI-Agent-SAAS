@@ -9,6 +9,7 @@ import { ContactsModule } from "./platform/contacts/contacts.module.js";
 import { CustomersModule } from "./platform/customers/customers.module.js";
 import { EntitlementsModule } from "./platform/entitlements/entitlements.module.js";
 import { LeadsModule } from "./platform/leads/leads.module.js";
+import { SuppressionModule } from "./platform/suppression/suppression.module.js";
 import { ImportsModule } from "./products/invoice-follow-up/imports/imports.module.js";
 import { InvoiceDocumentsModule } from "./products/invoice-follow-up/invoice-documents/invoice-documents.module.js";
 import { InvoicesModule } from "./products/invoice-follow-up/invoices/invoices.module.js";
@@ -43,6 +44,7 @@ import { sentryErrorReporter } from "./common/monitoring/sentry.js";
     MailboxesModule,
     EntitlementsModule,
     LeadsModule,
+    SuppressionModule,
     LoggerModule.forRoot({
       pinoHttp: {
         level: process.env.LOG_LEVEL ?? "info",

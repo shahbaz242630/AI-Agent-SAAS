@@ -71,7 +71,18 @@ export async function stopContacting(
   // Both: the book shows the state, and the detail page is what was acted on.
   revalidatePath(BOOK);
   revalidatePath(`${BOOK}/${leadId}`);
+  /**
+   * ⚠️ THE SECOND SENTENCE IS FOR THE PERSON WHO HAS JUST REALISED (2026-08-21).
+   * Sales and reception press this button and CANNOT undo it — `leads:write`
+   * records a do-not-contact, `suppression:manage` corrects one, and that split
+   * is deliberate. So the moment somebody sees the consequence is the moment
+   * they need to know a path exists and who to ask. Naming the screen without
+   * linking it is on purpose: the link would take the two roles most likely to
+   * click it straight into a refusal.
+   */
   return {
-    success: "Recorded. Eva will not contact them again on any channel.",
+    success:
+      "Recorded. Eva will not contact them again on any channel. " +
+      "If that was a mistake, an owner or administrator can correct it under Settings → Do not contact.",
   };
 }
