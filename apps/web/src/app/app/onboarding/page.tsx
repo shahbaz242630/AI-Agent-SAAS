@@ -4,7 +4,11 @@ import { MailboxCard, type MailboxSummary } from "@/components/mailbox-card";
 import { GhostLink, PrimaryLink } from "@/components/ui";
 import { ApiError, apiFetch } from "@/lib/api";
 import { fetchOrganisations } from "@/lib/organisations";
-import { mailboxErrorMessage, needsConsentHelp } from "@/capabilities/mailbox/mailbox-errors";
+import {
+  mailboxErrorMessage,
+  mailboxProviderFrom,
+  needsConsentHelp,
+} from "@/capabilities/mailbox/mailbox-errors";
 import { createClient } from "@/lib/supabase/server";
 import { signOut } from "../actions";
 import { MailboxStep } from "./mailbox-step";
@@ -81,7 +85,12 @@ export default async function OnboardingPage({
 
   const errorCode = typeof params.error === "string" ? params.error : null;
   const attemptedAddress = typeof params.hint === "string" ? params.hint : null;
-  const showConsentHelp = needsConsentHelp(errorCode);
+  // Which provider they just came back from — on every callback redirect since
+  // the founder's 2026-08-22 ruling that the two paths never cross. Setup is
+  // the more important of the two screens for this: it is where somebody who
+  // has never used Eva meets their first failure.
+  const provider = mailboxProviderFrom(params.provider);
+  const showConsentHelp = needsConsentHelp(errorCode, provider);
 
   let adminConsent: AdminConsent | null = null;
   if (showConsentHelp && organisation && !forbidden) {
@@ -101,7 +110,8 @@ export default async function OnboardingPage({
     }
   }
 
-  const flashError = errorCode && !showConsentHelp ? mailboxErrorMessage(errorCode) : null;
+  const flashError =
+    errorCode && !showConsentHelp ? mailboxErrorMessage(errorCode, provider) : null;
   const connected = (status?.mailboxes.length ?? 0) > 0;
   const step = !organisation ? 1 : !connected ? 2 : 3;
 

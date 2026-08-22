@@ -53,6 +53,7 @@ import type { MicrosoftDiscovery } from "./microsoft-graph/microsoft-discovery.j
 import {
   MAIL_PROVIDERS,
   providerFor,
+  SendPermissionNotGrantedError,
   type MailProvider,
   type MailProviderKey,
   type MailProviderRegistry,
@@ -526,7 +527,23 @@ export class MailboxesService {
     // the state is verified for real. Failure is fine and expected here â€” an
     // expired or absent state simply falls back to the settings page.
     const hints = await this.recoverStateHints(query.state);
-    const base = `${this.env.WEB_ORIGIN}${FLOW_RETURN_PATHS[hints.flow]}`;
+    /**
+     * ⚠️ EVERY RETURN FROM THIS METHOD CARRIES THE PROVIDER, AND THAT IS A
+     * FOUNDER RULING (2026-08-22): "they should be separate, no crossing
+     * paths."
+     *
+     * The web could not tell them apart before. `handleCallback` is shared, so
+     * a Gmail customer who pressed Cancel at Google was handed `consent_denied`
+     * — a code whose entire copy is about a Microsoft 365 administrator — and
+     * shown an Entra approval panel. Wrong provider, wrong story, and
+     * cancelling is the single most likely way to fail this screen.
+     *
+     * It is baked into `base` rather than added at each `return` because there
+     * are fifteen of them and the failure mode of forgetting one is silent: the
+     * page falls back to whatever it assumed before, which is Microsoft.
+     * Everything downstream therefore appends with `&`.
+     */
+    const base = `${this.env.WEB_ORIGIN}${FLOW_RETURN_PATHS[hints.flow]}?provider=${provider}`;
     if (query.error) {
       // The belt-and-braces branch. The classifier is correct â€” fed AADSTS90094
       // it returns admin_consent_required, verified against deployed staging â€”
@@ -537,24 +554,24 @@ export class MailboxesService {
       // on this firing.
       if (ADMIN_CONSENT_CODES.test(query.error_description ?? "")) {
         this.logger.info("mailbox connection needs Microsoft 365 admin approval");
-        return `${base}?error=admin_consent_required`;
+        return `${base}&error=admin_consent_required`;
       }
       // So a decline is genuinely ambiguous, and the UI has to offer both
       // readings. Carrying the attempted address through lets it do that
       // properly: the domain decides whether an administrator can even exist.
       this.logger.info("mailbox connection declined at Microsoft");
       const hint = hints.loginHint;
-      return `${base}?error=consent_denied${hint ? `&hint=${encodeURIComponent(hint)}` : ""}`;
+      return `${base}&error=consent_denied${hint ? `&hint=${encodeURIComponent(hint)}` : ""}`;
     }
     if (query.admin_consent) return this.handleAdminConsentReturn(query);
-    if (!query.state) return `${base}?error=invalid_state`;
+    if (!query.state) return `${base}&error=invalid_state`;
     let claims: OAuthStateClaims;
     try {
       claims = await verifyOAuthState(this.env.OAUTH_STATE_SECRET, query.state);
     } catch {
-      return `${base}?error=invalid_state`;
+      return `${base}&error=invalid_state`;
     }
-    if (!query.code) return `${base}?error=missing_code`;
+    if (!query.code) return `${base}&error=missing_code`;
     // Re-check authorisation at the moment of the mutation. The state stays
     // valid for 30 minutes and ruling 4 binds it to an ORGANISATION, not to a
     // role â€” so the initiator can be removed from the org or demoted out of
@@ -582,14 +599,14 @@ export class MailboxesService {
        */
       if (error instanceof ModuleNotEntitledException) {
         this.logger.info("mailbox callback rejected â€” organisation is not entitled");
-        return `${base}?error=module_not_entitled`;
+        return `${base}&error=module_not_entitled`;
       }
       if (error instanceof ForbiddenException || error instanceof NotFoundException) {
         this.logger.info("mailbox callback rejected â€” initiator no longer authorised");
-        return `${base}?error=not_authorised`;
+        return `${base}&error=not_authorised`;
       }
       this.logger.error({ err: error }, "mailbox callback authorisation check failed");
-      return `${base}?error=connect_failed`;
+      return `${base}&error=connect_failed`;
     }
     let tokens: OAuthTokens;
     let profile: MailboxProfile;
@@ -602,13 +619,31 @@ export class MailboxesService {
       // looped forever. Prove there is a mailbox BEFORE storing anything:
       // a dead connection stored here is one 1.7 would try to send through.
       await this.providerFor(provider).probeMailbox(tokens.accessToken);
+      /**
+       * The same rule as the probe above, one question further on: the probe
+       * asks whether there is a mailbox, this asks whether we were allowed to
+       * send from it. Google can answer "yes" to the first and "no" to the
+       * second, because its consent screen lists the send permission as its own
+       * unticked checkbox — so the round trip succeeds and every send 403s.
+       *
+       * Checked here, before the write, for the reason F3 established and for
+       * one more: this path REPLACES an existing mailbox further down, soft-
+       * deleting the old row. Storing first and discovering the problem
+       * afterwards would take a customer's working mailbox away and give them a
+       * mute one in exchange.
+       */
+      this.providerFor(provider).assertSendPermission(tokens.scopes);
     } catch (error) {
+      if (error instanceof SendPermissionNotGrantedError) {
+        this.logger.info("mailbox connection rejected - send permission not granted");
+        return `${base}&error=send_permission_denied`;
+      }
       if (error instanceof MailboxUnavailableError) {
         this.logger.info("mailbox connection rejected â€” account has no mailbox");
-        return `${base}?error=mailbox_unavailable`;
+        return `${base}&error=mailbox_unavailable`;
       }
       this.logger.warn({ err: error }, "mailbox token exchange/profile failed");
-      return `${base}?error=exchange_failed`;
+      return `${base}&error=exchange_failed`;
     }
     const key = this.env.TOKEN_ENCRYPTION_KEY;
     const data = {
@@ -842,7 +877,7 @@ export class MailboxesService {
        */
       if (error instanceof SeatLimitReachedError) {
         this.logger.info("mailbox connection refused â€” seat limit reached");
-        return `${base}?error=seat_limit_reached`;
+        return `${base}&error=seat_limit_reached`;
       }
       // A DB outage, or the org being deleted between consent and write.
       // (Revoked membership is caught by the authorisation re-check above, not
@@ -850,7 +885,7 @@ export class MailboxesService {
       // which the global filter would not do, then redirected, because this
       // route's contract is "always a redirect".
       this.logger.error({ err: error }, "mailbox connection could not be persisted");
-      return `${base}?error=connect_failed`;
+      return `${base}&error=connect_failed`;
     }
     this.logger.info({ emailAccountId: accountId, replaceDegraded }, "mailbox connected");
     // Carried on every return below: the customer asked to swap an address and
@@ -859,7 +894,7 @@ export class MailboxesService {
     const degraded = replaceDegraded ? "&replace=degraded" : "";
     // A reconnect is someone repairing a broken grant on the settings page, not
     // someone signing up â€” posting them an email they did not ask for is noise.
-    if (!isNewConnection) return `${base}?connected=1${degraded}`;
+    if (!isNewConnection) return `${base}&connected=1${degraded}`;
     const sent = await this.trySendWelcomeTestEmail(
       claims,
       accountId,
@@ -867,7 +902,7 @@ export class MailboxesService {
       tokens.accessToken,
       provider,
     );
-    return `${base}?connected=1&test_email=${sent ? "sent" : "failed"}${degraded}`;
+    return `${base}&connected=1&test_email=${sent ? "sent" : "failed"}${degraded}`;
   }
 
   /**

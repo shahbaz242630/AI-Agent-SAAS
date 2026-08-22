@@ -181,9 +181,25 @@ export function MailboxStep({
           training people into precisely the behaviour phishing relies on. */}
       <div className="mt-[22px] flex items-start gap-2.5 rounded-xl bg-muted px-4 py-3">
         <LockIcon />
+        {/* ⚠️ THE BUTTON BELOW HAS NAMED THE RIGHT PROVIDER SINCE #107 AND
+            THIS PARAGRAPH DID NOT, SO SOMEBODY CONNECTING GMAIL WAS TOLD THEY
+            WOULD SIGN IN AT MICROSOFT — two inches apart, contradicting each
+            other. Found by the standing grep after the send-permission fix, in
+            the same file the provider picker was added to. A conditional that
+            covers one string in a component and not its neighbour is the
+            easiest kind of stale copy to write and the hardest to see. */}
         <p className="text-[12.5px] leading-[1.5] text-muted-foreground">
-          You&apos;ll sign in at Microsoft — Eva never sees your password. Personal Outlook and
-          Hotmail addresses work too.
+          {provider === "google" ? (
+            <>
+              You&apos;ll sign in at Google — Eva never sees your password. Personal Gmail and
+              Google Workspace addresses both work.
+            </>
+          ) : (
+            <>
+              You&apos;ll sign in at Microsoft — Eva never sees your password. Personal Outlook and
+              Hotmail addresses work too.
+            </>
+          )}
         </p>
       </div>
 

@@ -298,4 +298,70 @@ describe("GmailProvider: identity and the probe", () => {
     });
     await expect(provider.probeMailbox()).resolves.toBeUndefined();
   });
+
+  /**
+   * ⚠️ THESE ARE THE ONLY TESTS IN THE FILE WRITTEN FROM A REAL GOOGLE
+   * RESPONSE RATHER THAN FROM THE DOCUMENTATION, AND THAT IS THE POINT.
+   *
+   * The scope list in `grants nothing but sign-in` is copied verbatim out of
+   * the callback Google sent to production on 2026-08-22, when the first real
+   * Gmail connection was made and the founder clicked Continue without ticking
+   * the send permission. Everything else about that connection succeeded — code
+   * exchanged, refresh token issued, profile read, "Connected" shown in green —
+   * and the welcome email came back 403.
+   *
+   * Every other fixture in this suite was invented by whoever wrote the parser.
+   * This one had something to lose.
+   */
+  describe("assertSendPermission", () => {
+    const GRANTED_WITHOUT_TICKING_THE_BOX = [
+      "email",
+      "profile",
+      "https://www.googleapis.com/auth/userinfo.profile",
+      "https://www.googleapis.com/auth/userinfo.email",
+      "openid",
+    ];
+
+    it("rejects the grant Google actually returned when the box was left unticked", () => {
+      expect(() => provider.assertSendPermission(GRANTED_WITHOUT_TICKING_THE_BOX)).toThrow(
+        /permission to send/i,
+      );
+    });
+
+    it("accepts the grant from the same account once the box was ticked", () => {
+      expect(() =>
+        provider.assertSendPermission([
+          ...GRANTED_WITHOUT_TICKING_THE_BOX,
+          "https://www.googleapis.com/auth/gmail.send",
+        ]),
+      ).not.toThrow();
+    });
+
+    /**
+     * A scope list that has never been near a network — the token endpoint
+     * answers `scope: ""` on a refresh, and `exchangeCode` faithfully returns
+     * `[]` for it. Treating "I know of no scopes" as "the scope is present"
+     * would be the failure-open version of this whole defect.
+     */
+    it("treats an empty scope list as no permission, not as unknown", () => {
+      expect(() => provider.assertSendPermission([])).toThrow(/permission to send/i);
+    });
+
+    /**
+     * ⚠️ NOT SATISFIED BY A SCOPE THAT MERELY CONTAINS THE WORDS. `gmail.send`
+     * is checked as a whole entry, so neither a restricted scope that would
+     * have covered sending nor a lookalike string can stand in for it — the
+     * first because ruling 25 says we never ask for it, the second because a
+     * substring match is how a check like this quietly stops checking.
+     */
+    it("wants the exact scope, not something that looks like it", () => {
+      for (const lookalike of [
+        "https://www.googleapis.com/auth/gmail.send.readonly",
+        "https://www.googleapis.com/auth/gmail.modify",
+        "gmail.send",
+      ]) {
+        expect(() => provider.assertSendPermission([lookalike]), lookalike).toThrow();
+      }
+    });
+  });
 });

@@ -235,6 +235,28 @@ export class GraphMailProvider implements MicrosoftGraphProvider {
     }
   }
 
+  /**
+   * ⚠️ A NO-OP HERE, AND NOT BECAUSE THE QUESTION DOES NOT MATTER — BECAUSE
+   * `probeMailbox` HAS ALREADY ANSWERED IT WITH A REAL REQUEST.
+   *
+   * Microsoft's consent is all-or-nothing: `Mail.Read` and `Mail.Send` are
+   * asked for in one breath (see SCOPES) and the user accepts the set or
+   * cancels, so there is no half-granted state of the kind Google's per-scope
+   * checkboxes create. The probe then reads an actual mail folder with the
+   * actual token, so a grant that cannot touch mail fails there.
+   *
+   * ⚠️ AND THE ALTERNATIVE WOULD BE A GUESS. Writing `scopes.includes("Mail.Send")`
+   * here would mean asserting the shape of a token response nobody has looked
+   * at — Entra may return bare names or full `https://graph.microsoft.com/…`
+   * URIs — and getting it wrong would reject every working Microsoft mailbox at
+   * connect. That is the same mistake as inventing a fixture and calling it
+   * proof, which is what produced the defect this method exists to fix.
+   * Behaviour we have observed beats a string comparison we have not.
+   */
+  assertSendPermission(): void {
+    return;
+  }
+
   private async graphRequest<T = unknown>(
     accessToken: string,
     url: string,

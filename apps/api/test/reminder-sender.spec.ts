@@ -67,6 +67,10 @@ const graphDouble: MicrosoftGraphProvider = {
     return Promise.resolve();
   },
   probeMailbox: () => Promise.resolve(),
+  // Connect-time only — this suite starts from a mailbox already connected, so
+  // there is nothing here to consent to. Matches the real Microsoft adapter,
+  // whose implementation is a no-op for reasons its own comment gives.
+  assertSendPermission: () => undefined,
 };
 
 describe("Reminder sender (Slice 1.7)", () => {

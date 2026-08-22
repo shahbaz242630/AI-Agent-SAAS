@@ -16,6 +16,7 @@ import type {
 } from "../src/capabilities/mailbox/microsoft-graph/microsoft-graph-provider.js";
 import { UNKNOWN_DOMAIN } from "../src/capabilities/mailbox/microsoft-graph/microsoft-discovery.js";
 import type { DomainDiscovery } from "../src/capabilities/mailbox/microsoft-graph/microsoft-discovery.js";
+import { SendPermissionNotGrantedError } from "../src/capabilities/mailbox/mail-provider.js";
 import { signOAuthState, verifyOAuthState } from "../src/capabilities/mailbox/oauth-state.js";
 import {
   createOrgWithMembers,
@@ -70,6 +71,9 @@ const graphStub = {
   getProfile: vi.fn(async () => DEFAULT_PROFILE),
   sendMail: vi.fn(async (): Promise<void> => undefined),
   probeMailbox: vi.fn(async (): Promise<void> => undefined),
+  // Microsoft's real implementation is a documented no-op — its send permission
+  // is proven by probeMailbox, not by parsing a scope string. The stub matches.
+  assertSendPermission: vi.fn((): void => undefined),
 };
 
 /** Discovery is stubbed like the Graph provider: it reaches Microsoft's
@@ -94,6 +98,7 @@ function resetGraphStub(): void {
   graphStub.getProfile.mockClear().mockResolvedValue(DEFAULT_PROFILE);
   graphStub.sendMail.mockClear().mockResolvedValue(undefined);
   graphStub.probeMailbox.mockClear().mockResolvedValue(undefined);
+  graphStub.assertSendPermission.mockClear().mockReturnValue(undefined);
 }
 
 /** Inserts a live connection with VALID encrypted fixture tokens (1h expiry).
@@ -1132,7 +1137,7 @@ describe("Mailboxes (Slice 1.6)", () => {
           .expect(302);
 
         expect(response.headers.location).toBe(
-          "http://localhost:3000/app/settings/mailbox?error=invalid_state",
+          "http://localhost:3000/app/settings/mailbox?provider=microsoft&error=invalid_state",
         );
         expect(graphStub.exchangeCode).not.toHaveBeenCalled();
       });
@@ -1146,7 +1151,7 @@ describe("Mailboxes (Slice 1.6)", () => {
           .expect(302);
 
         expect(response.headers.location).toBe(
-          "http://localhost:3000/app/settings/mailbox?error=invalid_state",
+          "http://localhost:3000/app/settings/mailbox?provider=microsoft&error=invalid_state",
         );
       });
     });
@@ -1159,7 +1164,7 @@ describe("Mailboxes (Slice 1.6)", () => {
         .expect(302);
 
       expect(response.headers.location).toBe(
-        "http://localhost:3000/app/settings/mailbox?error=consent_denied&hint=sara%40acme.example",
+        "http://localhost:3000/app/settings/mailbox?provider=microsoft&error=consent_denied&hint=sara%40acme.example",
       );
     });
 
@@ -1168,7 +1173,7 @@ describe("Mailboxes (Slice 1.6)", () => {
         .get(`/integrations/microsoft/callback?error=access_denied&state=${await mintState()}`)
         .expect(302);
       expect(response.headers.location).toBe(
-        "http://localhost:3000/app/settings/mailbox?error=consent_denied",
+        "http://localhost:3000/app/settings/mailbox?provider=microsoft&error=consent_denied",
       );
     });
 
@@ -1190,7 +1195,7 @@ describe("Mailboxes (Slice 1.6)", () => {
         .get(`/integrations/microsoft/callback?${query.toString()}`)
         .expect(302);
       expect(response.headers.location).toBe(
-        "http://localhost:3000/app/settings/mailbox?error=admin_consent_required",
+        "http://localhost:3000/app/settings/mailbox?provider=microsoft&error=admin_consent_required",
       );
     });
 
@@ -1204,7 +1209,7 @@ describe("Mailboxes (Slice 1.6)", () => {
         .get(`/integrations/microsoft/callback?${query.toString()}`)
         .expect(302);
       expect(response.headers.location).toBe(
-        "http://localhost:3000/app/settings/mailbox?error=consent_denied",
+        "http://localhost:3000/app/settings/mailbox?provider=microsoft&error=consent_denied",
       );
     });
 
@@ -1213,7 +1218,7 @@ describe("Mailboxes (Slice 1.6)", () => {
         .get("/integrations/microsoft/callback?code=any&state=forged")
         .expect(302);
       expect(response.headers.location).toBe(
-        "http://localhost:3000/app/settings/mailbox?error=invalid_state",
+        "http://localhost:3000/app/settings/mailbox?provider=microsoft&error=invalid_state",
       );
     });
 
@@ -1222,7 +1227,7 @@ describe("Mailboxes (Slice 1.6)", () => {
         .get(`/integrations/microsoft/callback?state=${await mintState()}`)
         .expect(302);
       expect(response.headers.location).toBe(
-        "http://localhost:3000/app/settings/mailbox?error=missing_code",
+        "http://localhost:3000/app/settings/mailbox?provider=microsoft&error=missing_code",
       );
     });
 
@@ -1232,7 +1237,7 @@ describe("Mailboxes (Slice 1.6)", () => {
         .get(`/integrations/microsoft/callback?code=fake&state=${await mintState()}`)
         .expect(302);
       expect(response.headers.location).toBe(
-        "http://localhost:3000/app/settings/mailbox?error=exchange_failed",
+        "http://localhost:3000/app/settings/mailbox?provider=microsoft&error=exchange_failed",
       );
     });
 
@@ -1254,7 +1259,7 @@ describe("Mailboxes (Slice 1.6)", () => {
         .expect(302);
 
       expect(response.headers.location).toBe(
-        "http://localhost:3000/app/settings/mailbox?error=mailbox_unavailable",
+        "http://localhost:3000/app/settings/mailbox?provider=microsoft&error=mailbox_unavailable",
       );
       const after = await owner.emailAccount.count({ where: { organisationId: org.id } });
       expect(after).toBe(before);
@@ -1267,6 +1272,87 @@ describe("Mailboxes (Slice 1.6)", () => {
 
       expect(graphStub.probeMailbox).toHaveBeenCalledTimes(1);
       expect(graphStub.probeMailbox).toHaveBeenCalledWith(DEFAULT_TOKENS.accessToken);
+    });
+
+    /**
+     * The same shape as the F3 test above, one question further on: the probe
+     * asks whether a mailbox exists, this asks whether we may send from it.
+     *
+     * ⚠️ ASSERTED THROUGH THE MICROSOFT STUB EVEN THOUGH ONLY GOOGLE CAN
+     * PRODUCE IT, BECAUSE WHAT IS UNDER TEST IS THE SERVICE, NOT THE ADAPTER.
+     * `handleCallback` is shared, so this proves the wiring — refuse, redirect
+     * with a code of its own, write nothing — for every provider that ever
+     * raises it. Whether Gmail raises it correctly is `gmail-provider.spec.ts`,
+     * against the scope list Google really sent us.
+     */
+    it("redirects ?error=send_permission_denied and stores NOTHING when sending was not granted", async () => {
+      graphStub.assertSendPermission.mockImplementationOnce(() => {
+        throw new SendPermissionNotGrantedError();
+      });
+      const before = await owner.emailAccount.count({ where: { organisationId: org.id } });
+
+      const response = await request(app.getHttpServer())
+        .get(`/integrations/microsoft/callback?code=fake&state=${await mintState()}`)
+        .expect(302);
+
+      expect(response.headers.location).toBe(
+        "http://localhost:3000/app/settings/mailbox?provider=microsoft&error=send_permission_denied",
+      );
+      const after = await owner.emailAccount.count({ where: { organisationId: org.id } });
+      expect(after).toBe(before);
+    });
+
+    /**
+     * ⚠️ FOUNDER RULING 2026-08-22: "they should be separate, no crossing
+     * paths." The web can only keep the two apart if it is told which one it
+     * just came back from, and the redirect is the only channel there is.
+     *
+     * Asserted on the FAILURE paths specifically. A Gmail customer who pressed
+     * Cancel used to be shown Microsoft's admin-approval panel, so the codes
+     * that describe a failure are exactly the ones that must never arrive
+     * anonymously.
+     */
+    it("names the provider on every callback return, so the two paths cannot cross", async () => {
+      /**
+       * ⚠️ BUILT INSIDE THE LOOP, NOT UP FRONT. Each supertest call binds its
+       * own ephemeral listener, so four Test objects created together and
+       * awaited one at a time give ECONNREFUSED on the second — the first
+       * request's server has already closed. Cost a red run.
+       */
+      const journeys: Array<() => Promise<string>> = [
+        // Declined at the provider — the case that produced the defect.
+        () => `/integrations/microsoft/callback?error=access_denied`,
+        // No state at all.
+        () => `/integrations/microsoft/callback?code=x`,
+        // A good state and no code.
+        async () => `/integrations/microsoft/callback?state=${await mintState()}`,
+        // And the success path, so nothing arrives anonymously either.
+        async () => `/integrations/microsoft/callback?code=fake&state=${await mintState()}`,
+      ].map((build) => async () => String(await build()));
+
+      for (const journey of journeys) {
+        const response = await request(app.getHttpServer())
+          .get(await journey())
+          .expect(302);
+        const redirected = String(response.headers.location);
+        expect(new URL(redirected).searchParams.get("provider"), redirected).toBe("microsoft");
+      }
+    });
+
+    /**
+     * ⚠️ THE ORDER IS THE GUARD, NOT A DETAIL. This callback REPLACES a mailbox
+     * further down, soft-deleting the row it replaces. Checking after the write
+     * would take a customer's working mailbox away and hand back one that
+     * cannot send — a worse outcome than refusing, and unreachable by the time
+     * anybody notices.
+     */
+    it("asks permission before it writes, on every connect", async () => {
+      await request(app.getHttpServer())
+        .get(`/integrations/microsoft/callback?code=fake&state=${await mintState()}`)
+        .expect(302);
+
+      expect(graphStub.assertSendPermission).toHaveBeenCalledTimes(1);
+      expect(graphStub.assertSendPermission).toHaveBeenCalledWith(DEFAULT_TOKENS.scopes);
     });
 
     it("happy path: 302 ?connected=1, row upserted with CIPHERTEXT tokens, audit written", async () => {
@@ -1282,7 +1368,7 @@ describe("Mailboxes (Slice 1.6)", () => {
         .get(`/integrations/microsoft/callback?code=fake&state=${await mintState()}`)
         .expect(302);
       expect(response.headers.location).toBe(
-        "http://localhost:3000/app/settings/mailbox?connected=1&test_email=sent",
+        "http://localhost:3000/app/settings/mailbox?provider=microsoft&connected=1&test_email=sent",
       );
       const account = await owner.emailAccount.findFirstOrThrow({
         where: { organisationId: org.id, deletedAt: null },
@@ -1323,7 +1409,7 @@ describe("Mailboxes (Slice 1.6)", () => {
         .get(`/integrations/microsoft/callback?code=fake&state=${state}`)
         .expect(302);
       expect(response.headers.location).toBe(
-        "http://localhost:3000/app/settings/mailbox?error=not_authorised",
+        "http://localhost:3000/app/settings/mailbox?provider=microsoft&error=not_authorised",
       );
       expect(graphStub.exchangeCode).not.toHaveBeenCalled();
     });
@@ -1339,7 +1425,7 @@ describe("Mailboxes (Slice 1.6)", () => {
         .get(`/integrations/microsoft/callback?code=fake&state=${state}`)
         .expect(302);
       expect(response.headers.location).toBe(
-        "http://localhost:3000/app/settings/mailbox?error=not_authorised",
+        "http://localhost:3000/app/settings/mailbox?provider=microsoft&error=not_authorised",
       );
       expect(graphStub.exchangeCode).not.toHaveBeenCalled();
       const live = await owner.emailAccount.findMany({
@@ -1371,7 +1457,7 @@ describe("Mailboxes (Slice 1.6)", () => {
           .expect(302);
 
         expect(response.headers.location).toBe(
-          "http://localhost:3000/app/settings/mailbox?connected=1&test_email=sent",
+          "http://localhost:3000/app/settings/mailbox?provider=microsoft&connected=1&test_email=sent",
         );
         expect(graphStub.sendMail).toHaveBeenCalledTimes(1);
         expect(graphStub.sendMail).toHaveBeenCalledWith(
@@ -1399,7 +1485,7 @@ describe("Mailboxes (Slice 1.6)", () => {
           .expect(302);
 
         expect(response.headers.location).toBe(
-          "http://localhost:3000/app/settings/mailbox?connected=1",
+          "http://localhost:3000/app/settings/mailbox?provider=microsoft&connected=1",
         );
         expect(graphStub.sendMail).not.toHaveBeenCalled();
       });
@@ -1419,7 +1505,7 @@ describe("Mailboxes (Slice 1.6)", () => {
           .expect(302);
 
         expect(response.headers.location).toBe(
-          "http://localhost:3000/app/settings/mailbox?connected=1&test_email=failed",
+          "http://localhost:3000/app/settings/mailbox?provider=microsoft&connected=1&test_email=failed",
         );
         const account = await owner.emailAccount.findFirstOrThrow({
           where: { organisationId: org.id, deletedAt: null },
@@ -1450,7 +1536,7 @@ describe("Mailboxes (Slice 1.6)", () => {
           .expect(302);
 
         expect(response.headers.location).toBe(
-          "http://localhost:3000/app/onboarding?connected=1&test_email=sent",
+          "http://localhost:3000/app/onboarding?provider=microsoft&connected=1&test_email=sent",
         );
       });
 
@@ -1466,7 +1552,7 @@ describe("Mailboxes (Slice 1.6)", () => {
           .expect(302);
 
         expect(response.headers.location).toBe(
-          "http://localhost:3000/app/onboarding?error=consent_denied&hint=sara%40acme.example",
+          "http://localhost:3000/app/onboarding?provider=microsoft&error=consent_denied&hint=sara%40acme.example",
         );
       });
 
@@ -1476,7 +1562,7 @@ describe("Mailboxes (Slice 1.6)", () => {
           .expect(302);
 
         expect(response.headers.location).toBe(
-          "http://localhost:3000/app/settings/mailbox?error=consent_denied",
+          "http://localhost:3000/app/settings/mailbox?provider=microsoft&error=consent_denied",
         );
       });
     });
