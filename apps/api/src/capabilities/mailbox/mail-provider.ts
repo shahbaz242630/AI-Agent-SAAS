@@ -91,6 +91,24 @@ export interface MailProvider {
    * reminder. Throws MailboxUnavailableError when there is none.
    */
   probeMailbox(accessToken: string): Promise<void>;
+  /**
+   * "Did the customer actually grant permission to SEND?" — checked at connect,
+   * against the scopes the token endpoint just returned.
+   *
+   * ⚠️ ASKING FOR A SCOPE AND BEING GIVEN IT ARE DIFFERENT EVENTS, AND GOOGLE
+   * IS WHERE THAT STOPS BEING PEDANTRY. Its consent screen lists each sensitive
+   * scope as its own checkbox, unticked by default, so a customer who clicks
+   * straight past it completes the whole OAuth round trip — code exchanged,
+   * refresh token issued, profile readable — while granting nothing but
+   * sign-in. Observed on production 2026-08-22 on the first real Gmail
+   * connection: the callback came back with `openid email profile` and no
+   * `gmail.send`, and every send after it was a 403.
+   *
+   * Throws SendPermissionNotGrantedError. Takes the scopes rather than the
+   * token set because that is all any implementation needs, and a pure function
+   * of a string list is a thing a test can actually pin.
+   */
+  assertSendPermission(scopes: readonly string[]): void;
 }
 
 /**
@@ -123,6 +141,25 @@ export class MailboxUnavailableError extends Error {
   constructor(message = "Eva couldn't open that mailbox") {
     super(message);
     this.name = "MailboxUnavailableError";
+  }
+}
+
+/**
+ * The grant is alive and the mailbox is real — the customer just did not give
+ * us permission to send from it.
+ *
+ * ⚠️ ITS OWN CLASS, AND F3 IS EXACTLY WHY. Mapping this onto
+ * ReauthRequiredError would tell somebody to reconnect, which is half an
+ * instruction: reconnecting the same way produces the same result, forever.
+ * Mapping it onto MailboxUnavailableError would blame their licence for
+ * something they did in one click and can undo in one click. The whole value
+ * here is being able to say the one sentence that fixes it — tick the box —
+ * and that sentence needs a code of its own to travel on.
+ */
+export class SendPermissionNotGrantedError extends Error {
+  constructor() {
+    super("The mailbox connected, but permission to send email was not granted");
+    this.name = "SendPermissionNotGrantedError";
   }
 }
 

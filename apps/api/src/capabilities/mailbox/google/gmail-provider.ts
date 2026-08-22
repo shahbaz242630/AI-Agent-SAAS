@@ -4,6 +4,7 @@ import type { ApiEnv } from "../../../config/env.js";
 import {
   MailProviderRequestError,
   ReauthRequiredError,
+  SendPermissionNotGrantedError,
   type AuthorizeUrlOptions,
   type MailboxProfile,
   type MailProvider,
@@ -29,9 +30,17 @@ import { buildRfc822, toBase64Url } from "./rfc822.js";
  * `openid email profile` are not Gmail scopes and cost nothing — they are how
  * we learn which address just connected.
  */
-const SCOPES = ["https://www.googleapis.com/auth/gmail.send", "openid", "email", "profile"].join(
-  " ",
-);
+/**
+ * The one scope that makes a Gmail connection worth having.
+ *
+ * ⚠️ NAMED SEPARATELY BECAUSE IT IS ASKED FOR IN ONE PLACE AND CHECKED IN
+ * ANOTHER. `assertSendPermission` has to compare against exactly the string we
+ * requested; two spellings of it in one file is a bug that would present as
+ * "Google never grants the scope", which is precisely the wrong conclusion.
+ */
+export const GMAIL_SEND_SCOPE = "https://www.googleapis.com/auth/gmail.send";
+
+const SCOPES = [GMAIL_SEND_SCOPE, "openid", "email", "profile"].join(" ");
 
 const AUTHORIZE_URL = "https://accounts.google.com/o/oauth2/v2/auth";
 const TOKEN_URL = "https://oauth2.googleapis.com/token";
@@ -231,6 +240,27 @@ export class GmailProvider implements MailProvider {
    */
   async probeMailbox(): Promise<void> {
     return Promise.resolve();
+  }
+
+  /**
+   * ⚠️ THE CHECK THE WELCOME EMAIL CANNOT MAKE FOR US, AND THE REASON IS THE
+   * ADVICE. Without this, declining the send permission and Google having a bad
+   * minute are the same event to Eva: connection stored, "Connected" in green,
+   * a `Send test email` button that fails every time it is pressed. One of
+   * those two is fixed by trying again and the other never is, and telling a
+   * customer to try again when it can never work is defect F3 word for word.
+   *
+   * So this runs BEFORE anything is written, and it is not a second opinion on
+   * the welcome email — it is the only thing in the system that can name this
+   * cause. The 403 the send comes back with says "insufficient permissions",
+   * which is true of a dozen situations and actionable in none of them.
+   *
+   * ⚠️ AND IT IS PERMANENT, NOT A TESTING-MODE QUIRK. Granular consent is how
+   * Google's consent screen works for every sensitive scope, verified app or
+   * not, so this case does not go away when the app is published.
+   */
+  assertSendPermission(scopes: readonly string[]): void {
+    if (!scopes.includes(GMAIL_SEND_SCOPE)) throw new SendPermissionNotGrantedError();
   }
 
   private async googleRequest<T = unknown>(

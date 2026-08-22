@@ -118,6 +118,16 @@ describe("Connecting a Gmail mailbox", () => {
       .query({ error: "access_denied" })
       .expect(302);
     expect(response.headers.location).toContain("error=");
+    /**
+     * ⚠️ AND IT SAYS SO IS GOOGLE'S. Founder ruling 2026-08-22 — separate
+     * paths, no crossing. Without this the web falls back to Microsoft and a
+     * Gmail customer who cancelled is told to ask their Microsoft 365
+     * administrator for approval, which is the defect the ruling names.
+     *
+     * The Microsoft half of the same guarantee is in `mailboxes.spec.ts`; this
+     * is the side that was actually getting it wrong.
+     */
+    expect(new URL(String(response.headers.location)).searchParams.get("provider")).toBe("google");
 
     // And Microsoft's is still where it was — the 3.0 handoff is explicit that
     // its registered URI must not move.

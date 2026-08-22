@@ -4,7 +4,11 @@ import { AdminConsentHelp } from "@/components/admin-consent-help";
 import { MailboxCard, type MailboxSummary } from "@/components/mailbox-card";
 import { ApiError, apiFetch } from "@/lib/api";
 import { fetchOrganisations } from "@/lib/organisations";
-import { mailboxErrorMessage, needsConsentHelp } from "@/capabilities/mailbox/mailbox-errors";
+import {
+  mailboxErrorMessage,
+  mailboxProviderFrom,
+  needsConsentHelp,
+} from "@/capabilities/mailbox/mailbox-errors";
 import { disconnectMessage } from "@/capabilities/mailbox/mailbox-messages";
 import { createClient } from "@/lib/supabase/server";
 import { ConnectMailboxForm, MailboxActions } from "./mailbox-controls";
@@ -65,6 +69,10 @@ export default async function MailboxSettingsPage({
   }
 
   const errorCode = typeof params.error === "string" ? params.error : null;
+  // Which provider the customer just came back from. The callback puts it on
+  // every redirect (founder ruling 2026-08-22 — separate paths, no crossing),
+  // and everything below that speaks to the customer is keyed on it.
+  const provider = mailboxProviderFrom(params.provider);
   const flashConnected = params.connected === "1";
   // Set only on a genuinely new connection — a reconnect sends nothing, so the
   // absence of this parameter is not a failure.
@@ -74,7 +82,7 @@ export default async function MailboxSettingsPage({
   // A declined consent is genuinely ambiguous (F1), so it gets a whole section
   // rather than a one-line flash: the customer may need to involve their
   // administrator, and that is the moment to hand them the link.
-  const showConsentHelp = needsConsentHelp(errorCode);
+  const showConsentHelp = needsConsentHelp(errorCode, provider);
   let adminConsent: AdminConsent | null = null;
   if (showConsentHelp && organisation && !forbidden) {
     try {
@@ -93,7 +101,8 @@ export default async function MailboxSettingsPage({
     }
   }
 
-  const flashError = errorCode && !showConsentHelp ? mailboxErrorMessage(errorCode) : null;
+  const flashError =
+    errorCode && !showConsentHelp ? mailboxErrorMessage(errorCode, provider) : null;
 
   return (
     <main className="flex w-full max-w-[1080px] flex-1 flex-col gap-[26px] px-10 pt-8 pb-9">

@@ -47,6 +47,9 @@ export interface MicrosoftGraphProvider {
    *  problem is caught at connect rather than at the first customer reminder
    *  (F3). Throws MailboxUnavailableError when there is no mailbox. */
   probeMailbox(accessToken: string): Promise<void>;
+  /** "Was permission to send actually granted?" — see the port. Microsoft's
+   *  answer is already proven by `probeMailbox`; the implementation says why. */
+  assertSendPermission(scopes: readonly string[]): void;
 }
 
 /**
