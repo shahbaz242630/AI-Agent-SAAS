@@ -14,7 +14,19 @@ import { useState } from "react";
  * ⚠️ CLIENT COMPONENT ONLY BECAUSE OF THE COPY BUTTON. The address itself is
  * rendered by the server and passed in; nothing here fetches anything.
  */
-export function EnquiryAddressPanel({ address }: { address: string }) {
+export function EnquiryAddressPanel({
+  address,
+  /**
+   * ⚠️ OFF BY DEFAULT SO THE GUIDE NEVER LINKS TO ITSELF. This panel is drawn
+   * on the enquiry book AND at the top of the forwarding guide; a link that
+   * reads "set up forwarding" while you are standing on the forwarding page is
+   * the kind of small dishonesty that makes a screen feel broken.
+   */
+  forwardingHref,
+}: {
+  address: string;
+  forwardingHref?: string;
+}) {
   const [copied, setCopied] = useState(false);
 
   async function copy() {
@@ -68,6 +80,22 @@ export function EnquiryAddressPanel({ address }: { address: string }) {
         Eva records every enquiry that arrives here, with the proof of who sent it and when. She
         does not reply to them yet — that part is still being built.
       </p>
+
+      {/**
+       * ⚠️ NAMES GMAIL, AND ONLY BECAUSE THE LINK GOES SOMEWHERE THAT IS ABOUT
+       * GMAIL (ruling 35). The panel itself stays provider-neutral: an Outlook
+       * customer reads the sentences above and is never sent into Google's
+       * world by accident.
+       */}
+      {forwardingHref && (
+        <p className="text-[12.5px] text-muted-foreground">
+          On Gmail?{" "}
+          <a href={forwardingHref} className="font-medium text-link hover:underline">
+            Set your enquiries to forward here
+          </a>{" "}
+          — Eva handles Google&apos;s confirmation, so you never need the code.
+        </p>
+      )}
     </section>
   );
 }

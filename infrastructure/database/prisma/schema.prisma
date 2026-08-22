@@ -45,6 +45,7 @@ model Organisation {
   consentTexts    ConsentText[]
   inboundAddresses InboundAddress[]
   inboundMessages  InboundMessage[]
+  inboundForwardingRequests InboundForwardingRequest[]
 
   @@map("organisations")
 }
@@ -797,11 +798,69 @@ model InboundAddress {
   /// organisation, enforced by a partial unique index migration 0029 carries
   /// and schema.prisma cannot express (the 0011/0013/0017 precedent).
   deletedAt      DateTime? @map("deleted_at") @db.Timestamptz(6)
+  /// ⚠️ A WINDOW, NOT A PERMISSION (migration 0031). Set when a customer stands
+  /// on the guided forwarding screen and says they are setting it up now, and
+  /// meaningful only for the few minutes after. It is what lets Eva answer
+  /// Google's confirmation email for them instead of making them hunt for a
+  /// code — and its expiry is what stops a guessed address being confirmed for
+  /// a stranger a year later. The length lives in the service, with a test.
+  forwardingArmedAt DateTime? @map("forwarding_armed_at") @db.Timestamptz(6)
+  forwardingArmedBy String?   @map("forwarding_armed_by") @db.Uuid
   organisation   Organisation     @relation(fields: [organisationId], references: [id], onDelete: Cascade)
   messages       InboundMessage[]
+  forwardingRequests InboundForwardingRequest[]
 
   @@index([organisationId])
   @@map("inbound_addresses")
+}
+
+/// Who asked to forward mail into this organisation's book, and what we did.
+///
+/// ⚠️ THE ROW EXISTS BECAUSE "CONFIRM IT FOR THEM" MUST NOT MEAN "CONFIRM
+/// ANYTHING THAT ASKS". Google's confirmation email is the second lock on a
+/// door whose first lock is ruling 33's random tail: mail cannot be forwarded
+/// to an address until that address's owner agrees, and the owner is us.
+/// Answering every request automatically would hand anyone who guesses an
+/// address a silent feed into that customer's enquiries — and, once 3.1c
+/// ships, a way to make Eva reply to strangers in that customer's name.
+///
+/// So a request that arrives inside the armed window is confirmed for the
+/// customer, and one that arrives outside it is shown to them and left alone.
+model InboundForwardingRequest {
+  id               String    @id @default(uuid()) @db.Uuid
+  organisationId   String    @map("organisation_id") @db.Uuid
+  inboundAddressId String    @map("inbound_address_id") @db.Uuid
+  /// ⚠️ THE IDEMPOTENCY KEY. Gmail resends and webhooks retry; keying to the
+  /// message means a replay updates nothing rather than asking twice.
+  inboundMessageId String    @unique @map("inbound_message_id") @db.Uuid
+  /// The mailbox that wants to forward, read out of Google's own message — NOT
+  /// the envelope sender, which is `forwarding-noreply@google.com` for every
+  /// request from every account on earth and so identifies nobody.
+  sourceAddress    String    @map("source_address")
+  /// Both halves of Google's message. We answer with the URL; the code is the
+  /// fallback the screen shows if that ever stops working, so the feature
+  /// degrades to three clicks rather than to silence.
+  confirmationCode String?   @map("confirmation_code")
+  confirmationUrl  String?   @map("confirmation_url")
+  /// pending | confirmed | declined. There is deliberately no `failed`: a
+  /// failed attempt leaves the request OPEN, with `failureReason` set, because
+  /// the code is still valid and the customer can still finish it by hand.
+  status           String    @default("pending")
+  failureReason    String?   @map("failure_reason")
+  settledAt        DateTime? @map("settled_at") @db.Timestamptz(6)
+  /// ⚠️ NULL MEANS EVA DID IT, NOT THAT NOBODY DID. The screen says which,
+  /// because "Eva confirmed this for you" and "you confirmed this" are
+  /// different facts about the customer's own security.
+  settledBy        String?   @map("settled_by") @db.Uuid
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  organisation     Organisation   @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+  address          InboundAddress @relation(fields: [inboundAddressId], references: [id], onDelete: Restrict)
+  message          InboundMessage @relation(fields: [inboundMessageId], references: [id], onDelete: Restrict)
+
+  @@index([organisationId])
+  @@index([organisationId, status, createdAt(sort: Desc)])
+  @@map("inbound_forwarding_requests")
 }
 
 /// What arrived at the front door, written before anything is decided about it.
@@ -856,6 +915,7 @@ model InboundMessage {
   organisation      Organisation   @relation(fields: [organisationId], references: [id], onDelete: Cascade)
   address           InboundAddress @relation(fields: [inboundAddressId], references: [id], onDelete: Restrict)
   lead              Lead?          @relation(fields: [leadId], references: [id], onDelete: SetNull)
+  forwardingRequest InboundForwardingRequest?
 
   @@unique([provider, providerMessageId])
   @@index([organisationId])

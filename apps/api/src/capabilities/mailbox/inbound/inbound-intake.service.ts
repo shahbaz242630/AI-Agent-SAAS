@@ -9,6 +9,12 @@ import { PrismaService } from "../../../common/database/prisma.service.js";
 import type { TenantTx } from "../../../platform/permissions/permissions.js";
 import { createLeadFromEmail } from "../../../platform/leads/lead-from-email.js";
 import { RECEIVED_MAIL, type InboundWebhookPayload, type ReceivedMail } from "./received-mail.js";
+import {
+  isForwardingConfirmation,
+  readForwardingConfirmation,
+} from "./gmail-forwarding-confirmation.js";
+// eslint-disable-next-line @typescript-eslint/consistent-type-imports
+import { ForwardingConfirmationsService } from "./forwarding-confirmations.service.js";
 
 /**
  * What happens to a message between the door and the book (Slice 3.1b).
@@ -52,6 +58,7 @@ export class InboundIntakeService {
   constructor(
     private readonly prisma: PrismaService,
     @Inject(RECEIVED_MAIL) private readonly receivedMail: ReceivedMail,
+    private readonly forwardingConfirmations: ForwardingConfirmationsService,
     private readonly logger: PinoLogger,
   ) {
     this.logger.setContext(InboundIntakeService.name);
@@ -133,6 +140,58 @@ export class InboundIntakeService {
       throw error;
     }
 
+    /**
+     * ⚠️ SOME MAIL IS PAPERWORK, NOT AN ENQUIRY, AND THIS IS THE FIRST OF IT.
+     * When a Gmail customer points their forwarding at us, Google asks OUR
+     * permission by email — to this address, because we are the address's
+     * owner. That message is addressed to Eva, not to the business, and filing
+     * it as an enquiry would put "Gmail Team" in the customer's lead book and,
+     * from 3.1c, send a stranger's mailbox a reply about their roof.
+     *
+     * ⚠️ THE TEST IS THE SENDER AND NOTHING ELSE. If Google reworded every
+     * sentence tomorrow, `readForwardingConfirmation` would come back null and
+     * the guided screen would stop advancing — but this branch would still
+     * refuse to make a lead out of it. Deciding "is this an enquiry" on wording
+     * we do not control is how a front door starts putting robots in the book.
+     */
+    const from = message.headers["from"] || message.from || payload.data.from || "";
+    const shape = {
+      from,
+      subject: message.subject ?? payload.data.subject ?? null,
+      text: message.text,
+      html: message.html,
+    };
+
+    if (isForwardingConfirmation(shape)) {
+      await this.store(organisationId, record.id, message, from, {
+        status: "ignored",
+        failureReason: "a Gmail forwarding confirmation, not an enquiry",
+      });
+
+      const confirmation = readForwardingConfirmation(shape);
+      if (!confirmation) {
+        /**
+         * ⚠️ LOUD, BECAUSE THIS IS THE ONE THAT ROTS SILENTLY. Google sent us
+         * paperwork we could not read, so no request is recorded and the
+         * customer's screen will sit on "waiting" forever with nothing to click.
+         * The mail is still stored, so the shape can be read off the row and the
+         * parser fixed — but nobody goes looking without this line.
+         */
+        this.logger.error(
+          { organisationId, providerMessageId },
+          "a Gmail forwarding confirmation arrived that could not be read; the parser needs the stored message",
+        );
+        return { status: "ignored", reason: "forwarding-confirmation-unreadable" };
+      }
+
+      await this.forwardingConfirmations.record(
+        organisationId,
+        { id: record.id, inboundAddressId: record.inboundAddressId },
+        confirmation,
+      );
+      return { status: "ignored", reason: "forwarding-confirmation" };
+    }
+
     // (4) Body, lead and evidence, in one transaction.
     try {
       const leadId = await this.convert(organisationId, record.id, {
@@ -155,7 +214,7 @@ export class InboundIntakeService {
          * most-informative first: raw header, then the provider's summary, then
          * the webhook's.
          */
-        from: message.headers["from"] || message.from || payload.data.from || "",
+        from,
         subject: message.subject ?? payload.data.subject ?? null,
         text: message.text,
         html: message.html,
@@ -205,7 +264,7 @@ export class InboundIntakeService {
       rfcMessageId: string | null;
       receivedAt: Date;
     },
-  ): Promise<{ id: string; alreadySettled: boolean; entitled: boolean }> {
+  ): Promise<{ id: string; alreadySettled: boolean; entitled: boolean; inboundAddressId: string }> {
     return this.inTenant(organisationId, async (tx) => {
       const entitled =
         (await tx.organisationModule.count({
@@ -214,13 +273,14 @@ export class InboundIntakeService {
 
       const existing = await tx.inboundMessage.findFirst({
         where: { provider: "resend", providerMessageId: delivery.providerMessageId },
-        select: { id: true, status: true },
+        select: { id: true, status: true, inboundAddressId: true },
       });
       if (existing) {
         return {
           id: existing.id,
           alreadySettled: existing.status === "converted" || existing.status === "ignored",
           entitled,
+          inboundAddressId: existing.inboundAddressId,
         };
       }
 
@@ -248,7 +308,7 @@ export class InboundIntakeService {
         },
         select: { id: true },
       });
-      return { id: row.id, alreadySettled: false, entitled };
+      return { id: row.id, alreadySettled: false, entitled, inboundAddressId: address.id };
     });
   }
 
@@ -292,6 +352,43 @@ export class InboundIntakeService {
       });
       return lead.id;
     });
+  }
+
+  /**
+   * Keep the message itself, and settle it without making a lead.
+   *
+   * ⚠️ THE BODY IS STORED EVEN THOUGH NOBODY WILL READ IT AS AN ENQUIRY. A
+   * forwarding confirmation is the evidence of how a customer's front door came
+   * to be pointed at their Gmail — and if the parser ever fails on a reworded
+   * message, this row is the only place the new wording exists. `settle` alone
+   * would leave a status with no message under it.
+   */
+  private async store(
+    organisationId: string,
+    messageId: string,
+    message: {
+      subject: string | null;
+      text: string | null;
+      html: string | null;
+      headers: Record<string, string>;
+    },
+    from: string,
+    outcome: { status: "ignored"; failureReason: string },
+  ): Promise<void> {
+    await this.inTenant(organisationId, (tx) =>
+      tx.inboundMessage.update({
+        where: { id: messageId },
+        data: {
+          fromAddress: from,
+          subject: message.subject,
+          textBody: message.text,
+          htmlBody: message.html,
+          headers: message.headers,
+          status: outcome.status,
+          failureReason: outcome.failureReason,
+        },
+      }),
+    );
   }
 
   /** Mark a delivery finished-with, one way or the other. */

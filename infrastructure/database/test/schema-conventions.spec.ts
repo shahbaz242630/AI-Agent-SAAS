@@ -90,6 +90,7 @@ describe("Schema conventions (BRD 10)", () => {
       "import_rows",
       "imports",
       "inbound_addresses",
+      "inbound_forwarding_requests",
       "inbound_messages",
       "invoice_documents",
       "invoices",
