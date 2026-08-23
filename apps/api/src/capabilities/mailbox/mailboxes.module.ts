@@ -16,6 +16,9 @@ import { InboundAddressesService } from "./inbound/inbound-addresses.service.js"
 import { InboundWebhookController } from "./inbound/inbound-webhook.controller.js";
 import { InboundIntakeService } from "./inbound/inbound-intake.service.js";
 import { RECEIVED_MAIL, ResendReceivedMail } from "./inbound/received-mail.js";
+import { ForwardingConfirmationsService } from "./inbound/forwarding-confirmations.service.js";
+import { ForwardingConfirmationsController } from "./inbound/forwarding-confirmations.controller.js";
+import { FORWARDING_CONFIRMER, HttpForwardingConfirmer } from "./inbound/forwarding-confirmer.js";
 import { API_ENV } from "../../config/config.module.js";
 import type { ApiEnv } from "../../config/env.js";
 
@@ -26,12 +29,22 @@ import type { ApiEnv } from "../../config/env.js";
     MicrosoftOAuthController,
     InboundAddressesController,
     InboundWebhookController,
+    ForwardingConfirmationsController,
     GoogleOAuthController,
   ],
   providers: [
     MailboxesService,
     InboundAddressesService,
     InboundIntakeService,
+    ForwardingConfirmationsService,
+    /**
+     * ⚠️ A CLASS RATHER THAN A BARE `fetch`, BECAUSE THIS ONE TALKS TO GOOGLE
+     * ON A CUSTOMER'S BEHALF. Behind the token is an SSRF boundary and a
+     * two-step dance (GET the form, POST it) that Google can change again; a
+     * seam means a test can prove the dance without the network, and a change
+     * is one class rather than a rewrite.
+     */
+    { provide: FORWARDING_CONFIRMER, useClass: HttpForwardingConfirmer },
     /**
      * ⚠️ BUILT FROM ENV RATHER THAN `useClass`, so the API key is read once at
      * wiring time instead of being reached for on every fetch — and so a test

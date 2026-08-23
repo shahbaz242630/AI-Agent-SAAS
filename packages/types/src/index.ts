@@ -433,6 +433,23 @@ export function moduleName(moduleKey: ModuleKey): string {
 }
 
 /**
+ * How long Eva will answer Google's forwarding confirmation for a customer
+ * without asking them first (Slice 3.1b, step 4).
+ *
+ * ⚠️ IT LIVES IN THE SHARED KERNEL FOR ONE REASON: BOTH TIERS STATE IT, AND A
+ * DRIFT WOULD BE SILENT. The API enforces the window; the guided screen puts
+ * the number in a sentence a customer reads before they walk off to Gmail.
+ * Two copies of "30" is a screen that promises half an hour while the server
+ * allows ten minutes, with nothing failing anywhere — the same shape as the
+ * copy defects of #109, which nothing caught because copy has no assertions.
+ *
+ * This is a CONTRACT value, not domain logic: it is the shared kernel's proper
+ * job (a number both sides must agree on), unlike the invoice statuses the
+ * architecture note warns about.
+ */
+export const FORWARDING_ARMED_WINDOW_MINUTES = 30;
+
+/**
  * Where a product's screens live. The ONLY way to build a product link.
  *
  * ⚠️ NEVER HAND-WRITE `/app/<slug>`. A literal path is a second copy of the

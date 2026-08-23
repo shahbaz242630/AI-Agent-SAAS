@@ -174,7 +174,12 @@ export default async function EnquiryBookPage() {
        * with no inbound domain configured has nothing honest to show here, and
        * an empty box with a heading would read as a fault.
        */}
-      {inboundAddress && <EnquiryAddressPanel address={inboundAddress} />}
+      {inboundAddress && (
+        <EnquiryAddressPanel
+          address={inboundAddress}
+          forwardingHref={moduleHref("lead_follow_up_email", "forwarding")}
+        />
+      )}
 
       <section className="flex w-full flex-col gap-3">
         {/**

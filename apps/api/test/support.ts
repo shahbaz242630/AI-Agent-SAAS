@@ -12,6 +12,10 @@ import {
   type ReceivedMail,
 } from "../src/capabilities/mailbox/inbound/received-mail.js";
 import {
+  FORWARDING_CONFIRMER,
+  type ForwardingConfirmer,
+} from "../src/capabilities/mailbox/inbound/forwarding-confirmer.js";
+import {
   MICROSOFT_GRAPH_PROVIDER,
   type MicrosoftGraphProvider,
 } from "../src/capabilities/mailbox/microsoft-graph/microsoft-graph-provider.js";
@@ -158,6 +162,15 @@ export async function createTestApp(
      * so specs prove the intake logic rather than the network.
      */
     receivedMail?: ReceivedMail;
+    /**
+     * Answering Google's forwarding confirmation (3.1b step 4). Stubbed by
+     * DEFAULT rather than on request, and that is deliberate: the real one
+     * makes an outbound request to Google, so a spec that forgot to pass a
+     * stub would reach the live internet from CI and either hang or confirm
+     * something. Defaulting to a refusal also means the auto-confirm path is
+     * never accidentally proven by a network that happened to answer.
+     */
+    forwardingConfirmer?: ForwardingConfirmer;
   } = {},
 ): Promise<INestApplication> {
   const { getKey } = await testKeys();
@@ -178,6 +191,13 @@ export async function createTestApp(
   if (options.receivedMail) {
     builder = builder.overrideProvider(RECEIVED_MAIL).useValue(options.receivedMail);
   }
+  builder = builder.overrideProvider(FORWARDING_CONFIRMER).useValue(
+    options.forwardingConfirmer ?? {
+      confirm: () => {
+        throw new Error("no forwarding confirmer was stubbed for this spec");
+      },
+    },
+  );
   const moduleRef = await builder.compile();
   // rawBody matches main.ts: the inbound webhook guard verifies an HMAC over
   // the exact bytes received, and a test app without it would prove nothing.

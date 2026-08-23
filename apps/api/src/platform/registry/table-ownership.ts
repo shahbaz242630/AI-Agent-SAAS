@@ -76,7 +76,7 @@ export const PLATFORM_TABLES = [
  * not a crossing.
  */
 export const CAPABILITY_TABLES = {
-  mailbox: ["emailAccount", "inboundAddress", "inboundMessage"],
+  mailbox: ["emailAccount", "inboundAddress", "inboundMessage", "inboundForwardingRequest"],
 } as const;
 
 /**

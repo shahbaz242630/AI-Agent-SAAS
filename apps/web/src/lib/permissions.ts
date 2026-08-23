@@ -125,7 +125,10 @@ export type WriteAction =
   | "change-reminder-timing"
   // Slice 3.1a — the enquiry book.
   | "stop-contacting"
-  | "correct-suppression";
+  | "correct-suppression"
+  // Slice 3.1b — the guided forwarding setup.
+  | "forwarding-setup"
+  | "forwarding-request";
 
 /**
  * ⚠️ `Record<WriteAction, string>` IS THE EXHAUSTIVENESS GUARANTEE. Adding a
@@ -176,5 +179,12 @@ const REFUSED: Record<WriteAction, string> = {
    * permission from the one they used ten seconds ago, or they will read it as
    * a fault.
    */
+  // ⚠️ TWO SENTENCES, NOT ONE, BECAUSE THEY ARE DIFFERENT REFUSALS AT
+  // DIFFERENT MOMENTS. The first is somebody halfway through setting up
+  // their own forwarding; the second is somebody looking at a request that
+  // may be an attempt on their enquiries. Telling the second person "you
+  // can't set up forwarding" would answer a question they did not ask.
+  "forwarding-setup": "Your role can't set up forwarding.",
+  "forwarding-request": "Your role can't answer a request to forward mail here.",
   "correct-suppression": "Your role can't undo a do-not-contact. Ask an owner or administrator.",
 };
