@@ -10,12 +10,10 @@ import {
 import { Prisma, withTenant } from "@eva/database";
 import {
   minorUnitsToNumber,
-  type ExtractableField,
-  type ExtractedFieldValue,
   type InvoiceDocumentDetail,
   type InvoiceDocumentSummary,
 } from "@eva/types";
-import type { ConfirmInvoiceDocumentRequest } from "@eva/validation";
+import { storedExtractionSchema, type ConfirmInvoiceDocumentRequest } from "@eva/validation";
 // eslint-disable-next-line @typescript-eslint/consistent-type-imports
 import { PrismaService } from "../../../common/database/prisma.service.js";
 // eslint-disable-next-line @typescript-eslint/consistent-type-imports
@@ -41,6 +39,7 @@ import type { AuthUser } from "../../../platform/authentication/current-auth-use
 import { todayInTimezone } from "../invoices/invoice-status.js";
 import {
   EXTRACTION_PROVIDER,
+  MalformedExtractionError,
   NoTextLayerError,
   type ExtractionProvider,
   type ExtractionResult,
@@ -79,11 +78,16 @@ export interface ConfirmInvoiceDocumentResponse {
 
 type InvoiceDocumentRecord = Prisma.InvoiceDocumentGetPayload<object>;
 
-/** The persisted extracted_fields jsonb shape (plan §3 — see @eva/types). */
-interface StoredExtraction {
-  fields: Partial<Record<ExtractableField, ExtractedFieldValue>>;
-  notes: string[];
-}
+/**
+ * The persisted extracted_fields jsonb shape now comes from
+ * `storedExtractionSchema` (plan §3).
+ *
+ * ⚠️ IT WAS A HAND-WRITTEN INTERFACE HERE UNTIL 2026-08-24, and the column was
+ * read back through `as StoredExtraction` — a cast the compiler cannot check
+ * against a jsonb column. Deriving the type from the schema means the runtime
+ * check and the compile-time view are the same statement, so a provider that
+ * returns the wrong shape is caught rather than typed into being correct.
+ */
 
 const DEFAULT_TIMEZONE = "Europe/London";
 
@@ -346,7 +350,15 @@ export class InvoiceDocumentsService {
         content: Buffer.from(document.content),
         filename: document.originalFilename,
       });
-      const stored: StoredExtraction = { fields: result.fields, notes: result.notes };
+      // The provider is behind a swappable port, so its output is checked
+      // rather than trusted: a malformed draft becomes a failed extraction
+      // (below) instead of jsonb nobody can read back.
+      const validated = storedExtractionSchema.safeParse({
+        fields: result.fields,
+        notes: result.notes,
+      });
+      if (!validated.success) throw new MalformedExtractionError(validated.error);
+      const stored = validated.data;
       await transitionInvoiceDocumentStatus(tx, documentId, document.status, "extracted");
       await tx.invoiceDocument.update({
         where: { id: documentId },
@@ -369,7 +381,7 @@ export class InvoiceDocumentsService {
       // Sanitised, actionable reason only — never raw extractor internals
       // (plan §8); NoTextLayerError carries the scanned-document guidance.
       const reason =
-        error instanceof NoTextLayerError
+        error instanceof NoTextLayerError || error instanceof MalformedExtractionError
           ? error.message
           : "the file could not be read as a PDF — check it opens correctly and try again";
       await transitionInvoiceDocumentStatus(tx, documentId, document.status, "failed");
@@ -461,12 +473,27 @@ export class InvoiceDocumentsService {
     };
   }
 
+  /**
+   * ⚠️ AN ABSENT DRAFT IS CHECKED BEFORE THE SCHEMA IS, and the order is not
+   * cosmetic. A document whose extraction failed stores `Prisma.JsonNull`, and
+   * `storedExtractionSchema` rejects null — so parsing first would report every
+   * normally-failed document as corrupt data. Absent means "not extracted yet",
+   * which is the same answer this returned before validation existed.
+   *
+   * A row that IS present but unparseable degrades to the same empty draft
+   * rather than throwing: the review screen's whole job is to let a human enter
+   * the fields, so it must still open. Since `runExtraction` now validates
+   * before writing, only a row predating that check or edited outside the app
+   * can land here.
+   */
   private toDetail(record: InvoiceDocumentRecord): InvoiceDocumentDetail {
-    const stored = record.extractedFields as StoredExtraction | null;
+    const raw = record.extractedFields;
+    const stored = raw === null || raw === undefined ? null : storedExtractionSchema.safeParse(raw);
+    const draft = stored?.success ? stored.data : null;
     return {
       ...this.toSummary(record),
-      extractedFields: stored?.fields ?? null,
-      extractionNotes: stored?.notes ?? [],
+      extractedFields: draft?.fields ?? null,
+      extractionNotes: draft?.notes ?? [],
     };
   }
 }

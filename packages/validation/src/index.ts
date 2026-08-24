@@ -467,6 +467,35 @@ export const extractedFieldsSchema = z.partialRecord(
 );
 
 /**
+ * The WHOLE `invoice_documents.extracted_fields` blob: the field draft plus the
+ * extractor's notes.
+ *
+ * ⚠️ `extractedFieldsSchema` DESCRIBES ONLY THE INNER MAP, WHICH IS WHY IT SAT
+ * UNUSED FROM 1.4 UNTIL 2026-08-24. The column stores `{ fields, notes }`, so
+ * the schema on its own never matched anything that is actually persisted and
+ * the service read the column back through an unchecked `as` cast instead. This
+ * wrapper is the piece that was missing; the type is inferred from it so the
+ * stored shape and the TypeScript view of it cannot drift apart again.
+ *
+ * ⚠️ IT REJECTS `null`, AND THE FAILED-EXTRACTION PATH STORES EXACTLY THAT.
+ * A document whose extraction failed holds `Prisma.JsonNull`, which is a normal
+ * outcome and not a validation failure. Callers must check for an absent value
+ * BEFORE parsing, or every failed document reads as corrupt.
+ *
+ * ⚠️ IT ALSO REJECTS UNKNOWN FIELD KEYS. That is the safe direction for data
+ * arriving from a provider, but it means removing a name from
+ * `IMPORT_CANONICAL_FIELDS` turns every historical row that used it
+ * unparseable — the whole draft, not just that one field. Renaming a canonical
+ * field is therefore a migration, not an edit.
+ */
+export const storedExtractionSchema = z.object({
+  fields: extractedFieldsSchema,
+  notes: z.array(z.string()),
+});
+
+export type StoredExtraction = z.infer<typeof storedExtractionSchema>;
+
+/**
  * POST .../invoice-documents/:documentId/confirm payload (plan §7.7 — the
  * hybrid ruling): ALWAYS the complete, final, human-reviewed field set,
  * whether pre-filled from extraction or entered fully manually after a
