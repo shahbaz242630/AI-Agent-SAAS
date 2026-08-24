@@ -1,7 +1,8 @@
 "use client";
 
 import { useActionState } from "react";
-import { importConfirmLabel, MAX_UPLOAD_BYTES } from "@/products/invoice-follow-up/import-messages";
+import { MAX_UPLOAD_BYTES } from "@eva/types";
+import { importConfirmLabel } from "@/products/invoice-follow-up/import-messages";
 import { cancelImport, confirmImport, uploadImport, type ImportActionState } from "./actions";
 
 const INITIAL: ImportActionState = {};

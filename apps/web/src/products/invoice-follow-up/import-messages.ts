@@ -7,15 +7,16 @@
  */
 
 /**
- * Must match `MAX_UPLOAD_BYTES` in the api's `import-parser.ts`.
+ * ⚠️ `MAX_UPLOAD_BYTES` USED TO BE DECLARED HERE, as a second copy of the api's
+ * number with a comment asking the reader to keep the two in step. It now comes
+ * from `@eva/types` so both sides read one value. Import it from there.
  *
- * ⚠️ IT LIVES HERE RATHER THAN BESIDE THE SERVER ACTION THAT USES IT, and that
- * is not tidiness. A `"use server"` file may only export ASYNC FUNCTIONS —
- * exporting this constant from `actions.ts` produced a runtime 500 ("can only
- * export async functions, found number") on the first real upload, having
- * passed both typecheck and lint. Neither tool knows the rule.
+ * What has NOT changed is why it may not live in `actions.ts`: a `"use server"`
+ * file may only export ASYNC FUNCTIONS, and exporting a number from one produced
+ * a runtime 500 ("can only export async functions, found number") on the first
+ * real upload, having passed both typecheck and lint. Neither tool knows the
+ * rule. A shared package is a safe home for it; a server-action file is not.
  */
-export const MAX_UPLOAD_BYTES = 5 * 1024 * 1024;
 
 /**
  * The columns the importer understands, as `IMPORT_CANONICAL_FIELDS` names them.

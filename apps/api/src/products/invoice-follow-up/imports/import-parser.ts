@@ -13,9 +13,6 @@ import type { ImportFileType } from "@eva/types";
  * common/upload (Slice 1.4 — shared with the PDF upload surface).
  */
 
-/** 5 MB upload cap (plan §3) — enforced at the interceptor AND here. */
-export const MAX_UPLOAD_BYTES = 5 * 1024 * 1024;
-
 /** 1,000 data-row cap (plan §3) — imports run synchronously (plan §7.8). */
 export const MAX_IMPORT_ROWS = 1_000;
 

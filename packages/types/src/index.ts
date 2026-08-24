@@ -626,6 +626,20 @@ export type InvoiceDisplayStatus = InvoiceStoredStatus | InvoiceComputedStatus;
 
 // --- Slice 1.3: CSV/Excel invoice import ---
 
+/**
+ * The 5 MB upload cap (plan §3), enforced at the api's upload interceptor, in
+ * the api's import service, and in the web upload action before a byte is sent.
+ *
+ * ⚠️ IT LIVES HERE BECAUSE IT IS ONE RULE ENFORCED ON BOTH SIDES. It used to be
+ * declared twice — `apps/api/.../import-parser.ts` and
+ * `apps/web/.../import-messages.ts` — each carrying a comment telling the reader
+ * to keep it in step with the other. Nothing enforced that: raising one alone
+ * would have web waving through a file the api then rejects, or web refusing a
+ * file the api would have taken, and no test anywhere compares the two numbers.
+ * A shared constant is the only version of "must match" a build can check.
+ */
+export const MAX_UPLOAD_BYTES = 5 * 1024 * 1024;
+
 /** Accepted import file types (plan §3). Legacy .xls (BIFF) is rejected. */
 export const IMPORT_FILE_TYPES = ["csv", "xlsx"] as const;
 
