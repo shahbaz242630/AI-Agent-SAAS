@@ -42,10 +42,7 @@ import {
   MailboxUnavailableError,
   ReauthRequiredError,
 } from "./microsoft-graph/microsoft-graph-provider.js";
-import type {
-  MailboxProfile,
-  OAuthTokens,
-} from "./microsoft-graph/microsoft-graph-provider.js";
+import type { MailboxProfile, OAuthTokens } from "./microsoft-graph/microsoft-graph-provider.js";
 import { MICROSOFT_DISCOVERY, UNKNOWN_DOMAIN } from "./microsoft-graph/microsoft-discovery.js";
 import type { MicrosoftDiscovery } from "./microsoft-graph/microsoft-discovery.js";
 import {
