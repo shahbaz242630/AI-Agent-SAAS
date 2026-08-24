@@ -11,6 +11,7 @@ import {
 import { withTenant } from "@eva/database";
 import type { Prisma } from "@eva/database";
 import {
+  MAX_UPLOAD_BYTES,
   minorUnitDigits,
   type ImportDetail,
   type ImportRowView,
@@ -46,12 +47,7 @@ import {
   type ParsedInvoiceValues,
 } from "../ledger/ledger.js";
 import type { AuthUser } from "../../../platform/authentication/current-auth-user.decorator.js";
-import {
-  MAX_IMPORT_ROWS,
-  MAX_UPLOAD_BYTES,
-  parseImportFile,
-  sniffFileType,
-} from "./import-parser.js";
+import { MAX_IMPORT_ROWS, parseImportFile, sniffFileType } from "./import-parser.js";
 import { normaliseImportCurrency, parseImportAmount, parseImportDate } from "./import-values.js";
 import { transitionImportStatus } from "./import-status-machine.js";
 

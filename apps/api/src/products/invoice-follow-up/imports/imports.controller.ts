@@ -11,7 +11,7 @@ import {
   UseInterceptors,
 } from "@nestjs/common";
 import { FileInterceptor } from "@nestjs/platform-express";
-import type { ImportDetail, ImportSummary } from "@eva/types";
+import { MAX_UPLOAD_BYTES, type ImportDetail, type ImportSummary } from "@eva/types";
 import { confirmImportRequestSchema, type ConfirmImportRequest } from "@eva/validation";
 import { ZodValidationPipe } from "../../../common/validation/zod-validation.pipe.js";
 import {
@@ -20,7 +20,6 @@ import {
 } from "../../../platform/authentication/current-auth-user.decorator.js";
 // eslint-disable-next-line @typescript-eslint/consistent-type-imports
 import { ImportsService, type UploadedImportFile } from "./imports.service.js";
-import { MAX_UPLOAD_BYTES } from "./import-parser.js";
 import { OwnedBy } from "../../../common/monitoring/owner.js";
 
 /**

@@ -40,14 +40,9 @@ import type { AuthUser } from "../../platform/authentication/current-auth-user.d
 import {
   MailProviderRequestError,
   MailboxUnavailableError,
-  MICROSOFT_GRAPH_PROVIDER,
   ReauthRequiredError,
 } from "./microsoft-graph/microsoft-graph-provider.js";
-import type {
-  MailboxProfile,
-  MicrosoftGraphProvider,
-  OAuthTokens,
-} from "./microsoft-graph/microsoft-graph-provider.js";
+import type { MailboxProfile, OAuthTokens } from "./microsoft-graph/microsoft-graph-provider.js";
 import { MICROSOFT_DISCOVERY, UNKNOWN_DOMAIN } from "./microsoft-graph/microsoft-discovery.js";
 import type { MicrosoftDiscovery } from "./microsoft-graph/microsoft-discovery.js";
 import {
@@ -180,7 +175,6 @@ export class MailboxesService {
     private readonly usersService: UsersService,
     private readonly logger: PinoLogger,
     @Inject(API_ENV) private readonly env: ApiEnv,
-    @Inject(MICROSOFT_GRAPH_PROVIDER) private readonly graph: MicrosoftGraphProvider,
     @Inject(MICROSOFT_DISCOVERY) private readonly discovery: MicrosoftDiscovery,
     @Inject(MAIL_PROVIDERS) private readonly providers: MailProviderRegistry,
   ) {
@@ -190,29 +184,26 @@ export class MailboxesService {
   /**
    * The adapter for one mailbox's provider (3.1b step 2).
    *
-   * ⚠️ EVERY SEND AND EVERY REFRESH GOES THROUGH HERE RATHER THAN THROUGH
-   * `this.graph`, SO THAT ADDING GMAIL CHANGES THIS FILE IN NO PLACE AT ALL.
-   * The rule that makes it safe is that the provider comes from the ROW — a
-   * mailbox connected through Microsoft is refreshed and sent through Microsoft
-   * forever, whatever else is registered later.
+   * ⚠️ EVERY PROVIDER CALL IN THIS FILE GOES THROUGH HERE — the authorize URL,
+   * the callback's exchange / profile / probe / scope check, both sends and the
+   * refresh. Nothing reaches a named provider directly, so registering a third
+   * one changes this file in no place at all.
    *
-   * ⚠️ FOUR CALLS STILL GO THROUGH `this.graph` AND THAT IS DELIBERATE, NOT A
-   * MISS. They are the ones with no row to read a provider FROM, because the
-   * mailbox does not exist yet: `connect` (building the authorize URL) and
-   * `handleCallback` (exchange, profile, probe), plus the welcome email sent
-   * with the token that callback just minted. All four sit behind
-   * `/integrations/microsoft/…`, which is Microsoft's registered redirect URI
-   * and — per the 3.0 handoff — a URL the founder has configured on production
-   * and that must not move.
+   * The rule that makes it safe is where the provider comes FROM: the mailbox
+   * row once one exists — a mailbox connected through Microsoft is refreshed and
+   * sent through Microsoft forever, whatever else is registered later — and the
+   * connect request before it does.
    *
-   * When Gmail lands it gets its OWN callback route (Google's redirect URI is
-   * registered separately anyway) and the provider becomes a parameter of these
-   * two methods. Doing that now, with nothing to call it with, would be a
-   * branch no test could reach.
+   * ⚠️ THIS REPLACED A DIRECT `MICROSOFT_GRAPH_PROVIDER` INJECTION, REMOVED
+   * 2026-08-24. Before Gmail, the four calls with no row to read a provider from
+   * went straight to it; they now take the provider as a parameter. The comment
+   * that used to sit here still described those four calls as live months after
+   * they had moved, which is the failure this note exists to prevent: injecting
+   * a named provider back into this service is a regression, not a shortcut.
    *
-   * Admin consent and domain discovery stay on `this.graph` permanently: they
-   * are Microsoft's model of an organisation approving an app, and Google has
-   * no equivalent to widen the port for.
+   * Admin consent and domain discovery are NOT here: Google has no equivalent to
+   * Microsoft's model of an organisation approving an app, so they stay on
+   * `this.discovery` (`MICROSOFT_DISCOVERY`), a deliberately Microsoft-only port.
    */
   private providerFor(provider: string): MailProvider {
     return providerFor(this.providers, provider);
