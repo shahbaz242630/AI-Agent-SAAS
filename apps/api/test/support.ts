@@ -24,6 +24,10 @@ import {
   UNKNOWN_DOMAIN,
   type MicrosoftDiscovery,
 } from "../src/capabilities/mailbox/microsoft-graph/microsoft-discovery.js";
+import {
+  EXTRACTION_PROVIDER,
+  type ExtractionProvider,
+} from "../src/capabilities/extraction/extraction-provider.js";
 
 /**
  * Shared API test support (BRD 13): the app boots for real against the real
@@ -171,6 +175,20 @@ export async function createTestApp(
      * never accidentally proven by a network that happened to answer.
      */
     forwardingConfirmer?: ForwardingConfirmer;
+    /**
+     * The PDF extraction seam (1.4). Left REAL unless a spec asks, because
+     * §7.4 wants extraction proven against genuine PDFs rather than a mock —
+     * `invoice-documents.spec.ts` generates real ones with pdfkit and must keep
+     * exercising the rule-based extractor.
+     *
+     * It is overridable for one case the real provider cannot produce: a
+     * provider whose OUTPUT is malformed. `runExtraction` validates the result
+     * against `storedExtractionSchema` before storing it, and the port exists
+     * so an AI provider can slot in later — so the guard against a bad shape
+     * needs a bad shape to prove it, and the rule-based extractor will never
+     * emit one.
+     */
+    extractionProvider?: ExtractionProvider;
   } = {},
 ): Promise<INestApplication> {
   const { getKey } = await testKeys();
@@ -190,6 +208,9 @@ export async function createTestApp(
     .useValue(options.discovery ?? { describeDomain: async () => UNKNOWN_DOMAIN });
   if (options.receivedMail) {
     builder = builder.overrideProvider(RECEIVED_MAIL).useValue(options.receivedMail);
+  }
+  if (options.extractionProvider) {
+    builder = builder.overrideProvider(EXTRACTION_PROVIDER).useValue(options.extractionProvider);
   }
   builder = builder.overrideProvider(FORWARDING_CONFIRMER).useValue(
     options.forwardingConfirmer ?? {

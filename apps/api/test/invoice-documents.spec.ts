@@ -2,7 +2,7 @@ import type { INestApplication } from "@nestjs/common";
 import request from "supertest";
 import PDFDocument from "pdfkit";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import type { EvaPrismaClient } from "@eva/database";
+import type { EvaPrismaClient, Prisma } from "@eva/database";
 import {
   createOrgWithMembers,
   createOwnerClient,
@@ -259,6 +259,86 @@ describe("Invoice documents: upload, extraction and review payload", () => {
       .expect(200);
     expect(retried.body.status).toBe("extracted");
     expect(retried.body.extractedFields.invoiceNumber.value).toBe("INV-1042");
+  });
+
+  /**
+   * ⚠️ GUARDS THE `as StoredExtraction` CAST REMOVED 2026-08-24.
+   *
+   * `extracted_fields` is jsonb, so nothing the compiler knows constrains what
+   * comes back out of it. The service used to assert the shape with a cast — a
+   * claim TypeScript cannot check — so one odd row would either hand the client
+   * whatever the column held, or throw reading `.notes` off something with none.
+   *
+   * The review screen exists so a human can type the fields in, which means a
+   * bad row has to leave it OPEN and empty rather than 500. Each case is written
+   * straight to the column: now that the write path validates, that is the only
+   * way to produce one.
+   */
+  it("a corrupt extracted_fields row opens review empty instead of 500ing", async () => {
+    const created = await upload("finance", await pdfWithLines(LABELLED_INVOICE)).expect(201);
+    expect(created.body.extractedFields.invoiceNumber.value).toBe("INV-1042");
+
+    const corruptions: Record<string, unknown> = {
+      "unknown canonical field": {
+        fields: { notAField: { value: "x", confidence: 1 } },
+        notes: [],
+      },
+      "confidence outside [0,1]": { fields: { amount: { value: "10", confidence: 5 } }, notes: [] },
+      "value is a number, not a string": {
+        fields: { amount: { value: 10, confidence: 1 } },
+        notes: [],
+      },
+      "notes is not an array": { fields: {}, notes: "one note" },
+      // What `extractedFieldsSchema` describes on its OWN: the inner map with no
+      // wrapper. Precisely the mistake the wrapper schema exists to catch.
+      "the bare inner map, no wrapper": { invoiceNumber: { value: "INV-1", confidence: 1 } },
+    };
+
+    for (const [name, blob] of Object.entries(corruptions)) {
+      await owner.invoiceDocument.update({
+        where: { id: created.body.id },
+        data: { extractedFields: blob as Prisma.InputJsonValue },
+      });
+      const detail = await request(app.getHttpServer())
+        .get(`${baseUrl()}/${created.body.id}`)
+        .set("Authorization", `Bearer ${tokens.get("finance")}`)
+        .expect(200);
+      expect(detail.body.extractedFields, name).toBeNull();
+      expect(detail.body.extractionNotes, name).toEqual([]);
+    }
+  });
+
+  /**
+   * The port exists so a different extractor can slot in (§7.4), with an AI
+   * provider the named candidate. This is what happens when one returns a shape
+   * that does not match the column.
+   *
+   * ⚠️ THE MESSAGE MATTERS AS MUCH AS THE STATUS. `ExtractionFailedError` says
+   * "check it opens correctly and try again", which would be a lie here — the
+   * PDF was read fine and the fault is entirely ours. Sending someone back to a
+   * file that is not the problem is the thing this asserts against.
+   */
+  it("a provider returning a malformed draft fails the document honestly", async () => {
+    const malformed = await createTestApp({
+      extractionProvider: {
+        // Missing `confidence` — a plausible shape, and not one the schema allows.
+        extract: async () => ({ fields: { amount: { value: "10" } }, notes: [] }) as never,
+      },
+    });
+    try {
+      const response = await request(malformed.getHttpServer())
+        .post(baseUrl())
+        .set("Authorization", `Bearer ${tokens.get("finance")}`)
+        .attach("file", await pdfWithLines(LABELLED_INVOICE), "invoice.pdf")
+        .expect(201);
+
+      expect(response.body.status).toBe("failed");
+      expect(response.body.extractedFields).toBeNull();
+      expect(response.body.extractionError).toMatch(/enter them below/);
+      expect(response.body.extractionError).not.toMatch(/check it opens correctly/);
+    } finally {
+      await malformed.close();
+    }
   });
 
   it("rejects non-PDF magic (PNG, .pdf-named garbage) → 422", async () => {

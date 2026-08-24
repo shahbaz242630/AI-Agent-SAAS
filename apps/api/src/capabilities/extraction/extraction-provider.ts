@@ -49,3 +49,27 @@ export class ExtractionFailedError extends Error {
     this.cause = cause;
   }
 }
+
+/**
+ * A provider returned a result that does not match the stored-extraction shape.
+ *
+ * ⚠️ SEPARATE FROM `ExtractionFailedError` BECAUSE ITS MESSAGE WOULD LIE HERE.
+ * That one tells the customer to check their file opens correctly — right when
+ * the PDF is the one thing that behaved: it was read, and what came back was
+ * malformed on OUR side. Sending someone to re-examine a file that is perfectly
+ * fine is the kind of confidently wrong instruction this codebase keeps having
+ * to delete.
+ *
+ * The port exists so an AI provider can slot in behind it (§7.4), and an
+ * unreviewed provider returning a shape nobody validated is precisely what the
+ * seam makes possible. The `cause` carries the validation detail for the server
+ * log; the message stays sanitised (plan §8) and points at the manual-entry
+ * path, which is the thing the customer can actually act on.
+ */
+export class MalformedExtractionError extends Error {
+  constructor(cause?: unknown) {
+    super("Eva could not read the details from this invoice — enter them below and confirm");
+    this.name = "MalformedExtractionError";
+    this.cause = cause;
+  }
+}
