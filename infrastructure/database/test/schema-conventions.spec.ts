@@ -106,6 +106,7 @@ describe("Schema conventions (BRD 10)", () => {
       "roles",
       "scheduled_actions",
       "suppression_events",
+      "user_sessions",
       "users",
     ]);
   });

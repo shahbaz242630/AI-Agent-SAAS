@@ -17,6 +17,12 @@ export const PLATFORM_TABLES = [
   "organisation",
   "organisationSettings",
   "user",
+  /**
+   * Sign-in sessions and their activity clocks (migration 0033). Platform, and
+   * not a product's business, for the same reason `user` is: it is who is at the
+   * keyboard, which every product needs and none of them owns.
+   */
+  "userSession",
   "role",
   "organisationMembership",
   "auditLog",

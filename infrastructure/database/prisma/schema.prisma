@@ -99,16 +99,45 @@ model User {
   /// Last request this user made, for the two-day idle sign-out. NULL means
   /// "not seen since the column shipped" and is treated as fresh, never stale —
   /// see isSessionIdle in @eva/types.
+  /// ⚠️ NOT THE SECURITY INPUT ANY MORE — see UserSession. This is "last seen
+  /// anywhere", kept for support questions. The idle rule reads the per-session
+  /// stamp, because one timestamp per person cannot tell a busy laptop apart
+  /// from a stolen phone.
   lastSeenAt  DateTime? @map("last_seen_at") @db.Timestamptz(6)
-  /// The Supabase session (`session_id`) that stamp belongs to, so the idle
-  /// clock is per-session and not per-user (ruling 37). A different id is a new
-  /// sign-in and restarts the clock; the same id replayed after two days stays
-  /// refused. NULL means "no session recorded", which reads as a new one.
+  /// ⚠️ DEPRECATED BY `UserSession` AND NO LONGER READ. Superseded within a day
+  /// of shipping (0032 -> 0033): one column could hold only one session, which
+  /// is precisely the hole. Left in place rather than dropped in the same
+  /// change, because dropping it while the previous release is still serving
+  /// requests would 500 every one of them. Drop it in its own migration, applied
+  /// AFTER a deploy that no longer reads it.
   lastSessionId String? @map("last_session_id")
   memberships OrganisationMembership[]
   auditLogs   AuditLog[]
+  sessions    UserSession[]
 
   @@map("users")
+}
+
+/// One activity stamp per (user, Supabase session) — the two-day idle rule
+/// (ruling 37, corrected 2026-08-25).
+///
+/// ⚠️ A ROW IS A CLOCK, NOT A PERMISSION. Its absence means "never seen", which
+/// is read as a new sign-in and admitted; its presence with a stale stamp is
+/// what refuses a replayed session. So deleting rows to save space would hand
+/// every deleted session a fresh start — nothing prunes this table. See the
+/// migration's ROLLBACK.md.
+model UserSession {
+  id         String   @id @default(uuid()) @db.Uuid
+  userId     String   @map("user_id") @db.Uuid
+  /// The Supabase `session_id` claim. TEXT, not UUID: it is somebody else's
+  /// value and a type error here would land on the sign-in path.
+  sessionId  String   @map("session_id")
+  lastSeenAt DateTime @map("last_seen_at") @db.Timestamptz(6)
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, sessionId])
+  @@map("user_sessions")
 }
 
 /// The six roles of BRD 7, seeded by src/seed.ts.
