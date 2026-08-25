@@ -423,3 +423,146 @@ describe("RLS: shared reference tables (BRD 18 — roles are platform reference 
     expect(deleted.count).toBe(0);
   });
 });
+
+/**
+ * Sessions belong to a PERSON, not to an organisation (migration 0033), so they
+ * are the one table here whose policy keys on `app.current_user` rather than
+ * `app.current_org`. Which devices a colleague is signed in on is none of your
+ * business, even inside the same company — so the attacker in this describe is
+ * a legitimate, signed-in member of the SAME organisation.
+ */
+describe("RLS: one person's sessions are not another's (migration 0033)", () => {
+  const USER_A = "aaaaaaaa-1111-4000-8000-0000000000aa";
+  const USER_B = "bbbbbbbb-1111-4000-8000-0000000000bb";
+  const AUTH_A = "aaaaaaaa-2222-4000-8000-0000000000aa";
+  const AUTH_B = "bbbbbbbb-2222-4000-8000-0000000000bb";
+
+  const asUser = async (userId: string, fn: (tx: PrismaClient) => Promise<unknown>) =>
+    prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT set_config('app.current_user', ${userId}, true)`;
+      return fn(tx as unknown as PrismaClient);
+    });
+
+  /** The login path: only the JWT `sub` is known, not the app user id yet. */
+  const asAuthIdentity = async (authUserId: string, fn: (tx: PrismaClient) => Promise<unknown>) =>
+    prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT set_config('app.current_auth_user', ${authUserId}, true)`;
+      return fn(tx as unknown as PrismaClient);
+    });
+
+  beforeAll(async () => {
+    const owner = createPrismaClient(TEST_DATABASE_URL);
+    for (const [id, email, authId] of [
+      [USER_A, "rls.session.a@test.eva.local", AUTH_A],
+      [USER_B, "rls.session.b@test.eva.local", AUTH_B],
+    ]) {
+      // `updated_at` is NOT NULL with no database default — Prisma's @updatedAt
+      // is applied by the client, so a raw INSERT has to supply it.
+      await owner.$executeRaw`
+        INSERT INTO users (id, email, updated_at, auth_user_id)
+        VALUES (${id}::uuid, ${email}, now(), ${authId}::uuid)
+        ON CONFLICT (id) DO NOTHING`;
+    }
+    // The row user B must not be able to see. Without it, "B sees nothing"
+    // would pass against an empty table whether the policy existed or not.
+    await owner.$executeRaw`
+      INSERT INTO user_sessions (user_id, session_id, last_seen_at)
+      VALUES (${USER_A}::uuid, 'a-private-session', now())
+      ON CONFLICT (user_id, session_id) DO NOTHING`;
+    await owner.$disconnect();
+  });
+
+  it("the owner of the session can see it (positive control)", async () => {
+    const rows = await asUser(USER_A, (tx) => tx.userSession.findMany());
+    expect((rows as unknown[]).length).toBe(1);
+  });
+
+  it("a colleague cannot SELECT somebody else's sessions", async () => {
+    const rows = await asUser(USER_B, (tx) => tx.userSession.findMany());
+    expect(rows).toEqual([]);
+  });
+
+  it("a colleague cannot INSERT a session row in somebody else's name", async () => {
+    await expect(
+      asUser(USER_B, (tx) =>
+        tx.userSession.create({
+          data: { userId: USER_A, sessionId: "forged", lastSeenAt: new Date() },
+        }),
+      ),
+    ).rejects.toThrow(/row-level security|permission denied/i);
+  });
+
+  /**
+   * ⚠️ THE ATTACK THAT MATTERS MOST: freshening somebody else's stale clock.
+   * A stolen session is refused because its stamp is old, so an attacker who
+   * could UPDATE that row back to `now()` would walk straight back in.
+   */
+  it("a colleague cannot UPDATE somebody else's activity stamp", async () => {
+    const updated = await asUser(USER_B, (tx) =>
+      tx.userSession.updateMany({
+        where: { userId: USER_A },
+        data: { lastSeenAt: new Date() },
+      }),
+    );
+    expect((updated as { count: number }).count).toBe(0);
+  });
+
+  /**
+   * ⚠️ AND DELETING ONE IS THE SAME ATTACK WEARING A DIFFERENT HAT. An absent
+   * row means "never seen", which is admitted — so deleting a refused session's
+   * row would hand it a brand-new clock.
+   */
+  it("a colleague cannot DELETE somebody else's session row", async () => {
+    const deleted = await asUser(USER_B, (tx) =>
+      tx.userSession.deleteMany({ where: { userId: USER_A } }),
+    );
+    expect((deleted as { count: number }).count).toBe(0);
+  });
+
+  /**
+   * The login-path read (`session_auth_resolution`), which exists so the idle
+   * check can collect this session's stamp on the query that resolves the user
+   * — instead of opening a second transaction and paying four more round trips
+   * on every authenticated request.
+   *
+   * ⚠️ IT IS ALSO LOAD-BEARING FOR CORRECTNESS, NOT ONLY SPEED. Without it the
+   * join returns NULL for every session, NULL means "never seen", and "never
+   * seen" is admitted — so the two-day rule would silently stop refusing
+   * anybody. Proved by dropping the policy on 2026-08-25: six API tests went
+   * red, including the original lock test.
+   */
+  it("the login path can read its own session stamp with only the auth id", async () => {
+    const rows = await asAuthIdentity(AUTH_A, (tx) => tx.userSession.findMany());
+    expect((rows as unknown[]).length).toBe(1);
+  });
+
+  it("the login path cannot read anybody else's", async () => {
+    const rows = await asAuthIdentity(AUTH_B, (tx) => tx.userSession.findMany());
+    expect(rows).toEqual([]);
+  });
+
+  it("an unset auth context reads nothing at all (fails closed)", async () => {
+    const rows = await prisma.$transaction((tx) => tx.userSession.findMany());
+    expect(rows).toEqual([]);
+  });
+
+  /**
+   * ⚠️ THE READ POLICY MUST NOT HAVE BECOME A WRITE ONE. It is `FOR SELECT`
+   * precisely so that the cheap login-path context cannot freshen or remove a
+   * session row — the two moves that would let a refused session back in.
+   */
+  it("the login-path context still cannot write a session row", async () => {
+    await expect(
+      asAuthIdentity(AUTH_A, (tx) =>
+        tx.userSession.create({
+          data: { userId: USER_A, sessionId: "forged-via-auth", lastSeenAt: new Date() },
+        }),
+      ),
+    ).rejects.toThrow(/row-level security|permission denied/i);
+
+    const updated = await asAuthIdentity(AUTH_A, (tx) =>
+      tx.userSession.updateMany({ where: { userId: USER_A }, data: { lastSeenAt: new Date() } }),
+    );
+    expect((updated as { count: number }).count).toBe(0);
+  });
+});
