@@ -1,0 +1,93 @@
+# Uptime — production answered nothing for three days (2026-08-22 to 2026-08-25)
+# and the only reason anyone noticed was a status table in a handoff document.
+# There are no customers yet, which is exactly why nothing complained.
+#
+# This job exists to complain. It probes production every ~15 minutes and fails
+# the run when production is not answering; a failed scheduled run emails the
+# repo owner, so no external monitoring account is needed.
+#
+# ⚠️ IT ASSERTS THE BODY, NOT JUST THE STATUS CODE. This project has twice been
+# fooled by a 200 that meant something other than "healthy" — Google's
+# confirmation interstitial being the expensive one. A Railway edge can answer
+# 200 while the container behind it is unhealthy, so the api probe requires the
+# health payload to actually say ok.
+#
+# ⚠️ IT RETRIES THREE TIMES BEFORE FAILING. A monitor that cries wolf on a
+# single blip is a monitor that gets ignored, which is worse than no monitor.
+#
+# ⚠️ GitHub disables scheduled workflows after 60 days with no repo activity.
+# If this ever goes quiet for a long stretch, check it is still enabled.
+#
+# No checkout, no GITHUB_TOKEN, no third-party actions: nothing to pin and no
+# credentials in the job at all.
+name: Uptime
+
+on:
+  schedule:
+    # Every ~15 minutes, deliberately off the quarter-hour so we are not queued
+    # behind everyone else's :00/:15/:30/:45 jobs.
+    - cron: "7,22,37,52 * * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: uptime
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    name: Probe production
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - name: Probe api and web
+        env:
+          # One place to edit if a domain ever moves. ⚠️ The production api is
+          # api-production-0e01 — api-production-c1ea is something else.
+          API_URL: "https://api-production-0e01.up.railway.app/health"
+          WEB_URL: "https://web-production-15df9.up.railway.app/"
+        shell: bash
+        run: |
+          set -uo pipefail
+
+          probe() {
+            local name="$1" url="$2" expect="$3"
+            local attempt response code payload
+            for attempt in 1 2 3; do
+              response="$(curl -sS --max-time 20 -w $'\n%{http_code}' "$url" 2>/dev/null)" || response=""
+              code="$(printf '%s' "$response" | tail -n 1)"
+              payload="$(printf '%s' "$response" | sed '$d')"
+
+              if [ "$code" = "200" ]; then
+                if [ -z "$expect" ] || printf '%s' "$payload" | grep -qF -- "$expect"; then
+                  echo "$name: OK (attempt $attempt, http $code)"
+                  return 0
+                fi
+                echo "$name: http 200 but body did not contain '$expect' (attempt $attempt)"
+              else
+                echo "$name: http ${code:-no-response} (attempt $attempt)"
+              fi
+
+              if [ "$attempt" -lt 3 ]; then sleep 20; fi
+            done
+
+            echo "::error title=$name is down::$name did not answer healthily after 3 attempts over ~40s. Last http: ${code:-no-response}. Check Railway for an active deployment: a removed deployment answers 404 from the edge."
+            return 1
+          }
+
+          fail=0
+          probe "api" "$API_URL" '"status":"ok"' || fail=1
+          probe "web" "$WEB_URL" '' || fail=1
+
+          if [ "$fail" -ne 0 ]; then
+            echo "::error::PRODUCTION IS NOT ANSWERING."
+          else
+            echo "Production is up."
+          fi
+
+          # ⚠️ Exit with the real code. A wrapper that swallows its own exit
+          # status reports success while the thing it checks is red — this
+          # project has shipped that exact bug in a CI watcher before.
+          exit "$fail"
