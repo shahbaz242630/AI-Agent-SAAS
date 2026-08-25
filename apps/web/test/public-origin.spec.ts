@@ -87,6 +87,9 @@ describe("no server-side redirect may take our address from the request", () => 
    * `nextUrl.clone()` — Next answers those with a RELATIVE `Location`, verified
    * against production on 2026-08-11 (`location: /sign-in`), so no host is
    * involved and nothing can be poisoned.
+   *
+   * ⚠️ THAT EXEMPTION WAS TRUE OF MIDDLEWARE AND FALSE OF ROUTE HANDLERS, and
+   * the gap cost a second localhost defect on 2026-08-25 — see the test below.
    */
   it("never reads nextUrl.origin", () => {
     const offenders = sources.filter((source) => source.text.includes("nextUrl.origin"));
@@ -116,5 +119,40 @@ describe("no server-side redirect may take our address from the request", () => 
 
     expect(route, "the route that spends every emailed token has moved").toBeDefined();
     expect(route?.text).toContain("publicOrigin");
+  });
+
+  /**
+   * ⚠️ THE 2026-08-25 DEFECT, AND THE HOLE IN THE GUARD ABOVE. `/auth/sign-out`
+   * cloned `nextUrl` exactly as middleware is allowed to, and sent every idled
+   * customer to `https://localhost:8080/signed-out?reason=idle`. Both halves
+   * measured on production that morning:
+   *
+   *     /auth/sign-out?reason=idle -> https://localhost:8080/signed-out?...
+   *     /app  (middleware)         -> /sign-in
+   *
+   * Middleware resolves a cloned `nextUrl` to a relative `Location`; a route
+   * handler resolves it against the container's own address and emits it
+   * absolute. So the exemption is real, and it is an exemption for MIDDLEWARE
+   * — never for a handler under `app/**\/route.ts`.
+   *
+   * The customer cost is the part worth remembering: an idle session is the one
+   * moment a person is already being interrupted, and this dropped them on a
+   * dead machine with no way back but editing the address bar.
+   */
+  it("never builds a route handler's redirect from the request", () => {
+    const handlers = sources.filter((source) => /^app\/.*route\.tsx?$/.test(source.file));
+
+    expect(handlers.length, "the auth route handlers have moved or vanished").toBeGreaterThan(0);
+
+    const offenders = handlers.filter((source) => /nextUrl\s*\.\s*clone\s*\(/.test(source.text));
+
+    expect(offenders.map((o) => o.file)).toEqual([]);
+  });
+
+  it("ends an idle session on our own origin", () => {
+    const route = sources.find((source) => source.file === "app/auth/sign-out/route.ts");
+
+    expect(route, "the route that ends an idle session has moved").toBeDefined();
+    expect(route?.text).toContain("publicUrl");
   });
 });
