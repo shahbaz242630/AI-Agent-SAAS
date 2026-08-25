@@ -22,8 +22,24 @@ export async function withTenant<T>(
   options?: { timeout?: number },
 ): Promise<T> {
   return prisma.$transaction(async (tx) => {
-    await tx.$executeRaw`SELECT set_config('app.current_org', ${context.organisationId}, true)`;
-    await tx.$executeRaw`SELECT set_config('app.current_user', ${context.userId}, true)`;
+    /**
+     * ⚠️ BOTH IN ONE STATEMENT, AND IT IS WORTH MORE THAN IT LOOKS. This used to
+     * be two `$executeRaw` calls, i.e. two network round trips, on EVERY
+     * tenant-scoped operation in the product — and this helper is the one every
+     * such query passes through. Measured on production 2026-08-25: a request
+     * touching no database answers in 3ms while one that does takes 140-330ms,
+     * because the time goes on round trips (~10ms each), not on queries (0.024ms
+     * for an indexed lookup). One `SELECT` sets both GUCs and the second trip
+     * disappears.
+     *
+     * ⚠️ STILL `is_local = true` (the third argument), WHICH IS THE PART NOT TO
+     * TOUCH. That makes it `SET LOCAL`: scoped to this transaction and discarded
+     * at COMMIT, so a pooled connection can never carry one tenant's context
+     * into the next request. Setting them outside a transaction, or with `false`,
+     * would be a cross-tenant leak rather than an optimisation.
+     */
+    await tx.$executeRaw`SELECT set_config('app.current_org', ${context.organisationId}, true),
+                                set_config('app.current_user', ${context.userId}, true)`;
     return fn(tx as unknown as EvaPrismaClient);
   }, options);
 }
