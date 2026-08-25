@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type { INestApplication } from "@nestjs/common";
 import { Test } from "@nestjs/testing";
 import { createLocalJWKSet, exportJWK, generateKeyPair, SignJWT, type JWTVerifyGetKey } from "jose";
@@ -109,15 +109,51 @@ export interface TestTokenClaims {
   issuer?: string;
   /** Seconds from now; negative for an already-expired token. */
   expiresInSeconds?: number;
+  /**
+   * The Supabase session this token belongs to (JWT `session_id`).
+   *
+   * ⚠️ IT DEFAULTS TO ONE DERIVED FROM `sub`, SO TWO TOKENS FOR THE SAME PERSON
+   * ARE THE SAME SESSION. That is what a token REFRESH is, and it is what every
+   * test written before the session id existed already meant. A test that means
+   * "they signed in AGAIN" has to say so by passing a new id — that difference
+   * is the entire hinge of the idle rule, so it is never implied.
+   *
+   * Pass `null` to leave the claim off the token entirely — Supabase documents
+   * it as required, so that is the "this should be impossible" case.
+   */
+  sessionId?: string | null;
+}
+
+/**
+ * A stable session id for a `sub`.
+ *
+ * Real Supabase session ids are uuids naming a row in its `sessions` table, so
+ * this keeps the shape while staying deterministic: mint a second token for the
+ * same person and it belongs to the same session, exactly as a refresh does.
+ */
+function sessionIdForSub(sub: string): string {
+  const hex = createHash("sha256").update(sub).digest("hex");
+  return [
+    hex.slice(0, 8),
+    hex.slice(8, 12),
+    hex.slice(12, 16),
+    hex.slice(16, 20),
+    hex.slice(20, 32),
+  ].join("-");
 }
 
 /** Signs a Supabase-shaped access token with the local test key. */
 export async function signToken(claims: TestTokenClaims = {}): Promise<string> {
   const { privateKey } = await testKeys();
   const now = Math.floor(Date.now() / 1000);
-  return new SignJWT({ email: claims.email ?? "test@eva.local" })
+  const sub = claims.sub ?? randomUUID();
+  const sessionId = claims.sessionId === undefined ? sessionIdForSub(sub) : claims.sessionId;
+  return new SignJWT({
+    email: claims.email ?? "test@eva.local",
+    ...(sessionId === null ? {} : { session_id: sessionId }),
+  })
     .setProtectedHeader({ alg: "ES256", typ: "JWT" })
-    .setSubject(claims.sub ?? randomUUID())
+    .setSubject(sub)
     .setAudience(claims.audience ?? "authenticated")
     .setIssuer(claims.issuer ?? TEST_ISSUER)
     .setIssuedAt(now)

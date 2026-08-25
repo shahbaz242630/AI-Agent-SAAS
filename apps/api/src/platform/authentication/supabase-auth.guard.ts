@@ -51,7 +51,14 @@ export class SupabaseAuthGuard implements CanActivate {
       if (!payload.sub || typeof payload.email !== "string" || payload.email.length === 0) {
         throw new UnauthorizedException("Token is missing required claims");
       }
-      request.authUser = { authUserId: payload.sub, email: payload.email };
+      request.authUser = {
+        authUserId: payload.sub,
+        email: payload.email,
+        // Not a REQUIRED claim here, though Supabase documents it as one: a
+        // token that somehow lacks it should still be able to sign in and get
+        // the stricter idle treatment, not be refused outright at the door.
+        sessionId: typeof payload.session_id === "string" ? payload.session_id : null,
+      };
       return true;
     } catch (error) {
       if (error instanceof UnauthorizedException) throw error;
