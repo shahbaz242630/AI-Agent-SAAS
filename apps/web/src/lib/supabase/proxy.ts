@@ -143,8 +143,14 @@ export async function updateSession(request: NextRequest): Promise<NextResponse>
        * ⚠️ SCOPE "local", NEVER THE DEFAULT. A global sign-out ends every
        * session this person has, on every device — so leaving one tab alone for
        * the weekend would throw them out of the laptop they use daily. The idle
-       * rule is about THIS browser; the API's own check is what covers the
-       * account as a whole.
+       * rule is about THIS browser.
+       *
+       * ⚠️ AND THE API'S HALF NOW AGREES WITH THAT. It used to be described here
+       * as covering "the account as a whole", which it did — by reading one
+       * timestamp per USER, which is exactly how it became a permanent lockout
+       * (handoff §9f). Since ruling 37 it keys on the Supabase session id, so
+       * both halves of the rule are now about one session rather than one
+       * person. This cookie remains an experience, not the rule.
        */
       await supabase.auth.signOut({ scope: "local" });
       const redirectUrl = request.nextUrl.clone();

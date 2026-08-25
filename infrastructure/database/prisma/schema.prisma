@@ -100,6 +100,11 @@ model User {
   /// "not seen since the column shipped" and is treated as fresh, never stale —
   /// see isSessionIdle in @eva/types.
   lastSeenAt  DateTime? @map("last_seen_at") @db.Timestamptz(6)
+  /// The Supabase session (`session_id`) that stamp belongs to, so the idle
+  /// clock is per-session and not per-user (ruling 37). A different id is a new
+  /// sign-in and restarts the clock; the same id replayed after two days stays
+  /// refused. NULL means "no session recorded", which reads as a new one.
+  lastSessionId String? @map("last_session_id")
   memberships OrganisationMembership[]
   auditLogs   AuditLog[]
 

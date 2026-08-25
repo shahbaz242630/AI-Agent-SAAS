@@ -30,6 +30,15 @@ import {
  * out" with no reason reads as a fault in the product. `?reason=idle` is set by
  * the proxy — it decides copy and nothing else, so a visitor typing it into the
  * address bar changes only which sentence they read.
+ *
+ * ⚠️ IT IS THE SESSION THAT WENT IDLE, NEVER THE ACCOUNT, AND THE WORDS HAVE TO
+ * SAY SO. This sentence used to read "nobody had used this account for two
+ * days", which is a sentence the product cannot know is true: the proxy's half
+ * of the rule has always been per-browser, and the API's half became
+ * per-session on 2026-08-25 (ruling 37). Somebody who uses Eva daily on their
+ * phone and rarely on the laptop would be told nobody had touched their
+ * account — false, and about security, which is the worst place to be caught
+ * being loose. Say "here".
  */
 export default async function SignedOutPage({
   searchParams,
@@ -46,7 +55,7 @@ export default async function SignedOutPage({
         title={idle ? "Signed out after two days" : "You're signed out"}
         subtitle={
           idle
-            ? "Nobody had used this account for two days, so we ended the session to keep it safe. Nothing stopped — reminders already scheduled still went out, and it is all on the record."
+            ? "Eva hadn't been used here for two days, so we ended the session to keep your account safe. Nothing stopped — reminders already scheduled still went out, and it is all on the record."
             : "Eva carries on without you — reminders already scheduled still send, and everything will be on the record when you're back."
         }
       />

@@ -17,8 +17,8 @@ export interface AppUser {
   authUserId: string | null;
 }
 
-/** The stored row — `AppUser` plus the column only this service reads. */
-type StoredUser = AppUser & { lastSeenAt: Date | null };
+/** The stored row — `AppUser` plus the columns only this service reads. */
+type StoredUser = AppUser & { lastSeenAt: Date | null; lastSessionId: string | null };
 
 @Injectable()
 export class UsersService {
@@ -37,20 +37,26 @@ export class UsersService {
    */
   async resolveOrProvision(authUser: AuthUser): Promise<AppUser> {
     const existing = await this.findByAuthUserId(authUser.authUserId);
-    if (existing) return this.admitReturningUser(existing);
+    if (existing) return this.admitReturningUser(existing, authUser.sessionId);
 
     const id = randomUUID();
     const email = authUser.email.toLowerCase();
     try {
       return await withUser(this.prisma.db, id, (tx) =>
         tx.user.create({
-          data: { id, email, authUserId: authUser.authUserId, lastSeenAt: new Date() },
+          data: {
+            id,
+            email,
+            authUserId: authUser.authUserId,
+            lastSeenAt: new Date(),
+            lastSessionId: authUser.sessionId,
+          },
         }),
       );
     } catch (error) {
       // Concurrent first login: the other request won the insert — re-read.
       const raced = await this.findByAuthUserId(authUser.authUserId);
-      if (raced) return this.admitReturningUser(raced);
+      if (raced) return this.admitReturningUser(raced, authUser.sessionId);
       if (isUniqueViolationOn(error, "email")) throw this.emailAlreadyClaimed(authUser);
       throw error;
     }
@@ -69,11 +75,38 @@ export class UsersService {
    * ⚠️ SERVER-SIDE BECAUSE THAT IS THE WHOLE POINT. A timestamp the browser
    * carries travels with a stolen session and vouches for the thief. This one
    * is ours.
+   *
+   * ⚠️ THE CLOCK BELONGS TO THE SESSION, NOT THE PERSON (ruling 37,
+   * 2026-08-25), AND THE ORDER OF THESE TWO LINES IS THE WHOLE DEFECT IT
+   * FIXES. The throw used to come first, ahead of the only line in the API that
+   * writes `last_seen_at` — and that stamp is the only thing the check reads.
+   * So a stale stamp could never be refreshed by anything, signing in included,
+   * and every customer who spent two days away from Eva was locked out of their
+   * account for good. It was live in production for thirteen days.
+   *
+   * ⚠️ A NEW SESSION ID IS THE KEY, AND NOTHING ELSE IS. Supabase opens a new
+   * session row when somebody signs in and keeps the id across token refreshes,
+   * so a different id means a real new sign-in — admit it and restart the
+   * clock. A thief replaying the stolen session carries the SAME id and stays
+   * refused, which is the property the rule exists for and the reason we do not
+   * simply clear the stamp on the way out (considered and rejected 2026-08-25:
+   * refused once, cleared, and the very next request succeeds).
+   *
+   * ⚠️ IT STILL CANNOT TELL A THIEF FROM A SECOND DEVICE. Two live sessions
+   * take turns overwriting one column, so each looks new to the other and both
+   * stay admitted. That is exactly as true of the per-user clock this replaces,
+   * so nothing regresses — but closing it means a row per session, which is a
+   * bigger change than a live lockout should wait for.
    */
-  private async admitReturningUser(user: StoredUser): Promise<AppUser> {
+  private async admitReturningUser(user: StoredUser, sessionId: string | null): Promise<AppUser> {
     const now = new Date();
-    if (isSessionIdle(user.lastSeenAt, now)) throw this.sessionIdledOut(user);
-    if (this.shouldStampActivity(user.lastSeenAt, now)) await this.stampActivity(user.id, now);
+    const isNewSession = sessionId !== null && sessionId !== user.lastSessionId;
+    if (!isNewSession && isSessionIdle(user.lastSeenAt, now)) {
+      throw this.sessionIdledOut(user, sessionId);
+    }
+    if (isNewSession || this.shouldStampActivity(user.lastSeenAt, now)) {
+      await this.stampActivity(user.id, now, sessionId);
+    }
     return user;
   }
 
@@ -91,12 +124,21 @@ export class UsersService {
    *
    * The tenant policy on `users` allows a row to write itself
    * (`WITH CHECK (id = app.current_user)`), which is exactly this.
+   *
+   * ⚠️ `COALESCE`, SO A TOKEN WITHOUT A SESSION ID CANNOT ERASE THE ONE WE
+   * HAVE. Writing NULL over a real id would make the next ordinary request look
+   * like a brand-new sign-in and hand it the one-time amnesty — turning a
+   * missing claim into a way around the rule. Keeping the last id we actually
+   * saw is both safer and more honest about what the column knows.
    */
-  private async stampActivity(userId: string, now: Date): Promise<void> {
+  private async stampActivity(userId: string, now: Date, sessionId: string | null): Promise<void> {
     await withUser(
       this.prisma.db,
       userId,
-      (tx) => tx.$executeRaw`UPDATE users SET last_seen_at = ${now} WHERE id = ${userId}::uuid`,
+      (tx) => tx.$executeRaw`UPDATE users
+           SET last_seen_at = ${now},
+               last_session_id = COALESCE(${sessionId}::text, last_session_id)
+         WHERE id = ${userId}::uuid`,
     );
   }
 
@@ -107,9 +149,24 @@ export class UsersService {
    * is what lets the browser tell "your session went stale" apart from "your
    * token is rubbish" and actually END the session instead of looping.
    */
-  private sessionIdledOut(user: StoredUser): SessionIdleTimeoutException {
+  private sessionIdledOut(user: StoredUser, sessionId: string | null): SessionIdleTimeoutException {
     this.logger.info(
-      { userId: user.id, lastSeenAt: user.lastSeenAt?.toISOString() ?? null },
+      {
+        userId: user.id,
+        lastSeenAt: user.lastSeenAt?.toISOString() ?? null,
+        /**
+         * Which of the two ways in this was, because they mean very different
+         * things. `true` is the case the rule is FOR: the session we last saw,
+         * coming back after two days. `false` means the token carried no
+         * `session_id` at all — which should be impossible, since Supabase
+         * documents it as required, and would mean the claim has gone away and
+         * every customer is about to be judged on the old per-user rule.
+         *
+         * ⚠️ NOT `user.lastSessionId !== null`, WHICH IS A DIFFERENT QUESTION.
+         * That says what we have stored; this says what arrived.
+         */
+        replayedKnownSession: sessionId !== null,
+      },
       "session ended: idle longer than the two-day limit",
     );
     return new SessionIdleTimeoutException();

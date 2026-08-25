@@ -169,8 +169,11 @@ describe("GET /users/me", () => {
     const DAY_MS = 24 * 60 * 60 * 1000;
 
     /** Signs somebody in, then rewrites when they were last seen. */
-    const userLastSeen = async (email: string, lastSeenAt: Date | null): Promise<string> => {
-      const sub = randomUUID();
+    const userLastSeen = async (
+      email: string,
+      lastSeenAt: Date | null,
+      sub: string = randomUUID(),
+    ): Promise<string> => {
       const token = await signToken({ sub, email });
       await request(app.getHttpServer())
         .get("/users/me")
@@ -218,6 +221,151 @@ describe("GET /users/me", () => {
 
       expect(response.body.code).toBe("session_idle_timeout");
       expect(response.body.message).toMatch(/idle for two days/i);
+    });
+
+    /**
+     * 🚨 THE TEST THIS SUITE NEVER HAD — AND THE DEFECT THAT COST A CUSTOMER
+     * THEIR ACCOUNT FOR GOOD.
+     *
+     * Every test around this one proves the door LOCKS. Not one proved there was
+     * a key. `admitReturningUser` threw on idle BEFORE the only line in the whole
+     * API that writes `last_seen_at`, and that stamp is the only thing the idle
+     * check reads — so once it went stale nothing could ever refresh it again,
+     * signing in included. The customer's loop was: sign in, 401, get signed out,
+     * sign in, 401, with no way out from inside the product. Two days away from
+     * Eva — a weekend and a bank holiday — was enough (handoff §9f, measured on
+     * production 2026-08-25).
+     *
+     * ⚠️ THE SECOND SIGN-IN CARRIES A NEW SESSION ID, AND THAT IS THE WHOLE
+     * POINT. Signing in again opens a new Supabase session, which is how the
+     * server can tell a returning customer from a thief replaying the stolen
+     * one — the thief keeps the OLD id and stays refused, which is what the test
+     * above holds down. Ruling 37.
+     */
+    it("lets somebody who was refused sign in again, so the lock has a key", async () => {
+      const sub = randomUUID();
+      const email = "locked.out@test.eva.local";
+      const staleToken = await userLastSeen(email, new Date(Date.now() - 3 * DAY_MS), sub);
+
+      await request(app.getHttpServer())
+        .get("/users/me")
+        .set("Authorization", `Bearer ${staleToken}`)
+        .expect(401);
+
+      // A genuine new sign-in: the same person and the same row, on a session
+      // Supabase has never issued before.
+      const freshToken = await signToken({ sub, email, sessionId: randomUUID() });
+
+      await request(app.getHttpServer())
+        .get("/users/me")
+        .set("Authorization", `Bearer ${freshToken}`)
+        .expect(200);
+
+      /**
+       * ⚠️ AND THE CLOCK MUST ACTUALLY RESTART. Admitting them without stamping
+       * would pass the line above and leave the row exactly as stale as it was —
+       * so every later request would look like another brand-new sign-in and the
+       * two-day rule would quietly never fire again for anybody.
+       */
+      const stored = await owner.user.findUniqueOrThrow({ where: { authUserId: sub } });
+      expect(Date.now() - (stored.lastSeenAt?.getTime() ?? 0)).toBeLessThan(60_000);
+    });
+
+    /**
+     * ⚠️ THE NEW SESSION HAS TO BE WRITTEN DOWN THE MOMENT IT ARRIVES, EVEN
+     * WHEN THE STAMP IS TOO FRESH TO NEED REWRITING.
+     *
+     * The throttle exists so an active dashboard does not write five times a
+     * screen, and it decides on the CLOCK — which knows nothing about sessions.
+     * Sign in again within five minutes of your last click and the throttle says
+     * "nothing to do", so the new session is never recorded and the row goes on
+     * naming the old one. Everything still looks fine, and it is not: from then
+     * on the live session no longer matches the stored one, so when this person
+     * does go quiet for two days their return is read as a brand-new sign-in and
+     * waved through. The rule stops applying to them, silently and for good.
+     *
+     * Found by deliberately removing the guard on 2026-08-25 and watching every
+     * test stay green.
+     */
+    it("records the new session even when the stamp is too fresh to rewrite", async () => {
+      const sub = randomUUID();
+      const email = "quick.reconnect@test.eva.local";
+      // Signed in a moment ago on one session — the throttle will decline.
+      await userLastSeen(email, new Date(), sub);
+
+      // They sign in again straight away: a second session, minutes later.
+      const second = await signToken({ sub, email, sessionId: randomUUID() });
+      await request(app.getHttpServer())
+        .get("/users/me")
+        .set("Authorization", `Bearer ${second}`)
+        .expect(200);
+
+      // Now they walk away for three days and come back on that same session.
+      await owner.user.update({
+        where: { authUserId: sub },
+        data: { lastSeenAt: new Date(Date.now() - 3 * DAY_MS) },
+      });
+
+      const response = await request(app.getHttpServer())
+        .get("/users/me")
+        .set("Authorization", `Bearer ${second}`)
+        .expect(401);
+
+      expect(response.body.code).toBe("session_idle_timeout");
+    });
+
+    /**
+     * ⚠️ THE CASE THAT WOULD KILL THE RULE OUTRIGHT IF WE KEYED ON THE TOKEN.
+     * A tab left open over a long weekend does not sit still: Supabase quietly
+     * refreshes the access token about every hour, so the JWT arriving on the
+     * first request back is one this server has never seen before. It belongs to
+     * the SAME session though, and that session has been idle for three days —
+     * so it must still be refused. Key this on the token and the rule would
+     * never fire for anybody who left a tab open, which is most people.
+     */
+    it("still refuses an idle session when its token has been refreshed", async () => {
+      const sub = randomUUID();
+      const email = "refreshed@test.eva.local";
+      await userLastSeen(email, new Date(Date.now() - 3 * DAY_MS), sub);
+
+      // A refresh: a brand-new token, same person, same Supabase session.
+      const refreshedToken = await signToken({ sub, email });
+
+      const response = await request(app.getHttpServer())
+        .get("/users/me")
+        .set("Authorization", `Bearer ${refreshedToken}`)
+        .expect(401);
+
+      expect(response.body.code).toBe("session_idle_timeout");
+    });
+
+    /**
+     * ⚠️ A MISSING CLAIM MUST NOT BECOME A WAY ROUND THE RULE. Supabase lists
+     * `session_id` as required, so a token without one should not exist — but if
+     * one ever arrives, the safe reading is "I cannot tell which session this
+     * is", not "this must be a new one". Stamping NULL over the id we hold would
+     * be worse still: it would make the NEXT ordinary request look like a fresh
+     * sign-in and hand it the one-time amnesty, so a token that omits a claim
+     * would unlock the account on the request after it.
+     */
+    it("does not forget which session it knows when a token omits the claim", async () => {
+      const sub = randomUUID();
+      const email = "no.session.claim@test.eva.local";
+      // Well inside the two days, so the request is admitted and reaches the
+      // write — but past the throttle, so it genuinely does write.
+      await userLastSeen(email, new Date(Date.now() - 30 * 60 * 1000), sub);
+      const before = await owner.user.findUniqueOrThrow({ where: { authUserId: sub } });
+      expect(before.lastSessionId).not.toBeNull();
+
+      const claimless = await signToken({ sub, email, sessionId: null });
+      await request(app.getHttpServer())
+        .get("/users/me")
+        .set("Authorization", `Bearer ${claimless}`)
+        .expect(200);
+
+      const after = await owner.user.findUniqueOrThrow({ where: { authUserId: sub } });
+      expect(after.lastSessionId).toBe(before.lastSessionId);
+      expect(after.lastSeenAt?.getTime()).toBeGreaterThan(before.lastSeenAt?.getTime() ?? 0);
     });
 
     /**

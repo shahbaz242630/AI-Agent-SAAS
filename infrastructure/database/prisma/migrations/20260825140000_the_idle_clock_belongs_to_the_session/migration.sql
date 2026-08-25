@@ -1,0 +1,32 @@
+-- Ruling 37 (founder, 2026-08-25): the idle clock belongs to the SESSION, not
+-- to the user.
+--
+-- WHAT THIS FIXES. `users.last_seen_at` is the only thing the two-day idle
+-- check reads, and the check threw BEFORE the one line in the API that
+-- refreshes it. So once a stamp went stale nothing could ever move it again —
+-- signing in included, because signing in resolves the same row down the same
+-- path. Any customer who did not open Eva for two days was locked out of their
+-- own account permanently, with no way out from inside the product. Measured on
+-- production 2026-08-25 against the founder's own row, 62.5 hours stale.
+--
+-- WHAT THE COLUMN IS. The Supabase session (`session_id` in the access token)
+-- that last spoke to us. A DIFFERENT id is a genuine new sign-in — Supabase
+-- opens a fresh row in its own `sessions` table for one, and a token refresh
+-- keeps the old id — so a new id is admitted and the clock restarts. A thief
+-- replaying the stolen session keeps the OLD id and stays refused, which is the
+-- entire reason the rule exists.
+--
+-- ⚠️ TEXT, NOT UUID, ON PURPOSE. The value is a claim minted by somebody else's
+-- system. Supabase issues uuids today and a uuid column would hold them today,
+-- but the cost of being wrong is a type error thrown on the sign-in path — a
+-- 500 for every affected customer, which is the exact blast radius this
+-- migration exists to shrink. Nothing joins on it and nothing orders by it.
+--
+-- ⚠️ NULLABLE, NO BACKFILL, AND THE APPLICATION READS NULL AS "NOT THIS
+-- SESSION". Every existing row gets NULL, so the first request after this ships
+-- looks like a new session and is admitted. That is deliberate on two counts:
+-- it is the same one-time amnesty `last_seen_at` itself shipped with
+-- (migration 0023), and it is precisely what lets the customers this defect has
+-- ALREADY locked out back into their accounts. Inventing a session id to
+-- backfill would assert something we do not know.
+ALTER TABLE "users" ADD COLUMN "last_session_id" TEXT;
