@@ -26,6 +26,48 @@ afterAll(async () => {
 });
 
 describe("withTenant — app-layer tenant context (BRD 15)", () => {
+  /**
+   * ⚠️ THE CONTRACT IS BOTH GUCS, AND NOTHING WAS CHECKING THE SECOND ONE.
+   * Found on 2026-08-25 while merging the two `set_config` calls into one
+   * statement to save a round trip: deleting the `app.current_user` half
+   * entirely left all 186 database tests green. It is nearly invisible today
+   * because the `users` and `organisation_memberships` policies both fall back
+   * to an organisation branch for READS — but `users` needs it to permit a
+   * self-write, `user_sessions` (migration 0033) keys on it with **no** fallback
+   * at all, and every policy written from here on will assume this helper
+   * declares what it says it declares.
+   *
+   * ⚠️ IT ALSO PINS `SET LOCAL`. `is_local = true` is what keeps a tenant's
+   * context inside its transaction; without it a pooled connection carries one
+   * customer's identity into the next customer's request. That is a cross-tenant
+   * leak, not a performance detail, so the third argument is asserted too.
+   */
+  it("declares BOTH the organisation and the user, and only for this transaction", async () => {
+    const organisationId = DEMO_ORGANISATION_ID;
+    const userId = DEMO_USER_ID;
+
+    const inside = (await withTenant(
+      app,
+      { organisationId, userId },
+      (tx) =>
+        tx.$queryRaw`SELECT current_setting('app.current_org', true) AS org,
+                          current_setting('app.current_user', true) AS usr`,
+    )) as { org: string | null; usr: string | null }[];
+
+    expect(inside[0].org).toBe(organisationId);
+    expect(inside[0].usr).toBe(userId);
+
+    // And gone again once the transaction ended — SET LOCAL, not SET.
+    const after = (await app.$queryRaw`
+      SELECT current_setting('app.current_org', true) AS org,
+             current_setting('app.current_user', true) AS usr`) as {
+      org: string | null;
+      usr: string | null;
+    }[];
+    expect(after[0].org ?? "").toBe("");
+    expect(after[0].usr ?? "").toBe("");
+  });
+
   it("forwards transaction options (e.g. timeout) to $transaction", async () => {
     // The 1.5 step-edit recompute needs >5s at cloud latency (staging 500,
     // 2026-07-27) — withTenant must pass options through to Prisma.
