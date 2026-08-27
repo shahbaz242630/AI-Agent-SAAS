@@ -111,7 +111,19 @@ export interface BookRow {
   lastChasedOn: string | null;
   nextChaseOn: string | null;
   customer: { id: string; name: string; reference: string | null };
+  /** The named person, or null — what "Edit contact details" edits. */
   contact: { id: string; name: string; email: string | null; phone: string | null } | null;
+  /**
+   * 🚨 WHO EVA WILL ACTUALLY WRITE TO. Not the same as `contact` since
+   * 2026-08-27 — she falls back to the client's own address — and the two
+   * columns below must show THIS, not the contact.
+   *
+   * Found by walking production: an invoice imported with a client address and
+   * no contact printed "—" under Email while Eva was happily chasing it, and a
+   * blank there reads as "no address", which is the state that means it CANNOT
+   * be chased.
+   */
+  recipient: { email: string; phone: string | null; via: "contact" | "customer" } | null;
 }
 
 /**
@@ -282,11 +294,14 @@ export function BookRows({
                   {row.customer.name}
                 </Link>
               </td>
+              {/* ⚠️ `recipient`, NOT `contact` — see the type above. A blank
+                  here means Eva has nobody to write to, and it must not appear
+                  beside an invoice she is chasing through the client. */}
               <td className="px-3 py-3.5 text-sm text-muted-foreground">
-                {row.contact?.email ?? <MissingValue />}
+                {row.recipient?.email ?? <MissingValue />}
               </td>
               <td className="px-3 py-3.5 text-sm whitespace-nowrap text-muted-foreground">
-                {row.contact?.phone ?? <MissingValue />}
+                {row.recipient?.phone ?? <MissingValue />}
               </td>
               {/* An invoice number is an identifier and must never break across
                   lines: "INV-" over "2041" is unreadable and unsearchable. */}

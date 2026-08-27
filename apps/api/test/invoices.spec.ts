@@ -1473,6 +1473,8 @@ describe("Invoices: the organisation-wide book", () => {
     // No contact on these fixtures, so it is null rather than absent — the
     // screen shows "nobody to email", which is a real state.
     expect(row.contact).toBeNull();
+    // And with no client address either, there is genuinely nobody to write to.
+    expect(row.recipient).toBeNull();
     expect(row.chaseBlockedReason).toBe("no_contact");
   });
 
@@ -2693,5 +2695,156 @@ describe("Invoices: chaseBlockedReason (does Eva actually chase this?)", () => {
       new Set(list.body.map((row: { chaseBlockedReason: string | null }) => row.chaseBlockedReason))
         .size,
     ).toBeGreaterThan(1);
+  });
+});
+
+/**
+ * 🚨 WHAT THE BOOK PRINTS, WHICH IS NOT THE SAME QUESTION AS WHAT EVA DOES.
+ *
+ * Found by walking production, 2026-08-27, minutes after the client-email
+ * fallback shipped. An invoice imported from a spreadsheet carrying a client
+ * address and no contact appeared in the book with "—" under Email and Phone
+ * while Eva was perfectly willing to chase it. A blank in that column reads as
+ * "there is no address" — exactly the state that means the invoice CANNOT be
+ * chased. The screen was contradicting the sender: the same class of defect the
+ * fallback had just shipped to remove, one layer further out.
+ *
+ * ⚠️ WHY NOTHING CAUGHT IT. Every test written for the fallback asserted on
+ * `chaseBlockedReason` — the FACT — and none on what the table PRINTS. A row
+ * can be perfectly chaseable and still be displayed as unchaseable, and only a
+ * test that reads the row's own published fields can tell the difference.
+ *
+ * ⚠️ ITS OWN ORGANISATION, AND THAT IS NOT TIDINESS. These tests were written
+ * inside the book's shared describe first, and the two invoices they create
+ * changed the currency totals that eight money tests assert on — all eight went
+ * red. A fixture that adds money to a book is never local to its own test.
+ */
+describe("Invoices: the book shows who Eva will write to", () => {
+  let app: INestApplication;
+  let owner: EvaPrismaClient;
+  let org: FixtureOrg;
+  let token: string;
+  let actorId: string;
+
+  const book = (query = "") =>
+    request(app.getHttpServer())
+      .get(`/organisations/${org.id}/invoices${query}`)
+      .set("Authorization", `Bearer ${token}`);
+
+  beforeAll(async () => {
+    owner = createOwnerClient();
+    await seedTestDatabase(owner);
+    app = await createTestApp();
+    org = await createOrgWithMembers(owner, "book-recipient", ["owner"]);
+    const member = org.members[0]!;
+    actorId = member.id;
+    token = await signToken({ sub: member.authUserId, email: member.email });
+    /* A healthy mailbox, so `no_mailbox` — an ORGANISATION-level blocker — can
+       never fire and mask the per-invoice answer these tests are about. */
+    await owner.emailAccount.create({
+      data: {
+        organisationId: org.id,
+        provider: "microsoft",
+        emailAddress: `book-${randomUUID().slice(0, 8)}@example.com`,
+        isPrimary: true,
+      },
+    });
+  });
+
+  afterAll(async () => {
+    await app.close();
+    await owner.$disconnect();
+  });
+
+  async function invoiceFor(client: { id: string }, contactId?: string): Promise<string> {
+    const number = `BKR-${randomUUID().slice(0, 8)}`;
+    await owner.invoice.create({
+      data: {
+        id: randomUUID(),
+        organisationId: org.id,
+        customerId: client.id,
+        ...(contactId ? { contactId } : {}),
+        invoiceNumber: number,
+        amountMinorUnits: 25000n,
+        currency: "GBP",
+        issueDate: new Date("2026-08-01T00:00:00Z"),
+        dueDate: new Date("2026-08-31T00:00:00Z"),
+        status: "active",
+        createdBy: actorId,
+      },
+    });
+    return number;
+  }
+
+  it("prints the address Eva will use, even when it is the client's own", async () => {
+    const client = await owner.customer.create({
+      data: {
+        id: randomUUID(),
+        organisationId: org.id,
+        name: "Sole Trader Ltd",
+        email: "owner@soletrader.example",
+        phone: "07700 900321",
+        createdBy: actorId,
+      },
+    });
+    const number = await invoiceFor(client);
+
+    const row = (await book(`?search=${number}`).expect(200)).body.rows[0];
+    expect(row.contact, "there is no contact — that is the point").toBeNull();
+    expect(row.recipient, "the book prints a blank beside a chased invoice").not.toBeNull();
+    expect(row.recipient.email).toBe("owner@soletrader.example");
+    expect(row.recipient.phone).toBe("07700 900321");
+    expect(row.recipient.via).toBe("customer");
+    // And it really is chaseable, which is what made the blank a lie.
+    expect(row.chaseBlockedReason).toBeNull();
+  });
+
+  it("prefers a named contact's own details when there is one", async () => {
+    const client = await owner.customer.create({
+      data: {
+        id: randomUUID(),
+        organisationId: org.id,
+        name: "Bigger Client Ltd",
+        email: "reception@bigger.example",
+        phone: "01632 960111",
+        createdBy: actorId,
+      },
+    });
+    const contact = await owner.contact.create({
+      data: {
+        id: randomUUID(),
+        organisationId: org.id,
+        customerId: client.id,
+        name: "Dana in Accounts",
+        email: "dana@bigger.example",
+        phone: "07700 900999",
+        createdBy: actorId,
+      },
+    });
+    const number = await invoiceFor(client, contact.id);
+
+    const row = (await book(`?search=${number}`).expect(200)).body.rows[0];
+    expect(row.recipient.email).toBe("dana@bigger.example");
+    expect(row.recipient.phone, "it showed the client's number for a named contact").toBe(
+      "07700 900999",
+    );
+    expect(row.recipient.via).toBe("contact");
+  });
+
+  /** Nobody anywhere has an address — the blank is then the honest answer. */
+  it("prints nothing when there is genuinely nobody to write to", async () => {
+    const client = await owner.customer.create({
+      data: {
+        id: randomUUID(),
+        organisationId: org.id,
+        name: "Unreachable Ltd",
+        createdBy: actorId,
+      },
+    });
+    const number = await invoiceFor(client);
+
+    const row = (await book(`?search=${number}`).expect(200)).body.rows[0];
+    expect(row.recipient).toBeNull();
+    expect(row.chaseBlockedReason).toBe("no_contact");
   });
 });

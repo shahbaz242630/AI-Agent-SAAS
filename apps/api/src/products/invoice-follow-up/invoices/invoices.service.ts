@@ -139,7 +139,7 @@ type InvoiceRow = {
    * somebody "nobody is set to receive reminders" about an invoice the
    * scheduler is happily chasing.
    */
-  customer?: { id: string; email: string | null } | null;
+  customer?: { id: string; email: string | null; phone?: string | null } | null;
 };
 
 /**
@@ -154,8 +154,37 @@ const WITH_CONTACT = {
   contact: { select: { id: true, name: true, email: true, phone: true, deletedAt: true } },
   /* The fallback recipient — see `reminder-recipient.ts`. Selected here so the
      blockers still cost no extra round trip now that they need both levels. */
-  customer: { select: { id: true, email: true } },
+  customer: { select: { id: true, email: true, phone: true } },
 } as const;
+
+/**
+ * The address the book must print, and whose it is.
+ *
+ * ⚠️ IT ASKS `resolveRecipient` RATHER THAN REPEATING ITS RULES. A second copy
+ * of "contact first, then the client" living in a screen's data layer is
+ * exactly the drift that produced this defect — the sender was updated and the
+ * book was not. The phone comes from whichever party answered, so the two
+ * columns always describe one person rather than two halves of different ones.
+ */
+function bookRecipient(row: {
+  contact?: {
+    id: string;
+    name: string;
+    deletedAt: Date | null;
+    email: string | null;
+    phone?: string | null;
+  } | null;
+  customer?: { id: string; email: string | null; phone?: string | null } | null;
+}): { email: string; phone: string | null; via: "contact" | "customer" } | null {
+  const resolved = resolveRecipient({
+    contact: row.contact ?? null,
+    customer: row.customer ?? null,
+  });
+  if (resolved === null) return null;
+  const phone =
+    resolved.via === "contact" ? (row.contact?.phone ?? null) : (row.customer?.phone ?? null);
+  return { email: resolved.email, phone, via: resolved.via };
+}
 
 /** Ageing by due date — `DATA-MODEL-REVIEW.md` §4's buckets, derived, never stored. */
 export type AgeingBucket = "current" | "days_1_15" | "days_16_30" | "days_31_45" | "days_over_45";
@@ -170,8 +199,40 @@ export type AgeingBucket = "current" | "days_1_15" | "days_16_30" | "days_31_45"
  */
 export interface InvoiceBookRow extends InvoiceSummary {
   customer: { id: string; name: string; reference: string | null };
-  /** The reminder recipient — the address Eva actually writes to, or null. */
+  /**
+   * The named person on this invoice, or null — the thing "Edit contact
+   * details" edits.
+   *
+   * ⚠️ ITS DOC COMMENT USED TO SAY "the reminder recipient — the address Eva
+   * actually writes to". That was true until 2026-08-27 and is now the job of
+   * `recipient` below. A contact and a recipient were the same thing for as
+   * long as Eva could only write to a contact; they are not any more, and
+   * leaving one field describing itself as both is how the book came to print
+   * a blank beside an invoice it was happily chasing.
+   */
   contact: { id: string; name: string; email: string | null; phone: string | null } | null;
+  /**
+   * 🚨 WHO EVA WILL ACTUALLY WRITE TO — the answer `reminder-recipient.ts`
+   * gives, which is what this screen has to show.
+   *
+   * Found by walking production, 2026-08-27, minutes after the client-email
+   * fallback shipped: an invoice imported from a spreadsheet with a client
+   * address and no contact showed "—" in the Email column while Eva was
+   * perfectly willing to chase it. A blank in that column reads as "there is no
+   * address", which is precisely the state that means CANNOT be chased — so the
+   * one screen a credit controller works from was contradicting the sender.
+   * The same class of defect the fallback shipped to remove, one layer out,
+   * missed because the tests asserted on `chaseBlockedReason` and nothing
+   * asserted on what the table prints.
+   *
+   * `via` is published so the screen can say WHOSE address it is showing
+   * without the reader having to infer it from a blank somewhere else.
+   */
+  recipient: {
+    email: string;
+    phone: string | null;
+    via: "contact" | "customer";
+  } | null;
   /**
    * The org-local day of the most recent reminder actually SENT, or null.
    *
@@ -520,7 +581,9 @@ export class InvoicesService {
              * reminders" on the one screen a credit controller actually works
              * from, while the scheduler chased them perfectly happily.
              */
-            customer: { select: { id: true, name: true, reference: true, email: true } },
+            customer: {
+              select: { id: true, name: true, reference: true, email: true, phone: true },
+            },
           },
           take,
           skip,
@@ -554,6 +617,7 @@ export class InvoicesService {
                   phone: row.contact.phone,
                 }
               : null,
+            recipient: bookRecipient(row),
             lastChasedOn: dates?.lastChasedOn ?? null,
             nextChaseOn: dates?.nextChaseOn ?? null,
             ageingBucket: ageingBucketFor(row.dueDate, today),
