@@ -55,6 +55,41 @@ export const FIELD_LABELS: Readonly<Record<string, string>> = {
   contactPhone: "Contact phone",
 };
 
+/**
+ * 🚨 UNDERSTOOD BUT NOT ADVERTISED — the founder's "no need to duplicate".
+ *
+ * Founder, 2026-08-27, reading the chip list: *"why do we have contact email
+ * and client email twice? same for client phone, contact phone? no need to
+ * duplicate"*. He was right, and the reason was worse than repetition: the
+ * CLIENT's address was read by nothing at all, so of the two that looked alike,
+ * the one a small business would naturally fill in did nothing.
+ *
+ * Eva now falls back to the client's own address (`reminder-recipient.ts`), so
+ * the client column is the one that works for everybody and the contact column
+ * is the specialisation — worth having for a bigger client with a named person
+ * in accounts, not worth putting on a list headed "columns Eva understands"
+ * beside its twin.
+ *
+ * ⚠️ STILL READ, JUST NOT ADVERTISED. A file already using these headings keeps
+ * importing exactly as before — `import-messages.spec.ts` asserts that, because
+ * "we stopped mentioning it" and "we stopped supporting it" are very different
+ * promises to have broken.
+ */
+const UNDERSTOOD_BUT_NOT_ADVERTISED: readonly string[] = ["contactEmail", "contactPhone"];
+
+/**
+ * The columns the upload screen offers as advice, in canonical order.
+ *
+ * ⚠️ DERIVED, SO IT CANNOT DRIFT — with ONE named exception above rather than a
+ * hand-kept list. The screen used to type the field names out a third time,
+ * pinned by nothing, which is how "Client email" came to be advertised as a
+ * heading the matcher had never heard of (found by uploading a file,
+ * 2026-08-18).
+ */
+export const ADVERTISED_IMPORT_FIELDS: readonly string[] = Object.keys(FIELD_LABELS).filter(
+  (field) => !UNDERSTOOD_BUT_NOT_ADVERTISED.includes(field),
+);
+
 export function importFieldLabel(field: string): string {
   return FIELD_LABELS[field] ?? field;
 }

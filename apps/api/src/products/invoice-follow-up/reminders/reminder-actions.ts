@@ -5,6 +5,7 @@ import { writeAuditLog } from "../../../platform/audit/audit-log.js";
 import { isSuppressed } from "../../../platform/suppression/suppression.js";
 import { todayInTimezone } from "../invoices/invoice-status.js";
 import { checkReminderEligibility, type IneligibilityReason } from "./reminder-eligibility.js";
+import { resolveRecipient } from "./reminder-recipient.js";
 import {
   applyContactSpacing,
   computeInvoiceSchedule,
@@ -75,27 +76,45 @@ export async function scheduleInvoiceReminders(
 ): Promise<{ scheduled: number; skipped: IneligibilityReason | null }> {
   const invoice = await tx.invoice.findFirst({
     where: { id: input.invoiceId, deletedAt: null },
-    include: { contact: true },
+    /* The CLIENT too, since 2026-08-27 — it is the fallback recipient when
+       there is no usable contact (`reminder-recipient.ts`). */
+    include: { contact: true, customer: { select: { id: true, email: true } } },
   });
   if (!invoice) throw new NotFoundException("Invoice not found");
 
-  const contact = invoice.contact;
-  const suppressed = contact?.email
-    ? await isSuppressed(tx, input.organisationId, "email", contact.email)
+  const parties = { contact: invoice.contact, customer: invoice.customer };
+  /**
+   * ⚠️ SUPPRESSION IS CHECKED AGAINST THE ADDRESS EVA WILL USE, which is not
+   * always the contact's. Asking about `contact.email` on a client-fallback
+   * invoice asks about an address nobody is going to be written to, and answers
+   * "not suppressed" — so a client who had asked never to be emailed again
+   * would have been scheduled a full sequence.
+   */
+  const recipient = resolveRecipient(parties);
+  const suppressed = recipient
+    ? await isSuppressed(tx, input.organisationId, "email", recipient.email)
     : false;
   const eligibility = checkReminderEligibility({
     invoiceStatus: invoice.status,
-    contact,
+    ...parties,
     suppressed,
   });
   if (!eligibility.eligible) return { scheduled: 0, skipped: eligibility.reason };
 
-  // Serialises concurrent scheduling for the same contact (transaction-scoped
-  // advisory lock keyed on the contact) so the BRD 4.1 3-day spacing invariant
-  // holds when two invoices for one contact are scheduled at once — the second
-  // transaction reads the first's committed occupied dates (whole-branch
-  // review finding).
-  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${contact!.id}))`;
+  /**
+   * Serialises concurrent scheduling for the same RECIPIENT (transaction-scoped
+   * advisory lock) so the BRD 4.1 3-day spacing invariant holds when two
+   * invoices for one person are scheduled at once — the second transaction
+   * reads the first's committed occupied dates (whole-branch review finding).
+   *
+   * 🚨 KEYED ON `spacingKey`, NOT `contact.id`, SINCE THE CLIENT FALLBACK
+   * LANDED. There is no contact id on that path at all. Left as it was, this
+   * line would have locked on `undefined` for exactly the invoices the fallback
+   * made chaseable — so the spacing rule would have quietly stopped holding for
+   * the customers this change was written to serve, and a client with four
+   * overdue invoices could have been sent four emails on one morning.
+   */
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${recipient!.spacingKey}))`;
 
   const sequence = await ensureDefaultSequence(tx, input.organisationId);
   const steps: ScheduleStep[] = sequence.steps.map((step) => ({
@@ -113,25 +132,39 @@ export async function scheduleInvoiceReminders(
     today,
   });
 
-  // BRD 4.1: minimum 3 days between reminders to the same CONTACT — dates
-  // already occupied by this contact's other invoices (pending/ready only,
-  // excluding the rows this call replaces) push candidates forward. Only
-  // contact-facing (email) rows occupy dates (founder ruling 2026-07-27 —
-  // internal escalations neither defer nor block).
-  const occupied =
-    contact === null
-      ? []
-      : (
-          await tx.scheduledAction.findMany({
-            where: {
-              status: { in: ["pending", "ready"] },
-              actionType: "email",
-              invoiceId: { not: invoice.id },
-              invoice: { contactId: contact.id },
-            },
-            select: { scheduledDate: true },
-          })
-        ).map((row) => row.scheduledDate);
+  /**
+   * BRD 4.1: minimum 3 days between reminders to the same RECIPIENT — dates
+   * already occupied by their other invoices (pending/ready only, excluding the
+   * rows this call replaces) push candidates forward. Only recipient-facing
+   * (email) rows occupy dates (founder ruling 2026-07-27 — internal escalations
+   * neither defer nor block).
+   *
+   * ⚠️ THE CLIENT-FALLBACK ARM IS DELIBERATELY BROADER THAN IT NEEDS TO BE. It
+   * counts every live email slot for that CLIENT, including ones addressed to a
+   * named contact who is not this recipient. Expressing "the client's other
+   * invoices that ALSO fall back" in SQL means reproducing the resolver's rules
+   * in a `where` clause, and a second copy of those rules is exactly the drift
+   * this refactor removed.
+   *
+   * The error is one-directional and the safe direction: over-counting DEFERS a
+   * reminder by a few days, under-counting SENDS two in a morning. Spacing is a
+   * politeness rule about not hounding people, so being slightly too polite
+   * costs nothing a customer would complain about.
+   */
+  const occupied = (
+    await tx.scheduledAction.findMany({
+      where: {
+        status: { in: ["pending", "ready"] },
+        actionType: "email",
+        invoiceId: { not: invoice.id },
+        invoice:
+          recipient!.via === "contact"
+            ? { contactId: invoice.contact!.id }
+            : { customerId: invoice.customerId },
+      },
+      select: { scheduledDate: true },
+    })
+  ).map((row) => row.scheduledDate);
   const spaced = applyContactSpacing(candidates, occupied, { invoiceId: invoice.id, today });
   if (spaced.length === 0) return { scheduled: 0, skipped: null };
 

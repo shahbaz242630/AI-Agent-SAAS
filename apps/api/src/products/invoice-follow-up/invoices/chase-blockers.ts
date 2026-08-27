@@ -24,8 +24,18 @@ export type ChaseBlockedReason =
   /** The organisation has no live, healthy mailbox — nothing can send at all. */
   | "no_mailbox";
 
+/**
+ * ⚠️ IT TAKES THE CLIENT NOW, AND A CALLER THAT PASSES `customer: null` IS
+ * ASKING A DIFFERENT QUESTION THAN IT THINKS. Since 2026-08-27 Eva falls back
+ * to the client's own address when there is no usable contact
+ * (`reminder-recipient.ts`), so a screen that omits the client would print
+ * "nobody is set to receive reminders" beside invoices the scheduler is
+ * perfectly happy to chase — the screen contradicting the sender, which is the
+ * exact defect this file was created to remove.
+ */
 export function resolveChaseBlockedReason(input: {
-  contact: { deletedAt: Date | null; email: string | null } | null;
+  contact: { id: string; name: string; deletedAt: Date | null; email: string | null } | null;
+  customer: { id: string; email: string | null } | null;
   suppressed: boolean;
   organisationHasHealthyMailbox: boolean;
 }): ChaseBlockedReason | null {
@@ -48,6 +58,7 @@ export function resolveChaseBlockedReason(input: {
   const eligibility = checkReminderEligibility({
     invoiceStatus: "active",
     contact: input.contact,
+    customer: input.customer,
     suppressed: input.suppressed,
   });
   if (!eligibility.eligible) {
