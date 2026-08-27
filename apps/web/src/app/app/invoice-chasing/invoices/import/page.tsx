@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { moduleHref } from "@eva/types";
+import { IMPORT_CANONICAL_FIELDS } from "@eva/validation";
 import { ApiError, apiFetch } from "@/lib/api";
 import { fetchOrganisations } from "@/lib/organisations";
 import { importFieldLabel } from "@/products/invoice-follow-up/import-messages";
@@ -25,19 +26,19 @@ const BOOK = moduleHref("email_credit_controller", "invoices");
  * a confirm. This page is the front of that.
  */
 
-/** What the importer can read, so nobody has to guess at their headings. */
-const UNDERSTOOD_FIELDS = [
-  "invoiceNumber",
-  "amount",
-  "currency",
-  "issueDate",
-  "dueDate",
-  "customerName",
-  "customerEmail",
-  "customerReference",
-  "contactName",
-  "contactEmail",
-];
+/**
+ * What the importer can read, so nobody has to guess at their headings.
+ *
+ * 🚨 DERIVED, NOT TYPED OUT — IT WAS A THIRD HAND-KEPT COPY OF ONE LIST. The
+ * matcher's aliases live in `@eva/validation`, the wording lives in
+ * `FIELD_LABELS`, and this array used to name the fields a third time with
+ * nothing holding it to either. That is the same drift that shipped "Client
+ * email" as advice the matcher had never heard of (found by uploading a file,
+ * 2026-08-18); `import-messages.spec.ts` closed the gap between the other two
+ * and left this one open. Adding `customerPhone` on 2026-08-27 would have
+ * needed a fourth edit nothing would have failed for.
+ */
+const UNDERSTOOD_FIELDS: readonly string[] = IMPORT_CANONICAL_FIELDS;
 
 interface OrganisationSummary {
   id: string;
@@ -171,14 +172,22 @@ export default async function ImportInvoicesPage() {
           ))}
         </ul>
         {/*
-          ⚠️ SAID OUT LOUD RATHER THAN DISCOVERED. Phone is not one of the
-          importable columns, and the founder wants phone numbers for the
-          calling agent — so somebody uploading a spreadsheet WITH a phone
-          column would otherwise assume it came across. It did not.
+          ⚠️ THIS PARAGRAPH USED TO SAY THE OPPOSITE, AND DELETING IT WAS PART
+          OF THE WORK. It read *"Phone numbers cannot be imported yet — a phone
+          column in your file will be ignored"*, which was honest on the day it
+          was written and became a false sentence the moment `customerPhone`
+          joined the canonical fields. Copy has no assertions unless somebody
+          writes them; a feature that contradicts a screen is the defect family
+          this project keeps finding by reading, not by testing.
+
+          ⚠️ WHAT REPLACES IT IS ABOUT THE AMOUNT, because that is the column a
+          person can get wrong in a way nothing will catch. Both figures import
+          without complaint — one of them chases money that has already been
+          paid.
         */}
         <p className="text-xs text-muted-foreground">
-          Phone numbers cannot be imported yet — a phone column in your file will be ignored, and
-          you can add numbers to a client afterwards.
+          If your file has both a total and a balance still owed, give Eva the balance — she chases
+          what is outstanding, and she will pick the outstanding column when both are there.
         </p>
       </section>
     </Shell>

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { autoMapHeaders } from "@eva/validation";
+import { autoMapHeaders, IMPORT_CANONICAL_FIELDS } from "@eva/validation";
 import {
   FIELD_LABELS,
   importConfirmLabel,
@@ -214,6 +214,107 @@ describe("every column the upload screen advertises", () => {
       Due: "dueDate",
       Company: "customerName",
       Attn: "contactName",
+    });
+  });
+
+  /**
+   * 🚨 THE CHIPS ARE THE ADVICE, AND A FIELD WITHOUT A LABEL PRINTS ITS OWN
+   * VARIABLE NAME. `UNDERSTOOD_FIELDS` on the upload screen is now
+   * `IMPORT_CANONICAL_FIELDS` itself, so a field added to the matcher appears
+   * on screen the same day — as "customerPhone" rather than "Client phone"
+   * unless somebody also adds the wording. The test above proves every LABEL
+   * is understood; this one proves every UNDERSTOOD FIELD has a label, which
+   * is the other direction and was the hole the 2026-08-18 defect fell through.
+   */
+  it("has a human wording for every field the importer understands", () => {
+    for (const field of IMPORT_CANONICAL_FIELDS) {
+      expect(FIELD_LABELS[field], `${field} would print as its own variable name`).toBeDefined();
+      expect(importFieldLabel(field)).not.toBe(field);
+    }
+  });
+});
+
+/**
+ * 🚨 THE MONEY BUG THIS WHOLE CHANGE EXISTS TO PREVENT.
+ *
+ * Founder, 2026-08-27: Eva needs the amount OUTSTANDING. Real exports carry
+ * the invoice total and the balance still owed side by side, and the matcher
+ * used to take whichever column came first. On a part-paid invoice the total
+ * is bigger than the debt — so Eva would chase a customer's customer for money
+ * they had already sent, from that customer's own mailbox, over their name.
+ *
+ * ⚠️ ASSERTED IN BOTH COLUMN ORDERS. Testing one order proves nothing: the old
+ * "first header wins" rule passes whichever order happens to put the right
+ * column on the left, which is exactly how this survived unnoticed.
+ */
+describe("which column Eva takes the money from", () => {
+  const OUTSTANDING_BEATS_TOTAL: ReadonlyArray<readonly [string, string, string]> = [
+    ["Xero", "Total", "InvoiceAmountDue"],
+    ["Sage", "Gross Amount", "Outstanding"],
+    ["Zoho Books", "Total", "Balance"],
+    ["QuickBooks", "Amount", "Open Balance"],
+    ["FreeAgent", "Total Value", "Due Value"],
+    ["the sample invoices", "Invoice total", "Amount outstanding"],
+  ];
+
+  for (const [pkg, total, outstanding] of OUTSTANDING_BEATS_TOTAL) {
+    it(`takes what is still owed, not the invoice total (${pkg})`, () => {
+      expect(autoMapHeaders([total, outstanding]), "outstanding lost when it came second").toEqual({
+        [outstanding]: "amount",
+      });
+      expect(autoMapHeaders([outstanding, total]), "outstanding lost when it came first").toEqual({
+        [outstanding]: "amount",
+      });
+    });
+  }
+
+  it("still takes the total when that is the only figure in the file", () => {
+    expect(autoMapHeaders(["Invoice Number", "Total", "Due Date"])).toEqual({
+      "Invoice Number": "invoiceNumber",
+      Total: "amount",
+      "Due Date": "dueDate",
+    });
+  });
+
+  /**
+   * ⚠️ THE CASE THAT MUST FAIL. A net figure excludes VAT, so reading one as
+   * the debt under-bills by a fifth on every standard-rated UK invoice. These
+   * headings are deliberately absent from the alias table and this is what
+   * says so — without it, "we chose not to support net" is a claim in a
+   * comment rather than a checked fact.
+   */
+  it("refuses the figures that are not the debt", () => {
+    for (const heading of ["Net", "Net Amount", "Net Value", "Subtotal", "VAT", "Tax Amount"]) {
+      expect(autoMapHeaders([heading]), `${heading} was read as money`).toEqual({});
+    }
+  });
+});
+
+/**
+ * The number Voice Credit Control will dial (founder, 2026-08-27). The email
+ * product never reads it — it is collected here because the uploaded book is
+ * the only place it exists.
+ */
+describe("the phone number, for the product next door", () => {
+  it("reads the headings a person actually writes", () => {
+    for (const heading of [
+      "Phone",
+      "Phone Number",
+      "Telephone",
+      "Tel",
+      "Mobile",
+      "Contact Number",
+    ]) {
+      expect(autoMapHeaders([heading]), `${heading} was dropped`).toEqual({
+        [heading]: "customerPhone",
+      });
+    }
+  });
+
+  it("keeps a named contact's number apart from the client's", () => {
+    expect(autoMapHeaders(["Phone", "Contact Phone"])).toEqual({
+      Phone: "customerPhone",
+      "Contact Phone": "contactPhone",
     });
   });
 });

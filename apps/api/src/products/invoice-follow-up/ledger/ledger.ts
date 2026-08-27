@@ -87,14 +87,33 @@ export async function createCustomerFromCanonical(
       organisationId,
       name: (canonical.customerName ?? canonical.customerReference)!,
       email: canonical.customerEmail?.toLowerCase() ?? null,
+      /* The number Voice Credit Control will dial (founder, 2026-08-27). This
+         product never reads it — it is carried here because the upload is the
+         only place it exists. */
+      phone: canonical.customerPhone ?? null,
       reference: canonical.customerReference ?? null,
       createdBy: userId,
     },
   });
 }
 
-/** Creates a contact when contact fields are present, reusing a live contact
- *  with the same normalised email on that customer (never duplicates). */
+/**
+ * Creates a contact when contact fields are present, reusing a live contact
+ * with the same normalised email on that customer (never duplicates).
+ *
+ * 🚨 A PHONE NUMBER ALONE DOES NOT MAKE A CONTACT, AND MUST NOT. The trigger
+ * below is still name-or-email, deliberately: the fallback two lines down
+ * names a contact after their email when no name was given, and `contactName`
+ * is what `reminder-message.ts` puts straight into "Hi Sarah,". Let a bare
+ * phone number in and Eva greets a stranger with *"Hi 07700 900123,"* — in a
+ * letter chasing them for money, sent over our customer's name.
+ *
+ * So `contactPhone` rides along with a contact that some OTHER field justified.
+ * A file carrying a contact's phone and nothing else about them leaves the
+ * number unimported rather than inventing a person to hang it on; the generic
+ * headings (`Phone`, `Mobile`, `Tel`) map to the CLIENT, which is where a book
+ * with one number per row wants them anyway.
+ */
 export async function resolveOrCreateContact(
   tx: TenantTx,
   organisationId: string,
@@ -108,6 +127,9 @@ export async function resolveOrCreateContact(
     const existing = await tx.contact.findFirst({
       where: { customerId, deletedAt: null, email },
     });
+    // ⚠️ RETURNED UNTOUCHED, PHONE AND ALL. An import never edits a record it
+    // did not create — the same rule `createCustomerFromCanonical` keeps. A
+    // stale number in the file would otherwise overwrite one somebody typed in.
     if (existing) return existing.id;
   }
   const contact = await tx.contact.create({
@@ -116,6 +138,7 @@ export async function resolveOrCreateContact(
       customerId,
       name: canonical.contactName ?? email!,
       email,
+      phone: canonical.contactPhone ?? null,
       createdBy: userId,
     },
   });
