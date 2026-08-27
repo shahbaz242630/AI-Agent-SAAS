@@ -319,6 +319,81 @@ describe("which column Eva takes the money from", () => {
 });
 
 /**
+ * 🚨 EVA NEVER INVENTS AN INVOICE NUMBER — SHE FINDS THE ONE THE CLIENT TYPED.
+ *
+ * Founder ruling, 2026-08-27: *"eva does not generate any invoice number.. in
+ * our table we already have a block for reference number.. just rename it to
+ * invoice number..which client fills in and EVA picks from there"*.
+ *
+ * Generating one would have been worse than it looks: the number is what the
+ * chasing email quotes, so Eva would be citing a reference the debtor has never
+ * seen — and it is how a re-uploaded spreadsheet is recognised as already on
+ * file, so generated numbers would chase every debt twice.
+ *
+ * The cost of NOT generating is that we must read the client's number wherever
+ * their software put it, and two packages use words that mean something else
+ * elsewhere.
+ */
+describe("finding the invoice number the client already typed", () => {
+  it("reads FreeAgent, whose invoice number column is headed Reference", () => {
+    const mapping = autoMapHeaders(["Reference", "Contact", "Dated On", "Due On", "Due Value"]);
+    expect(mapping.Reference, "a FreeAgent export still imports nothing").toBe("invoiceNumber");
+  });
+
+  it("reads QuickBooks, whose invoice number column is headed No.", () => {
+    const mapping = autoMapHeaders(["Date", "No.", "Customer", "Due Date", "Open Balance"]);
+    expect(mapping["No."]).toBe("invoiceNumber");
+  });
+
+  /**
+   * 🚨 THE HALF THAT MATTERS MORE. `Reference` means the CLIENT in Sage, which
+   * also ships a proper `Invoice Number` column — so the promotion must not
+   * fire, and the client reference must keep its meaning. A rule that only ever
+   * fired would be indistinguishable from claiming the word outright.
+   */
+  it("leaves a reference column alone when the file has a real invoice number", () => {
+    const mapping = autoMapHeaders([
+      "Invoice Number",
+      "Customer Reference",
+      "Customer Name",
+      "Outstanding",
+      "Due Date",
+    ]);
+    expect(mapping["Invoice Number"]).toBe("invoiceNumber");
+    expect(
+      mapping["Customer Reference"],
+      "Sage's client account code was stolen for the invoice number",
+    ).toBe("customerReference");
+  });
+
+  /**
+   * ⚠️ BOTH ORDERS, AND THE NAME OF THIS TEST USED TO LIE. It said "whichever
+   * order" and checked one — the same trap as the outstanding-amount rule,
+   * where testing a single column order proves nothing because the bug is
+   * about which column the matcher reaches first.
+   */
+  it.each([
+    ["reference first", ["Reference", "Invoice Number", "Amount", "Due Date"]],
+    ["invoice number first", ["Invoice Number", "Reference", "Amount", "Due Date"]],
+  ])("leaves it alone with %s", (_order, headers) => {
+    const mapping = autoMapHeaders(headers as string[]);
+    expect(mapping["Invoice Number"]).toBe("invoiceNumber");
+    expect(mapping.Reference, "the client reference was stolen").toBe("customerReference");
+  });
+
+  /**
+   * ⚠️ A CASE THAT MUST STILL FAIL. The promotion is a last resort, not a
+   * licence to invent an identifier out of any spare column. A file with no
+   * reference-shaped heading at all still has no invoice number, and still
+   * refuses — which is the honest outcome, because Eva does not generate one.
+   */
+  it("does not conjure an invoice number out of an unrelated column", () => {
+    const mapping = autoMapHeaders(["Client", "Outstanding", "Due Date", "Notes"]);
+    expect(Object.values(mapping)).not.toContain("invoiceNumber");
+  });
+});
+
+/**
  * The number Voice Credit Control will dial (founder, 2026-08-27). The email
  * product never reads it — it is collected here because the uploaded book is
  * the only place it exists.

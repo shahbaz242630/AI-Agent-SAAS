@@ -524,6 +524,8 @@ export function autoMapHeaders(headers: string[]): Record<string, ImportCanonica
     }
   });
 
+  promoteReferenceToInvoiceNumber(headers, best);
+
   const wonBy = new Map<number, ImportCanonicalField>();
   for (const [field, choice] of best) wonBy.set(choice.index, field);
 
@@ -535,6 +537,79 @@ export function autoMapHeaders(headers: string[]): Record<string, ImportCanonica
     if (field !== undefined) mapping[header] = field;
   });
   return mapping;
+}
+
+/**
+ * Headings that mean "the invoice number" in one accounting package and
+ * something else entirely in the next.
+ *
+ * 🚨 THE SAME WORD, TWO MEANINGS, AND NO WAY TO TELL FROM THE WORD ALONE.
+ * FreeAgent heads its invoice number `Reference`; Sage heads its CLIENT account
+ * reference `Customer Reference` and uses `Reference` the same loose way a
+ * hand-made spreadsheet does. QuickBooks heads the invoice number `No.`, which
+ * is also exactly what somebody calls a row counter.
+ *
+ * So none of these can be a plain alias. Claimed outright, `reference` would
+ * break Sage; claimed for `customerReference` only — which is what happened
+ * until 2026-08-27 — a FreeAgent export imports NOTHING, because the invoice
+ * number is required and we filed it as the client's account code.
+ */
+const AMBIGUOUS_INVOICE_NUMBER_HEADINGS: readonly string[] = [
+  "reference",
+  "ref",
+  "no",
+  "docno",
+  "documentno",
+  "documentnumber",
+];
+
+/**
+ * Last resort: a reference column IS the invoice number when the file has
+ * nothing that looks more like one.
+ *
+ * Founder ruling, 2026-08-27: *"eva does not generate any invoice number…
+ * which client fills in and EVA picks from there"*. Eva never invents an
+ * identifier — quoting a reference the debtor has never seen invites "which
+ * invoice?", and a generated number would break duplicate detection so a
+ * re-uploaded spreadsheet would chase every debt twice. What she must do
+ * instead is READ the one the client typed, wherever they put it.
+ *
+ * ⚠️ IT ONLY EVER FIRES WHEN THE ALTERNATIVE IS A FILE THAT IMPORTS NOTHING.
+ * If any column already claimed `invoiceNumber`, this does nothing at all —
+ * which is what keeps Sage's `Customer Reference` meaning the client, since
+ * Sage also ships `Invoice Number`.
+ *
+ * ⚠️ AND THE GUESS IS SHOWN BEFORE ANYTHING IS CREATED. The review screen
+ * prints "Reference → Invoice number" in its "How your columns were read"
+ * panel, and nothing exists until a separate confirm. A wrong guess is one a
+ * person can see and discard, which is the only reason guessing is allowed
+ * here at all.
+ *
+ * ⚠️ THE COST WHEN IT GUESSES WRONG, SAID OUT LOUD: a `Reference` that really
+ * is a client account code makes every invoice for that client share an
+ * identifier, so all but the first are reported as duplicates. Visible and
+ * recoverable — unlike the silent alternative, where the file simply refused
+ * to import and the customer was told to rename their columns.
+ */
+function promoteReferenceToInvoiceNumber(
+  headers: string[],
+  best: Map<ImportCanonicalField, { index: number; rank: number }>,
+): void {
+  if (best.has("invoiceNumber")) return;
+
+  const candidate = headers.findIndex((header) =>
+    AMBIGUOUS_INVOICE_NUMBER_HEADINGS.includes(normaliseImportHeader(header)),
+  );
+  if (candidate === -1) return;
+
+  /* Whatever it had been filed as loses it — `customerReference` for a bare
+     "Reference", nothing at all for QuickBooks' "No.". Identifying the invoice
+     is the more important job: without it the row cannot import at all. */
+  const heldBy = best.get("customerReference");
+  if (heldBy?.index === candidate) best.delete("customerReference");
+
+  // Rank 0: it is now this file's best answer, and there is no competition.
+  best.set("invoiceNumber", { index: candidate, rank: 0 });
 }
 
 /**
