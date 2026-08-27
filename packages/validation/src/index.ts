@@ -292,7 +292,22 @@ export type AddBookRowRequest = z.infer<typeof addBookRowRequestSchema>;
 
 // --- Slice 1.3: CSV/Excel import ---
 
-/** Canonical fields a file column can map to (Phase 1.3 plan §3). */
+/**
+ * Canonical fields a file column can map to (Phase 1.3 plan §3).
+ *
+ * ⚠️ THE PHONE PAIR IS NOT FOR CHASING BY EMAIL — IT IS FOR THE PRODUCT NEXT
+ * DOOR. Founder, 2026-08-27, on what Eva must know about a debt: the amount
+ * outstanding, the person's name, their email, their PHONE, and the date. The
+ * phone number is what Voice Credit Control will dial; it is collected here,
+ * by the email product's importer, because the spreadsheet a customer uploads
+ * is the only place it exists and asking them to type it again per client is
+ * how a book of two hundred debtors never gets phone numbers at all.
+ *
+ * ⚠️ IT LANDS ON THE CLIENT AND THE CONTACT, WHICH ALREADY HAD `phone`
+ * COLUMNS. Nothing in the database changed to allow this — the columns have
+ * been there since the schema was written and only the importer could not
+ * reach them.
+ */
 export const IMPORT_CANONICAL_FIELDS = [
   "invoiceNumber",
   "amount",
@@ -302,8 +317,10 @@ export const IMPORT_CANONICAL_FIELDS = [
   "customerReference",
   "customerName",
   "customerEmail",
+  "customerPhone",
   "contactName",
   "contactEmail",
+  "contactPhone",
 ] as const;
 
 export type ImportCanonicalField = (typeof IMPORT_CANONICAL_FIELDS)[number];
@@ -330,10 +347,67 @@ export type ImportCanonicalField = (typeof IMPORT_CANONICAL_FIELDS)[number];
  */
 const IMPORT_HEADER_ALIASES: ReadonlyArray<readonly [ImportCanonicalField, readonly string[]]> = [
   ["invoiceNumber", ["invoicenumber", "invoiceno", "invno", "invnumber", "invoice", "invoiceref"]],
-  ["amount", ["amount", "total", "value", "amountdue", "totaldue", "invoiceamount", "gross"]],
+  /**
+   * 🚨 AMOUNT APPEARS TWICE, BEST FIRST, AND THE ORDER IS THE WHOLE POINT.
+   *
+   * Founder, 2026-08-27: what Eva needs is the amount OUTSTANDING, not the
+   * invoice total. Nearly every accounting export carries BOTH — Xero ships
+   * `Total` and `InvoiceAmountDue`, Sage ships `Gross Amount` and
+   * `Outstanding`, Zoho ships `Total` and `Balance` — and until this entry
+   * existed the matcher took whichever appeared first in the file.
+   *
+   * That is a money bug in the worst family we have: on a part-paid invoice
+   * the total is LARGER than the debt, so Eva would have chased a customer's
+   * customer for money they had already paid — in a letter sent from the
+   * customer's own mailbox, over their name. It fails silently, it looks
+   * right, and the person who finds it is the one being dunned.
+   *
+   * So the outstanding wordings win over the total wordings wherever both are
+   * present, regardless of column order. Where only a total exists, the total
+   * is still correct: nothing has been paid against it, so it IS the debt.
+   *
+   * ⚠️ NOT LISTED, DELIBERATELY: `net`, `netamount`, `subtotal`. Those exclude
+   * VAT, and chasing the net of a VAT invoice under-bills by a fifth. A wrong
+   * number that looks plausible is worse than a column we refuse to read.
+   */
+  [
+    "amount",
+    [
+      "amountoutstanding",
+      "outstanding",
+      "outstandingamount",
+      "outstandingbalance",
+      "totaloutstanding",
+      "balancedue",
+      "balanceoutstanding",
+      "openbalance",
+      "invoiceamountdue",
+      "amountremaining",
+      "remainingbalance",
+      "balance",
+      "duevalue",
+    ],
+  ],
+  [
+    "amount",
+    [
+      "amount",
+      "total",
+      "value",
+      "amountdue",
+      "totaldue",
+      "invoiceamount",
+      "gross",
+      "grossamount",
+      "grosstotal",
+      "totalvalue",
+      "totalamount",
+      "invoicetotal",
+    ],
+  ],
   ["currency", ["currency", "ccy", "currencycode"]],
-  ["issueDate", ["issuedate", "invoicedate", "date", "issued"]],
-  ["dueDate", ["duedate", "due", "paymentdue", "datepaymentdue"]],
+  ["issueDate", ["issuedate", "invoicedate", "date", "issued", "datedon", "dateissued"]],
+  ["dueDate", ["duedate", "due", "paymentdue", "datepaymentdue", "dueon", "datedue", "duebefore"]],
   [
     "customerReference",
     [
@@ -365,31 +439,101 @@ const IMPORT_HEADER_ALIASES: ReadonlyArray<readonly [ImportCanonicalField, reado
       "customeremailaddress",
     ],
   ],
+  /**
+   * ⚠️ THE CLIENT'S PHONE, AND IT CLAIMS EVERY AMBIGUOUS WORDING — INCLUDING
+   * `Contact Number`, WHICH IS NOT AN OVERSIGHT. In British usage "a contact
+   * number" just means "a phone number"; it does not reliably mean the number
+   * of the person in the `Contact Name` column. Only headings that pair the
+   * word with an unmistakable phone word — `Contact Phone`, `Contact Mobile` —
+   * go to `contactPhone` below.
+   *
+   * ⚠️ THE TIEBREAK IS "WHICH MISTAKE LOSES THE NUMBER". A client number filed
+   * against the contact is merely on the wrong row — but `resolveOrCreateContact`
+   * will not create a contact for a phone number alone, so if there is no
+   * contact name or email in the file that number is not stored ANYWHERE. Filed
+   * against the client it always lands, because the client always exists. When
+   * a heading could mean either, the client wins for that reason and no other.
+   */
+  [
+    "customerPhone",
+    [
+      "customerphone",
+      "clientphone",
+      "phone",
+      "phonenumber",
+      "telephone",
+      "telephonenumber",
+      "tel",
+      "telno",
+      "mobile",
+      "mobilenumber",
+      "mobileno",
+      "contactnumber",
+      "customertelephone",
+      "customerphonenumber",
+      "clientphonenumber",
+      "customermobile",
+      "clientmobile",
+    ],
+  ],
   ["contactName", ["contactname", "contact", "attention", "attn"]],
   ["contactEmail", ["contactemail", "contactemailaddress"]],
+  ["contactPhone", ["contactphone", "contacttelephone", "contactmobile", "contactphonenumber"]],
 ];
 
 function normaliseImportHeader(header: string): string {
   return header.toLowerCase().replace(/[^a-z0-9]/g, "");
 }
 
-/** Maps file headers to canonical fields; the first header claiming a field wins. */
+/**
+ * Maps file headers to canonical fields.
+ *
+ * ⚠️ THE BEST HEADING WINS, NOT THE LEFTMOST. It used to be "first header in
+ * the file claims the field", which is right when every wording for a field is
+ * equally good and wrong the moment they are not: a Xero export names the
+ * invoice total before it names the amount still owed, so column order alone
+ * decided whether Eva chased the debt or the whole invoice.
+ *
+ * A field may therefore appear more than once in `IMPORT_HEADER_ALIASES`, best
+ * entry first, and its position there is the rank. Ties — which is every field
+ * that appears once, so all of them but `amount` — fall back to file order,
+ * exactly as before. That is why this change moved no existing behaviour.
+ */
 export function autoMapHeaders(headers: string[]): Record<string, ImportCanonicalField> {
-  const aliasToField = new Map<string, ImportCanonicalField>();
-  for (const [field, aliases] of IMPORT_HEADER_ALIASES) {
+  /** alias → the field that claims it, and how good a wording it is (0 = best). */
+  const aliasToField = new Map<string, { field: ImportCanonicalField; rank: number }>();
+  IMPORT_HEADER_ALIASES.forEach(([field, aliases], rank) => {
     for (const alias of aliases) {
-      if (!aliasToField.has(alias)) aliasToField.set(alias, field);
+      if (!aliasToField.has(alias)) aliasToField.set(alias, { field, rank });
     }
-  }
+  });
+
+  /**
+   * The winning COLUMN INDEX per field, never the heading text — two columns
+   * in one file can share a name, and keying on the string would map both.
+   */
+  const best = new Map<ImportCanonicalField, { index: number; rank: number }>();
+  headers.forEach((header, index) => {
+    const claim = aliasToField.get(normaliseImportHeader(header));
+    if (!claim) return;
+    const held = best.get(claim.field);
+    // Strictly better only: an equal rank leaves the earlier column in place,
+    // which is the file-order tiebreak the old behaviour depended on.
+    if (held === undefined || claim.rank < held.rank) {
+      best.set(claim.field, { index, rank: claim.rank });
+    }
+  });
+
+  const wonBy = new Map<number, ImportCanonicalField>();
+  for (const [field, choice] of best) wonBy.set(choice.index, field);
+
+  // Built in FILE order so the mapping reads the way the file does — the review
+  // screen prints it straight back as "column → field".
   const mapping: Record<string, ImportCanonicalField> = {};
-  const claimed = new Set<ImportCanonicalField>();
-  for (const header of headers) {
-    const field = aliasToField.get(normaliseImportHeader(header));
-    if (field && !claimed.has(field)) {
-      mapping[header] = field;
-      claimed.add(field);
-    }
-  }
+  headers.forEach((header, index) => {
+    const field = wonBy.get(index);
+    if (field !== undefined) mapping[header] = field;
+  });
   return mapping;
 }
 
@@ -430,8 +574,18 @@ const importRowBaseSchema = z.object({
   customerReference: emptyToUndefined(z.string().trim().min(1)),
   customerName: emptyToUndefined(z.string().trim().min(1)),
   customerEmail: emptyToUndefined(z.email().max(320)),
+  /**
+   * ⚠️ NOT VALIDATED AS A PHONE NUMBER, AND THAT IS A DECISION. One UK book
+   * holds `07700 900123`, `+44 7700 900123` and `020 7946 0000 ext 21` in the
+   * same column. A pattern strict enough to be worth having would reject real
+   * numbers, and a rejected phone number fails the WHOLE ROW — the invoice
+   * would not import at all over a field nothing chases by yet. Stored as
+   * written, bounded at the 50 characters the clients screen already allows.
+   */
+  customerPhone: emptyToUndefined(z.string().trim().min(1).max(50)),
   contactName: emptyToUndefined(z.string().trim().min(1)),
   contactEmail: emptyToUndefined(z.email().max(320)),
+  contactPhone: emptyToUndefined(z.string().trim().min(1).max(50)),
 });
 
 /**

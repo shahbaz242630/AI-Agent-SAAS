@@ -34,15 +34,25 @@
  */
 export const FIELD_LABELS: Readonly<Record<string, string>> = {
   invoiceNumber: "Invoice number",
-  amount: "Amount",
+  /**
+   * ⚠️ IT SAYS OUTSTANDING NOW, AND THE WORD IS THE POINT. Founder,
+   * 2026-08-27: the figure Eva needs is what is still owed, not what the
+   * invoice was for. `Amount` is still read — the matcher keeps every total
+   * wording as a fallback — but this list is what a person names their column
+   * after, and pointing them at the total is how a part-paid debtor gets
+   * chased for money they have already sent.
+   */
+  amount: "Amount outstanding",
   currency: "Currency",
   issueDate: "Invoice date",
   dueDate: "Due date",
   customerReference: "Your client reference",
   customerName: "Client name",
   customerEmail: "Client email",
+  customerPhone: "Client phone",
   contactName: "Contact name",
   contactEmail: "Contact email",
+  contactPhone: "Contact phone",
 };
 
 export function importFieldLabel(field: string): string {

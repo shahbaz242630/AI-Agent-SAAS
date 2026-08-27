@@ -155,6 +155,89 @@ describe("Imports: confirm and cancel", () => {
     expect(JSON.stringify(audit?.metadata)).not.toContain("CF-1");
   });
 
+  /**
+   * 🚨 THE FIVE FACTS EVA NEEDS ABOUT A DEBT, PROVEN AT THE DATABASE.
+   *
+   * Founder, 2026-08-27: *"how much is outstanding (amount), name of the
+   * person, email of the person, phone number of the person… and the date of
+   * outstanding. As long as our system gets this information we are good."*
+   *
+   * ⚠️ IT UPLOADS A FILE SHAPED LIKE A REAL EXPORT, NOT LIKE OUR OWN ADVICE.
+   * The headings here are Xero's and Sage's, the total sits to the LEFT of the
+   * balance the way an accounting package writes it, and the phone column is
+   * headed the way a person heads it. A fixture using the wordings on our
+   * upload screen would prove only that we can read our own recommendations —
+   * which is the test that existed while three of five real exports failed.
+   *
+   * ⚠️ AND IT ASSERTS THE AMOUNT IS THE SMALLER FIGURE. That single line is
+   * the money bug: `Total` is 1000.00 and `Outstanding` is 400.00 on the same
+   * row, so reading the wrong column chases £600 that has already been paid.
+   */
+  it("takes the outstanding amount and the phone number from a real export (founder, 2026-08-27)", async () => {
+    const file = Buffer.from(
+      [
+        "Invoice Number,Total,Outstanding,Due Date,Customer Name,Customer Email,Phone,Contact Name,Contact Email,Contact Phone",
+        "FIVE-1,1000.00,400.00,01/10/2026,Kerrison Joinery,ap@kerrison.test,01632 960111,Dan Kerrison,dan@kerrison.test,07700 900123",
+      ].join("\r\n"),
+      "utf8",
+    );
+    const staged = await upload(file);
+    await confirm(staged.id).expect(200);
+
+    const invoice = await owner.invoice.findFirstOrThrow({
+      where: { organisationId: org.id, invoiceNumber: "FIVE-1" },
+    });
+    // 1. how much is outstanding — the balance, NOT the £1,000 invoice total.
+    expect(invoice.amountMinorUnits, "Eva took the invoice total, not the debt").toBe(40000n);
+    // 5. the date of outstanding.
+    expect(invoice.dueDate.toISOString().slice(0, 10)).toBe("2026-10-01");
+
+    const customer = await owner.customer.findFirstOrThrow({
+      where: { organisationId: org.id, name: "Kerrison Joinery" },
+    });
+    // 2, 3 and 4 on the client.
+    expect(customer.email).toBe("ap@kerrison.test");
+    expect(customer.phone, "the client's phone was dropped").toBe("01632 960111");
+
+    const contact = await owner.contact.findFirstOrThrow({
+      where: { organisationId: org.id, customerId: customer.id },
+    });
+    expect(contact.name).toBe("Dan Kerrison");
+    expect(contact.email).toBe("dan@kerrison.test");
+    expect(contact.phone, "the contact's phone was dropped").toBe("07700 900123");
+  });
+
+  /**
+   * ⚠️ THE CASE THAT MUST NOT CREATE ANYTHING. A phone number with no name and
+   * no email behind it is not a person — and `reminder-message.ts` puts a
+   * contact's name straight into "Hi Sarah,". Were a bare number allowed to
+   * make a contact, Eva would open a letter chasing a debt with *"Hi 07700
+   * 900123,"*, sent from our customer's own mailbox over their name.
+   */
+  it("will not invent a contact out of a phone number alone", async () => {
+    const file = Buffer.from(
+      [
+        "Invoice Number,Amount,Due Date,Customer Name,Contact Phone",
+        "FIVE-2,50.00,01/10/2026,Nameless Contact Co,07700 900999",
+      ].join("\r\n"),
+      "utf8",
+    );
+    const staged = await upload(file);
+    await confirm(staged.id).expect(200);
+
+    const customer = await owner.customer.findFirstOrThrow({
+      where: { organisationId: org.id, name: "Nameless Contact Co" },
+    });
+    const contacts = await owner.contact.findMany({
+      where: { organisationId: org.id, customerId: customer.id },
+    });
+    expect(contacts, "a contact was invented from a bare phone number").toHaveLength(0);
+    const invoice = await owner.invoice.findFirstOrThrow({
+      where: { organisationId: org.id, invoiceNumber: "FIVE-2" },
+    });
+    expect(invoice.contactId).toBeNull();
+  });
+
   it("matches an existing customer by reference — nothing is created", async () => {
     await owner.customer.create({
       data: {
