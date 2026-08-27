@@ -145,7 +145,16 @@ function startsChasing(action: InvoiceLifecycleAction): boolean {
 const BLOCKED_PHRASES: Readonly<Record<string, string>> = {
   no_contact: "nobody is set to receive reminders",
   contact_deleted: "the person it was addressed to has been removed",
-  no_email: "the contact has no email address",
+  /**
+   * ⚠️ IT NO LONGER NAMES THE CONTACT, AND THAT IS A CORRECTION NOT A TIDY-UP.
+   * It read "the contact has no email address", which was the whole truth until
+   * 2026-08-27: Eva now falls back to the CLIENT's own address, so this reason
+   * is only reached when neither has one. Left as it was, it sent somebody to
+   * fix the contact when adding an address to the client would have done just
+   * as well — a sentence that is true about half the problem and silent about
+   * the rest.
+   */
+  no_email: "there is no email address to send to",
   suppressed: "that contact has asked not to be emailed",
   no_mailbox: "no working mailbox is connected",
 };

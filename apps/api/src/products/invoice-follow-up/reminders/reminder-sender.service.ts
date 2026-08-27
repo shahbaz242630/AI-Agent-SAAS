@@ -17,6 +17,7 @@ import type { OutboundMail } from "../../../capabilities/mailbox/outbound-mail.j
 import type { TenantTx } from "../../../platform/permissions/permissions.js";
 import { writeAuditLog } from "../../../platform/audit/audit-log.js";
 import { todayInTimezone } from "../invoices/invoice-status.js";
+import { resolveRecipient } from "./reminder-recipient.js";
 import { buildReminderMessage, type EmailReminderStepKey } from "./reminder-message.js";
 
 const DEFAULT_TIMEZONE = "Europe/London";
@@ -34,7 +35,7 @@ export type HeldReason =
   | "reauth_required"
   /** The mailbox has no recorded owner, so no honest actor exists to refresh its token. */
   | "mailbox_owner_unknown"
-  /** The invoice lost its contact (or its email) after the row was scheduled. */
+  /** Nobody left to write to: no contact address AND no client address either. */
   | "no_recipient"
   /** Rate-limited or a provider blip — retried on the next sweep, not lost. */
   | "provider_deferred";
@@ -381,9 +382,24 @@ export class ReminderSenderService {
         const contact = invoice.contact;
         const customer = invoice.customer;
 
-        // The recipient can disappear between scheduling and sending — a
-        // contact deleted, or its email cleared on the edit form.
-        if (!contact?.email || !customer) {
+        /**
+         * The recipient can disappear between scheduling and sending — a
+         * contact deleted, or its email cleared on the edit form.
+         *
+         * ⚠️ ASKED THROUGH `resolveRecipient`, NOT OF THE CONTACT DIRECTLY.
+         * Since 2026-08-27 the client's own address is a real fallback, and
+         * this test read `!contact?.email` — so every invoice the fallback made
+         * chaseable would have been SCHEDULED by one gate and then held here as
+         * "no_recipient" by another. Nothing would have failed; the reminders
+         * would simply never have gone out, which is the shape of defect this
+         * product exists to not have.
+         */
+        if (!customer) {
+          hold(counts, "no_recipient");
+          continue;
+        }
+        const recipient = resolveRecipient({ contact, customer });
+        if (recipient === null) {
           hold(counts, "no_recipient");
           continue;
         }
@@ -406,7 +422,7 @@ export class ReminderSenderService {
           account: resolution.account,
           mailboxOwnerUserId: resolution.account.connectedBy,
           mailboxSource: resolution.source,
-          recipientEmail: contact.email,
+          recipientEmail: recipient.email,
           message: buildReminderMessage({
             stepKey: action.reminderStep.key as EmailReminderStepKey,
             invoiceReference: invoice.invoiceNumber,
@@ -418,7 +434,7 @@ export class ReminderSenderService {
             // The stored name as given, not a first name split out of it:
             // guessing which token is the given name is wrong often enough,
             // and across enough cultures, to be worse than the full name.
-            contactName: contact.name,
+            contactName: recipient.name,
             organisationName,
           }),
         });

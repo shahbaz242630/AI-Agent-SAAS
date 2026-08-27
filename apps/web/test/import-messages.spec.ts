@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { autoMapHeaders, IMPORT_CANONICAL_FIELDS } from "@eva/validation";
 import {
+  ADVERTISED_IMPORT_FIELDS,
   FIELD_LABELS,
   importConfirmLabel,
   importConfirmedLine,
@@ -226,6 +227,33 @@ describe("every column the upload screen advertises", () => {
    * is understood; this one proves every UNDERSTOOD FIELD has a label, which
    * is the other direction and was the hole the 2026-08-18 defect fell through.
    */
+  /**
+   * 🚨 "WE STOPPED MENTIONING IT" AND "WE STOPPED SUPPORTING IT" ARE DIFFERENT
+   * PROMISES TO BREAK.
+   *
+   * Founder, 2026-08-27: *"no need to duplicate"*. So the contact's email and
+   * phone came off the advertised chip list — the client's columns do the same
+   * job for everybody now that Eva falls back to the client's address. A file
+   * that already uses the contact headings must keep importing exactly as it
+   * did, silently and correctly; a customer who built their export around our
+   * old advice should never find out we changed our minds.
+   */
+  it("still reads the columns it no longer advertises", () => {
+    const advertised = new Set(ADVERTISED_IMPORT_FIELDS);
+    const dropped = IMPORT_CANONICAL_FIELDS.filter((field) => !advertised.has(field));
+
+    expect(dropped, "nothing was dropped — this test is guarding nothing").not.toHaveLength(0);
+    for (const field of dropped) {
+      const label = FIELD_LABELS[field]!;
+      expect(autoMapHeaders([label]), `${label} is no longer read`).toEqual({ [label]: field });
+    }
+  });
+
+  it("advertises the client's address, which is the one that works for everybody", () => {
+    expect(ADVERTISED_IMPORT_FIELDS).toContain("customerEmail");
+    expect(ADVERTISED_IMPORT_FIELDS).toContain("customerPhone");
+  });
+
   it("has a human wording for every field the importer understands", () => {
     for (const field of IMPORT_CANONICAL_FIELDS) {
       expect(FIELD_LABELS[field], `${field} would print as its own variable name`).toBeDefined();

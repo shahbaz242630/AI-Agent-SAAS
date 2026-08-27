@@ -46,6 +46,7 @@ import {
   type InvoiceLifecycleAction,
 } from "./invoice-state-machine.js";
 import { resolveChaseBlockedReason, type ChaseBlockedReason } from "./chase-blockers.js";
+import { resolveRecipient } from "../reminders/reminder-recipient.js";
 import {
   normaliseSuppressionValue,
   suppressedValues,
@@ -130,7 +131,15 @@ type InvoiceRow = {
   createdAt: Date;
   updatedAt: Date;
   /** Loaded with the invoice so the chase blockers cost no extra round trip. */
-  contact?: { deletedAt: Date | null; email: string | null } | null;
+  contact?: { id: string; name: string; deletedAt: Date | null; email: string | null } | null;
+  /**
+   * ⚠️ THE CLIENT'S OWN ADDRESS, LOADED FOR THE SAME REASON AND SINCE THE SAME
+   * DATE AS THE FALLBACK ITSELF (2026-08-27). Eva writes to the client when
+   * there is no usable contact, so a blocker resolved without this would tell
+   * somebody "nobody is set to receive reminders" about an invoice the
+   * scheduler is happily chasing.
+   */
+  customer?: { id: string; email: string | null } | null;
 };
 
 /**
@@ -143,6 +152,9 @@ type InvoiceRow = {
  */
 const WITH_CONTACT = {
   contact: { select: { id: true, name: true, email: true, phone: true, deletedAt: true } },
+  /* The fallback recipient — see `reminder-recipient.ts`. Selected here so the
+     blockers still cost no extra round trip now that they need both levels. */
+  customer: { select: { id: true, email: true } },
 } as const;
 
 /** Ageing by due date — `DATA-MODEL-REVIEW.md` §4's buckets, derived, never stored. */
@@ -498,7 +510,17 @@ export class InvoicesService {
           orderBy: [{ dueDate: "asc" }, { invoiceNumber: "asc" }],
           include: {
             ...WITH_CONTACT,
-            customer: { select: { id: true, name: true, reference: true } },
+            /**
+             * 🚨 `email` IS NOT OPTIONAL HERE — IT IS THE ONE `WITH_CONTACT`
+             * ALREADY ASKED FOR. This key OVERRIDES the spread above rather
+             * than merging with it, so omitting `email` would leave the book's
+             * rows — and only the book's rows — resolving their blockers
+             * against a client with no address. Every invoice chased via the
+             * client fallback would have read "nobody is set to receive
+             * reminders" on the one screen a credit controller actually works
+             * from, while the scheduler chased them perfectly happily.
+             */
+            customer: { select: { id: true, name: true, reference: true, email: true } },
           },
           take,
           skip,
@@ -1220,11 +1242,25 @@ export class InvoicesService {
       // pass only settles the reasons the loaded contact can answer by itself.
       const reason = resolveChaseBlockedReason({
         contact: invoice.contact ?? null,
+        customer: invoice.customer ?? null,
         suppressed: false,
         organisationHasHealthyMailbox: true,
       });
       if (reason !== null) blockers.set(invoice.id, reason);
-      else undecided.push({ id: invoice.id, email: invoice.contact?.email ?? "" });
+      else {
+        /**
+         * ⚠️ SUPPRESSION IS CHECKED AGAINST THE ADDRESS EVA WILL ACTUALLY USE,
+         * which is not always the contact's since 2026-08-27. This read
+         * `invoice.contact?.email ?? ""` — on a client-fallback invoice that is
+         * the empty string, so the row would have been reported as chaseable
+         * however loudly that client had asked never to be emailed again.
+         */
+        const recipient = resolveRecipient({
+          contact: invoice.contact ?? null,
+          customer: invoice.customer ?? null,
+        });
+        undecided.push({ id: invoice.id, email: recipient?.email ?? "" });
+      }
     }
 
     if (undecided.length === 0) return blockers;

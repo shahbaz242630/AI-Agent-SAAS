@@ -1,10 +1,12 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { moduleHref } from "@eva/types";
-import { IMPORT_CANONICAL_FIELDS } from "@eva/validation";
 import { ApiError, apiFetch } from "@/lib/api";
 import { fetchOrganisations } from "@/lib/organisations";
-import { importFieldLabel } from "@/products/invoice-follow-up/import-messages";
+import {
+  ADVERTISED_IMPORT_FIELDS,
+  importFieldLabel,
+} from "@/products/invoice-follow-up/import-messages";
 import { can, readOnlyImportsLine } from "@/lib/permissions";
 import { createClient } from "@/lib/supabase/server";
 import { BackChip } from "@/components/ui";
@@ -38,7 +40,7 @@ const BOOK = moduleHref("email_credit_controller", "invoices");
  * and left this one open. Adding `customerPhone` on 2026-08-27 would have
  * needed a fourth edit nothing would have failed for.
  */
-const UNDERSTOOD_FIELDS: readonly string[] = IMPORT_CANONICAL_FIELDS;
+const UNDERSTOOD_FIELDS = ADVERTISED_IMPORT_FIELDS;
 
 interface OrganisationSummary {
   id: string;

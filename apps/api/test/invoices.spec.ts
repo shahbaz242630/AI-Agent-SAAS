@@ -2479,6 +2479,62 @@ describe("Invoices: chaseBlockedReason (does Eva actually chase this?)", () => {
     expect(await scheduledCount(invoice.body.id)).toBe(0);
   });
 
+  /**
+   * 🚨 THE FOUNDER'S RULING OF 2026-08-27, PROVEN END TO END.
+   *
+   * Shown that the upload screen advertised both a client email and a contact
+   * email: *"why do we have contact email and client email twice? …no need to
+   * duplicate"*. The client's address turned out to be read by NOTHING — so an
+   * ordinary spreadsheet (invoice number, amount, due date, client name, email)
+   * imported clean, reported "5 ready", and produced five invoices Eva would
+   * never send. Both cases below were blocked before the ruling.
+   *
+   * ⚠️ `scheduledCount` IS THE ASSERTION THAT MATTERS. `chaseBlockedReason`
+   * alone only proves the SCREEN changed its mind; the reminder rows prove the
+   * scheduler did. The two disagreeing silently is the exact defect
+   * `chase-blockers.ts` was created to remove.
+   */
+  describe("the client's own address is a real recipient (founder, 2026-08-27)", () => {
+    async function reachableClient() {
+      return owner.customer.create({
+        data: {
+          id: randomUUID(),
+          organisationId: org.id,
+          name: `Sole Trader ${randomUUID().slice(0, 8)}`,
+          email: `owner-${randomUUID().slice(0, 8)}@soletrader.example`,
+          createdBy: ownerUserId,
+        },
+      });
+    }
+
+    it("chases a sole trader with no named contact at all", async () => {
+      const client = await reachableClient();
+      const invoice = await raise({}, { orgId: org.id, custId: client.id, auth: token });
+      expect(invoice.body.chaseBlockedReason).toBeNull();
+      expect(await scheduledCount(invoice.body.id)).toBeGreaterThan(0);
+    });
+
+    it("chases when a contact exists but has no email of their own", async () => {
+      const client = await reachableClient();
+      const contact = await owner.contact.create({
+        data: {
+          id: randomUUID(),
+          organisationId: org.id,
+          customerId: client.id,
+          name: "Reception",
+          email: null,
+          createdBy: ownerUserId,
+        },
+      });
+      const invoice = await raise(
+        { contactId: contact.id },
+        { orgId: org.id, custId: client.id, auth: token },
+      );
+      expect(invoice.body.chaseBlockedReason).toBeNull();
+      expect(await scheduledCount(invoice.body.id)).toBeGreaterThan(0);
+    });
+  });
+
   it("says no_email, and schedules nothing", async () => {
     const contact = await makeContact({ email: null });
     const invoice = await raise({ contactId: contact.id });
