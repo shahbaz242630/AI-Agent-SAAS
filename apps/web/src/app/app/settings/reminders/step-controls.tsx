@@ -59,17 +59,6 @@ export function StepControls({
     {},
   );
 
-  const stored = splitOffset(step.offsetDays);
-
-  /**
-   * ⚠️ THE ONLY CONTROLLED FIELD, AND IT HAS TO BE. "On the due date" makes the
-   * day count meaningless, so the number must grey out the moment it is chosen
-   * — and an uncontrolled `<select>` does not re-render, so the box would stay
-   * live and accept a number that is then silently dropped. Local state
-   * survives a refusal too, because the component never unmounts.
-   */
-  const [direction, setDirection] = useState<OffsetDirection>(stored.direction);
-
   /**
    * ⚠️ OPENS ON A REFUSAL AND STAYS OPEN AFTER A SAVE. A row that collapsed on
    * error would hide the message explaining what went wrong, and one that
@@ -80,7 +69,6 @@ export function StepControls({
   const open = editing || Boolean(state.error) || Boolean(state.success);
 
   // What was typed wins over what is stored, so a refusal keeps the user's work.
-  const days = state.submitted?.days ?? String(stored.days);
   const enabled = state.submitted?.enabled ?? step.enabled;
   const handover = isHandover(step.actionType);
   const anchor = step.offsetDays === 0;
@@ -153,81 +141,158 @@ export function StepControls({
         </div>
 
         {open && (
-          <form action={action} className="mt-4 flex flex-col gap-3.5">
-            <input type="hidden" name="organisationId" value={organisationId} />
-            <input type="hidden" name="stepId" value={step.id} />
-
-            <div className="flex flex-wrap items-end gap-3">
-              <label className="flex w-24 flex-col gap-1 text-[13px] font-semibold text-label">
-                Days
-                <input
-                  name="days"
-                  type="number"
-                  min={0}
-                  max={MAX_OFFSET_DAYS}
-                  step={1}
-                  inputMode="numeric"
-                  defaultValue={days}
-                  disabled={direction === "on"}
-                  className={`${FIELD} font-normal disabled:opacity-50`}
-                />
-              </label>
-
-              <label className="flex flex-col gap-1 text-[13px] font-semibold text-label">
-                When
-                <select
-                  name="direction"
-                  value={direction}
-                  onChange={(event) => setDirection(event.target.value as OffsetDirection)}
-                  className={`${FIELD} font-normal`}
-                >
-                  <option value="before">before the due date</option>
-                  <option value="on">on the due date</option>
-                  <option value="after">after the due date</option>
-                </select>
-              </label>
-            </div>
-
-            <label className="flex items-start gap-2.5 text-[13px]">
-              <input
-                name="enabled"
-                type="checkbox"
-                defaultChecked={enabled}
-                className="mt-0.5 size-4 accent-primary"
-              />
-              <span className="flex flex-col gap-0.5">
-                <span className="font-semibold text-label">
-                  {handover ? "Hand this invoice back to me" : "Send this reminder"}
-                </span>
-                <span className="text-xs leading-[1.5] text-muted-foreground">
-                  {describeDisabling(step.actionType)}
-                </span>
-              </span>
-            </label>
-
-            {state.error && (
-              <p role="alert" className="text-[13px] text-danger">
-                {state.error}
-              </p>
-            )}
-            {state.success && (
-              <p role="status" className="text-[13px] text-success">
-                {state.success}
-              </p>
-            )}
-
-            <div>
-              <button
-                type="submit"
-                disabled={pending}
-                className="cursor-pointer rounded-[var(--radius-control)] bg-primary px-4 py-2 text-[13px] font-semibold text-primary-foreground shadow-[var(--shadow-primary)] transition-opacity hover:opacity-90 disabled:opacity-60"
-              >
-                {pending ? "Saving…" : "Save this stage"}
-              </button>
-            </div>
-          </form>
+          /**
+           * ⚠️ REMOUNTED ON EVERY ANSWER FROM THE SERVER, AND THAT IS THE FIX
+           * FOR A REAL DEFECT. `state.at` changes each time the action returns,
+           * so the form is rebuilt from whatever is true at that moment — the
+           * refreshed step after a save, the echoed `submitted` after a
+           * refusal. See `StepForm` for what went wrong without it.
+           */
+          <StepForm
+            key={state.at ?? "idle"}
+            organisationId={organisationId}
+            step={step}
+            state={state}
+            action={action}
+            pending={pending}
+          />
         )}
       </div>
     </li>
+  );
+}
+
+/**
+ * The editor for one stage. Its own component so that the whole form can be
+ * REMOUNTED when the server answers, and so a test can render it — the parent
+ * only draws it after a click, which `renderToStaticMarkup` cannot perform.
+ *
+ * ⚠️ THIS EXISTS BECAUSE OF A DEFECT THAT MOVED A REMINDER TO THE WRONG SIDE OF
+ * THE DUE DATE. Found by clicking Save twice on 2026-08-31, having changed
+ * nothing in between: the first chase went from 7 days AFTER to 7 days BEFORE,
+ * so Eva would have chased for money that was not due yet.
+ *
+ * React 19 resets a form once its action returns. `form.reset()` puts every
+ * control back to its HTML default — and a `<select>` React drives through the
+ * `value` prop alone has no HTML default, so the browser fell back to the FIRST
+ * option, "before the due date". React's own state still said "after", so
+ * nothing re-rendered and nothing corrected it: the box on screen disagreed
+ * with the stored value, the confirmation directly under it, and the timing in
+ * the left-hand column. The next Save then submitted what the box showed.
+ *
+ * The `Days` box and the checkbox never had this problem because
+ * `defaultValue`/`defaultChecked` give the reset something correct to land on.
+ * So the select is given one too, and the remount above re-establishes it from
+ * the truth each time. Belt and braces, deliberately: either alone would fix
+ * the case we found, and neither alone is obviously enough for the next one.
+ */
+export function StepForm({
+  organisationId,
+  step,
+  state,
+  action,
+  pending,
+}: {
+  organisationId: string;
+  step: ReminderStepDto;
+  state: ReminderStepActionState;
+  action: (formData: FormData) => void;
+  pending: boolean;
+}) {
+  const stored = splitOffset(step.offsetDays);
+
+  // What was typed wins over what is stored, so a refusal keeps the user's work.
+  const days = state.submitted?.days ?? String(stored.days);
+  const enabled = state.submitted?.enabled ?? step.enabled;
+  const handover = isHandover(step.actionType);
+
+  /**
+   * ⚠️ STATE HERE ONLY GREYS THE DAY COUNT. "On the due date" makes the number
+   * meaningless, so the box must dim the moment it is chosen — that needs a
+   * re-render, which an uncontrolled select does not give us on its own.
+   *
+   * ⚠️ BUT THE SELECT IS NO LONGER CONTROLLED BY IT. It carries `defaultValue`
+   * and reports changes; it does not take its displayed value from this state.
+   * That is the whole point: state and DOM can no longer drift apart, because
+   * the DOM is the one telling us what it holds.
+   */
+  const [direction, setDirection] = useState<OffsetDirection>(
+    state.submitted?.direction ?? stored.direction,
+  );
+
+  return (
+    <form action={action} className="mt-4 flex flex-col gap-3.5">
+      <input type="hidden" name="organisationId" value={organisationId} />
+      <input type="hidden" name="stepId" value={step.id} />
+
+      <div className="flex flex-wrap items-end gap-3">
+        <label className="flex w-24 flex-col gap-1 text-[13px] font-semibold text-label">
+          Days
+          <input
+            name="days"
+            type="number"
+            min={0}
+            max={MAX_OFFSET_DAYS}
+            step={1}
+            inputMode="numeric"
+            defaultValue={days}
+            disabled={direction === "on"}
+            className={`${FIELD} font-normal disabled:opacity-50`}
+          />
+        </label>
+
+        <label className="flex flex-col gap-1 text-[13px] font-semibold text-label">
+          When
+          <select
+            name="direction"
+            defaultValue={state.submitted?.direction ?? stored.direction}
+            onChange={(event) => setDirection(event.target.value as OffsetDirection)}
+            className={`${FIELD} font-normal`}
+          >
+            <option value="before">before the due date</option>
+            <option value="on">on the due date</option>
+            <option value="after">after the due date</option>
+          </select>
+        </label>
+      </div>
+
+      <label className="flex items-start gap-2.5 text-[13px]">
+        <input
+          name="enabled"
+          type="checkbox"
+          defaultChecked={enabled}
+          className="mt-0.5 size-4 accent-primary"
+        />
+        <span className="flex flex-col gap-0.5">
+          <span className="font-semibold text-label">
+            {handover ? "Hand this invoice back to me" : "Send this reminder"}
+          </span>
+          <span className="text-xs leading-[1.5] text-muted-foreground">
+            {describeDisabling(step.actionType)}
+          </span>
+        </span>
+      </label>
+
+      {state.error && (
+        <p role="alert" className="text-[13px] text-danger">
+          {state.error}
+        </p>
+      )}
+      {state.success && (
+        <p role="status" className="text-[13px] text-success">
+          {state.success}
+        </p>
+      )}
+
+      <div>
+        <button
+          type="submit"
+          disabled={pending}
+          className="cursor-pointer rounded-[var(--radius-control)] bg-primary px-4 py-2 text-[13px] font-semibold text-primary-foreground shadow-[var(--shadow-primary)] transition-opacity hover:opacity-90 disabled:opacity-60"
+        >
+          {pending ? "Saving…" : "Save this stage"}
+        </button>
+      </div>
+    </form>
   );
 }
