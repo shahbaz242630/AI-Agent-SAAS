@@ -3,6 +3,8 @@
 import Link from "next/link";
 import { Fragment, useActionState, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { TableCell, TableRow } from "@/components/ui";
+import { BOOK_COLUMNS } from "./book-columns";
 import {
   recordPayment,
   runInvoiceAction,
@@ -82,18 +84,6 @@ const panelClass = (tone?: "danger"): string =>
 const LABEL = "flex flex-col gap-1.5 text-[13px] font-semibold text-label";
 const FIELD =
   "rounded-[var(--radius-control)] border border-input-border bg-surface px-3 py-2 text-sm font-normal text-foreground outline-none focus:border-primary";
-
-/**
- * How many columns the book has — Client, Email, Phone, Invoice, Due, Amount,
- * Outstanding, Status, Chasing, Actions.
- *
- * ⚠️ IT MUST MATCH THE `<th>` COUNT IN `page.tsx`, which owns the header row.
- * Every full-width row in this file spans it, so a number that drifts low
- * leaves a message short of the right edge and a number that drifts high adds
- * a phantom column to the table's own width. It was written inline as `8` in
- * three places until the client cell became three columns on 2026-08-18.
- */
-const BOOK_COLUMNS = 10;
 
 export interface BookRow {
   id: string;
@@ -219,18 +209,18 @@ export function BookRows({
   return (
     <>
       {lifecycleState.error && (
-        <tr>
-          <td colSpan={BOOK_COLUMNS} className="px-3 py-2 text-sm text-danger" role="alert">
+        <TableRow>
+          <TableCell colSpan={BOOK_COLUMNS} className="text-sm text-danger" role="alert">
             {lifecycleState.error}
-          </td>
-        </tr>
+          </TableCell>
+        </TableRow>
       )}
       {lifecycleState.success && (
-        <tr>
-          <td colSpan={BOOK_COLUMNS} className="px-3 py-2 text-sm text-success" role="status">
+        <TableRow>
+          <TableCell colSpan={BOOK_COLUMNS} className="text-sm text-success" role="status">
             {lifecycleState.success}
-          </td>
-        </tr>
+          </TableCell>
+        </TableRow>
       )}
 
       {rows.map((row) => {
@@ -272,12 +262,12 @@ export function BookRows({
             : []),
         ];
         return (
-          /* ⚠️ THE KEY GOES ON THE FRAGMENT, not the first `<tr>`. A row can
+          /* ⚠️ THE KEY GOES ON THE FRAGMENT, not the first `<TableRow>`. A row can
              render TWO elements — itself and its open panel — so React needs
              the key on the thing the map returns, or it reconciles the wrong
              row when one is added above another. */
           <Fragment key={row.id}>
-            <tr className="border-b border-hairline align-top hover:bg-row-hover">
+            <TableRow hover alignTop>
               {/* ⚠️ THREE COLUMNS, NOT ONE CELL WITH THREE LINES (founder,
                   2026-08-18, walking the screen). The client, the address Eva
                   writes to and the number a person would ring are three
@@ -286,34 +276,34 @@ export function BookRows({
                   thing you had to change all at once. It costs table width,
                   which this table can least afford; that is a real trade and
                   the founder made it knowingly. */}
-              <td className="px-3 py-3.5">
+              <TableCell>
                 <Link
                   href={`/app/clients/${row.customer.id}/invoices`}
                   className="font-medium text-link hover:underline"
                 >
                   {row.customer.name}
                 </Link>
-              </td>
+              </TableCell>
               {/* ⚠️ `recipient`, NOT `contact` — see the type above. A blank
                   here means Eva has nobody to write to, and it must not appear
                   beside an invoice she is chasing through the client. */}
-              <td className="px-3 py-3.5 text-sm text-muted-foreground">
+              <TableCell className="text-sm text-muted-foreground">
                 {row.recipient?.email ?? <MissingValue />}
-              </td>
-              <td className="px-3 py-3.5 text-sm whitespace-nowrap text-muted-foreground">
+              </TableCell>
+              <TableCell className="text-sm whitespace-nowrap text-muted-foreground">
                 {row.recipient?.phone ?? <MissingValue />}
-              </td>
+              </TableCell>
               {/* An invoice number is an identifier and must never break across
                   lines: "INV-" over "2041" is unreadable and unsearchable. */}
-              <td className="px-3 py-3.5 whitespace-nowrap">
+              <TableCell className="whitespace-nowrap">
                 <span className="font-medium">{row.invoiceNumber}</span>
                 {row.description && (
                   <span className="block text-xs whitespace-normal text-muted-foreground">
                     {row.description}
                   </span>
                 )}
-              </td>
-              <td className="px-3 py-3.5 whitespace-nowrap">
+              </TableCell>
+              <TableCell className="whitespace-nowrap">
                 {formatDueDate(row.dueDate)}
                 {/* ⚠️ THE AGEING IS THE SCAN SIGNAL ON THIS SCREEN, and it was
                     the same grey as everything else. Late money is the reason
@@ -327,11 +317,11 @@ export function BookRows({
                 >
                   {ageingBucketLabel(row.ageingBucket)}
                 </span>
-              </td>
-              <td className="px-3 py-3.5 text-right whitespace-nowrap">
+              </TableCell>
+              <TableCell align="right" className="whitespace-nowrap">
                 {formatMoney(row.amountMinorUnits, row.currency)}
-              </td>
-              <td className="px-3 py-3.5 text-right whitespace-nowrap">
+              </TableCell>
+              <TableCell align="right" className="whitespace-nowrap">
                 {/* Bold only when Eva is really collecting it — a cancelled
                     invoice's arithmetic balance is not money anybody is
                     working on. */}
@@ -349,8 +339,8 @@ export function BookRows({
                     {`${formatMoney(row.amountPaidMinorUnits, row.currency)} paid`}
                   </span>
                 )}
-              </td>
-              <td className="px-3 py-3.5">
+              </TableCell>
+              <TableCell>
                 <StatusBadge status={row.displayStatus} />
                 {chaseBlockedLine(row.status, row.chaseBlockedReason) && (
                   <span className="mt-1 block max-w-[14rem] text-xs whitespace-normal text-danger">
@@ -368,15 +358,15 @@ export function BookRows({
                     {draftBlockedLine(row.status, row.chaseBlockedReason)}
                   </span>
                 )}
-              </td>
-              <td className="px-3 py-3.5 text-xs whitespace-nowrap text-muted-foreground">
+              </TableCell>
+              <TableCell className="text-xs whitespace-nowrap text-muted-foreground">
                 {chaseTimingLine({
                   isChased: chased,
                   lastChasedOn: row.lastChasedOn,
                   nextChaseOn: row.nextChaseOn,
                   formatDate: (value) => formatDueDate(value),
                 })}
-              </td>
+              </TableCell>
               {/*
                * ⚠️ PINNED TO THE RIGHT EDGE. This table is wider than its
                * container by design (the spec asks for `overflow-x:auto` and a
@@ -386,7 +376,7 @@ export function BookRows({
                * actions on screen while Client, Due and Chasing scroll beneath.
                * The background must stay opaque or the rows show through.
                */}
-              <td className="sticky right-0 bg-surface px-3 py-3.5 shadow-[var(--shadow-sticky-edge)]">
+              <TableCell sticky className="shadow-[var(--shadow-sticky-edge)]">
                 {/* Empty for a read-only role — the reason is said once above
                     the table rather than repeated on every row of the book.
 
@@ -421,12 +411,12 @@ export function BookRows({
                     />
                   )}
                 </div>
-              </td>
-            </tr>
+              </TableCell>
+            </TableRow>
 
             {isOpen && open && (
-              <tr className="border-b border-hairline">
-                <td colSpan={BOOK_COLUMNS} className="px-3 pb-4">
+              <TableRow>
+                <TableCell colSpan={BOOK_COLUMNS} className="pb-4">
                   {/* ⚠️ THE CONTACT CHECK IS NESTED, NOT `&&`-ed INTO THIS ARM.
                       Written as `kind === "contact" && row.contact ?`, an
                       invoice whose contact vanished would fail this test, fail
@@ -461,8 +451,8 @@ export function BookRows({
                       onClose={() => setPanel(null)}
                     />
                   )}
-                </td>
-              </tr>
+                </TableCell>
+              </TableRow>
             )}
           </Fragment>
         );

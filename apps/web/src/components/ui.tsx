@@ -21,10 +21,41 @@ import Link from "next/link";
  * fifteenth screen is written by copying whichever of them was open.
  *
  * Settings adopted it first; the remaining screens follow.
+ *
+ * ⚠️ `wide` IS FOR SCREENS BUILT AROUND A TABLE, AND IT IS A FOUNDER RULING
+ * TWICE OVER. 1080px is a READING measure — the width at which a line of prose
+ * stays comfortable. A ten-column book is not prose, and at 1080 it scrolled
+ * sideways inside its own card while several hundred pixels of empty paper sat
+ * to its right (founder, 2026-08-18: *"if we utilize empty space on the page on
+ * the right side we will not need the scroll bar"*).
+ *
+ * The book had taken 1600 for itself while `chasing` next door stayed at 1080,
+ * so two screens in ONE product disagreed. Founder, 2026-08-31: one width for
+ * both, and 1600 is the one — told plainly that Chasing's prose would stretch
+ * past a comfortable measure, and chosen anyway.
+ *
+ * ⚠️ CAPPED RATHER THAN UNBOUNDED. Left to fill any monitor, ten columns on an
+ * ultrawide put the client's name and its actions a whole arm apart and the eye
+ * loses the row between them. 1600 clears the book's 1200px floor plus padding
+ * on any normal wide screen without letting a row grow past one glance.
+ *
+ * ⚠️ TWO VALUES, NOT A NUMBER PARAMETER. A width per screen is how three widths
+ * appeared across five settings pages. There is a reading width and a table
+ * width; a screen picks which KIND it is, never its own number.
  */
-export function PageShell({ children }: { children: React.ReactNode }) {
+export function PageShell({
+  wide = false,
+  children,
+}: {
+  wide?: boolean;
+  children: React.ReactNode;
+}) {
   return (
-    <main className="flex w-full max-w-[1080px] flex-1 flex-col gap-[26px] px-10 pt-8 pb-9">
+    <main
+      className={`flex w-full flex-1 flex-col gap-[26px] px-10 pt-8 pb-9 ${
+        wide ? "max-w-[1600px]" : "max-w-[1080px]"
+      }`}
+    >
       {children}
     </main>
   );
@@ -508,5 +539,169 @@ export function GhostButton({
     >
       {children}
     </button>
+  );
+}
+
+/**
+ * A table of rows, on the card the rest of the product uses.
+ *
+ * ⚠️ THIS DID NOT EXIST UNTIL 2026-08-31, AND THAT IS WHY THE TABLES DRIFTED.
+ * The kit had sixteen components and not one of them a table, so **seven files
+ * hand-rolled `<table>`** — and two of them sat in the SAME product. The
+ * founder spotted it from the outside: the book and the chasing screen "still
+ * follow old, not our new style".
+ *
+ * Read side by side they used the same size, weight, tracking and colour on
+ * their headers and still did not match:
+ *
+ *   chasing   uppercase, no rule under the header, `py-2.5`, min-width 640
+ *   invoices  sentence case, `border-b` under the header, `px-3 pt-1 pb-2.5`,
+ *             min-width 1200
+ *
+ * Nobody chose either. Both were typed, months apart, by someone with the other
+ * file closed. Exactly the same failure as the five copied primary buttons: the
+ * kit had no component, so every screen invented one.
+ *
+ * ⚠️ SENTENCE CASE WINS, AND CHASING IS WHAT MOVES. I reached for uppercase
+ * first, on the reasoning that it matches `StatusPill` and the `Off` badge —
+ * and the book's own file says why that is wrong: **the design package uses
+ * uppercase for pills and small section labels and NEVER for a column heading**
+ * (2026-08-18). `clients` was changed FROM uppercase that same day precisely so
+ * the two tables would agree.
+ *
+ * So the tally is 3–1 before you count the rule: invoices, clients and
+ * enquiries are sentence case; only chasing shouts. Standardising on uppercase
+ * would have quietly reversed a reasoned decision and dragged two more screens
+ * with it — caught by reading the file rather than the screenshot.
+ *
+ * The header rule and the `pt-1 pb-2.5` come from the book, because across ten
+ * dense columns a line genuinely helps the eye find the top of the body.
+ *
+ * ⚠️ `minWidth` IS AN INLINE STYLE ON PURPOSE — Tailwind cannot generate
+ * `min-w-[${n}px]` from a variable, because it scans source text at build time
+ * and would emit no class at all. A silently missing min-width means a dense
+ * table quietly squashes instead of scrolling, which is the kind of failure
+ * that ships. It stays a number the caller owns because it is genuinely per
+ * table: four columns need 640, ten need 1200.
+ */
+export interface TableColumn {
+  label: string;
+  align?: "left" | "right";
+  /** Pinned to the right edge while the rest of the table scrolls under it. */
+  sticky?: boolean;
+  /** A controls column: the header is read aloud but never drawn. */
+  srOnly?: boolean;
+}
+
+const CELL_X = "px-3";
+
+export function Table({
+  minWidth,
+  columns,
+  children,
+}: {
+  minWidth: number;
+  columns: readonly TableColumn[];
+  children: React.ReactNode;
+}) {
+  return (
+    <Card className="w-full overflow-x-auto px-6 py-2">
+      <table className="w-full border-collapse text-left text-[13px]" style={{ minWidth }}>
+        <thead>
+          <tr className="border-b border-hairline text-[11.5px] font-semibold tracking-[0.04em] text-faint">
+            {columns.map((column) => (
+              <th
+                key={column.label}
+                className={`${CELL_X} pt-1 pb-2.5 font-semibold ${
+                  column.align === "right" ? "text-right" : ""
+                } ${column.sticky ? "sticky right-0 bg-surface" : ""}`.trim()}
+              >
+                {column.srOnly ? <span className="sr-only">{column.label}</span> : column.label}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>{children}</tbody>
+      </table>
+    </Card>
+  );
+}
+
+/**
+ * One row. The separator lives here so rows cannot disagree about it.
+ *
+ * ⚠️ `border-b`, NOT `border-t`, AND THE DIRECTION IS LOAD-BEARING. The header
+ * already draws a `border-b`; rows that draw a `border-t` as well put TWO
+ * hairlines together directly under it, which reads as one heavy 2px rule. The
+ * two hand-rolled tables each avoided this by accident — chasing had no header
+ * rule, the book put the border on the same edge — and merging them without
+ * noticing would have introduced a defect neither one had.
+ *
+ * `last:border-none` then stops the final row drawing a rule against the card's
+ * own padding, which the book did do.
+ *
+ * ⚠️ `hover` AND `alignTop` ARE FOR ROWS YOU CAN ACT ON. The book's rows expand
+ * into a panel, so they need a hover cue and top-aligned cells; chasing's rows
+ * are a read-only list and get neither. This is a real difference between the
+ * two tables rather than drift, so it is a parameter instead of a merge.
+ */
+export function TableRow({
+  hover = false,
+  alignTop = false,
+  children,
+}: {
+  hover?: boolean;
+  alignTop?: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <tr
+      className={`border-b border-hairline last:border-none ${alignTop ? "align-top" : ""} ${
+        hover ? "hover:bg-row-hover" : ""
+      }`.trim()}
+    >
+      {children}
+    </tr>
+  );
+}
+
+/**
+ * One cell.
+ *
+ * `className` is open because a cell genuinely carries content the kit should
+ * not know about — a status pill, a link, a row of actions. What it does NOT
+ * get to restate is the padding or the alignment.
+ */
+export function TableCell({
+  align,
+  sticky,
+  colSpan,
+  role,
+  className = "",
+  children,
+}: {
+  align?: "left" | "right";
+  sticky?: boolean;
+  /** A cell that spans the whole table — a message, or a row's open panel. */
+  colSpan?: number;
+  /**
+   * ⚠️ A FAILURE MUST INTERRUPT A SCREEN READER AND A SUCCESS MUST NOT — the
+   * same pairing `Notice` makes for itself. The book announces both from inside
+   * a table cell, so the cell has to carry the role.
+   */
+  role?: "alert" | "status";
+  className?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <td
+      {...(colSpan === undefined ? {} : { colSpan })}
+      {...(role === undefined ? {} : { role })}
+      className={`${CELL_X} py-3 ${align === "right" ? "text-right" : ""} ${
+        sticky ? "sticky right-0 bg-surface" : ""
+      } ${className}`.trim()}
+    >
+      {children}
+    </td>
   );
 }

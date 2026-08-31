@@ -1,7 +1,18 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import type { ReminderActivityDto } from "@eva/types";
-import { Card, CounterCard, EmptyState, PageHeader, StatusPill } from "@/components/ui";
+import {
+  Card,
+  CounterCard,
+  EmptyState,
+  PageHeader,
+  PageShell,
+  StatusPill,
+  Table,
+  TableCell,
+  TableRow,
+  type TableColumn,
+} from "@/components/ui";
 import { ApiError, apiFetch } from "@/lib/api";
 import { fetchOrganisations } from "@/lib/organisations";
 import { can } from "@/lib/permissions";
@@ -14,6 +25,21 @@ import {
 } from "@/products/invoice-follow-up/reminder-activity";
 import { createClient } from "@/lib/supabase/server";
 import { dayMonth } from "../week-panel";
+
+/**
+ * ⚠️ THE TWO TABLES ON THIS SCREEN SHARE FOUR COLUMNS AND THE HISTORY ADDS ONE.
+ * Declared once each rather than typed inline twice, which is how the plan and
+ * the history could have drifted from each other the way this screen drifted
+ * from the book.
+ */
+const ACTIVITY_COLUMNS: readonly TableColumn[] = [
+  { label: "Date" },
+  { label: "Client" },
+  { label: "Invoice" },
+  { label: "Stage" },
+];
+
+const HISTORY_COLUMNS: readonly TableColumn[] = [...ACTIVITY_COLUMNS, { label: "Status" }];
 
 /**
  * Chase activity (Slice 1.7; redressed 2026-08-09).
@@ -48,9 +74,9 @@ export default async function RemindersPage() {
 
   if (!organisation) {
     return (
-      <Shell>
+      <PageShell wide>
         <p className="text-sm text-muted-foreground">Create an organisation first.</p>
-      </Shell>
+      </PageShell>
     );
   }
 
@@ -61,12 +87,12 @@ export default async function RemindersPage() {
   // The API's own answer about this caller, never a role name (task 8).
   if (!can(organisation, "reminders:read")) {
     return (
-      <Shell>
+      <PageShell wide>
         {header}
         <p className="text-sm text-muted-foreground">
-          Your role cannot see chasing activity. Ask an owner or administrator.
+          Your role can&apos;t see chasing activity. Ask an owner or administrator.
         </p>
-      </Shell>
+      </PageShell>
     );
   }
 
@@ -92,13 +118,13 @@ export default async function RemindersPage() {
 
   if (!activity) {
     return (
-      <Shell>
+      <PageShell wide>
         {header}
         <Card className="px-6 py-5 text-sm">{loadError}</Card>
         <p className="text-sm text-muted-foreground">
           Reminders that were already scheduled are unaffected — this page only reads them.
         </p>
-      </Shell>
+      </PageShell>
     );
   }
 
@@ -111,7 +137,7 @@ export default async function RemindersPage() {
   });
 
   return (
-    <Shell>
+    <PageShell wide>
       {header}
 
       <div className="flex flex-wrap gap-3">
@@ -177,36 +203,26 @@ export default async function RemindersPage() {
             </div>
           )}
 
-          <Card className="overflow-x-auto px-6 py-2">
-            <table className="w-full min-w-[640px] border-collapse text-left">
-              <thead>
-                <tr className="text-[11.5px] font-semibold tracking-[0.04em] text-faint uppercase">
-                  <th className="py-2.5 font-semibold">Date</th>
-                  <th className="py-2.5 font-semibold">Client</th>
-                  <th className="py-2.5 font-semibold">Invoice</th>
-                  <th className="py-2.5 font-semibold">Stage</th>
-                </tr>
-              </thead>
-              <tbody>
-                {activity.upcoming.map((row) => (
-                  <tr key={row.id} className="border-t border-hairline text-[13px]">
-                    {/* Already a calendar day in the ORG's timezone. */}
-                    <td className="py-3 text-muted-foreground">{dayMonth(row.scheduledDate)}</td>
-                    <td className="py-3 font-semibold">{row.customerName}</td>
-                    <td className="py-3">
-                      <Link
-                        href={`/app/clients/${row.customerId}/invoices`}
-                        className="text-link hover:underline"
-                      >
-                        {row.invoiceNumber}
-                      </Link>
-                    </td>
-                    <td className="py-3 text-muted-foreground">{stageLabel(row.stageKey)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </Card>
+          <Table minWidth={640} columns={ACTIVITY_COLUMNS}>
+            {activity.upcoming.map((row) => (
+              <TableRow key={row.id}>
+                {/* Already a calendar day in the ORG's timezone. */}
+                <TableCell className="text-muted-foreground">
+                  {dayMonth(row.scheduledDate)}
+                </TableCell>
+                <TableCell className="font-semibold">{row.customerName}</TableCell>
+                <TableCell>
+                  <Link
+                    href={`/app/clients/${row.customerId}/invoices`}
+                    className="text-link hover:underline"
+                  >
+                    {row.invoiceNumber}
+                  </Link>
+                </TableCell>
+                <TableCell className="text-muted-foreground">{stageLabel(row.stageKey)}</TableCell>
+              </TableRow>
+            ))}
+          </Table>
 
           {/* ⚠️ NO SILENT TRUNCATION. The list is the near horizon; the count
               is the whole plan, and a reader who sees ten rows must not be left
@@ -225,59 +241,43 @@ export default async function RemindersPage() {
         {activity.recent.length === 0 ? (
           <EmptyState {...emptyHistory} />
         ) : (
-          <Card className="overflow-x-auto px-6 py-2">
-            <table className="w-full min-w-[640px] border-collapse text-left">
-              <thead>
-                <tr className="text-[11.5px] font-semibold tracking-[0.04em] text-faint uppercase">
-                  <th className="py-2.5 font-semibold">Date</th>
-                  <th className="py-2.5 font-semibold">Client</th>
-                  <th className="py-2.5 font-semibold">Invoice</th>
-                  <th className="py-2.5 font-semibold">Stage</th>
-                  <th className="py-2.5 font-semibold">Status</th>
-                </tr>
-              </thead>
-              <tbody>
-                {activity.recent.map((row) => (
-                  <tr key={row.id} className="border-t border-hairline text-[13px]">
-                    {/* Already a calendar day in the ORG's timezone — sliced,
-                        never re-derived. See `dayMonth`. */}
-                    <td className="py-3 text-muted-foreground">{dayMonth(row.scheduledDate)}</td>
-                    <td className="py-3 font-semibold">{row.customerName}</td>
-                    <td className="py-3">
-                      <Link
-                        href={`/app/clients/${row.customerId}/invoices`}
-                        className="text-link hover:underline"
-                      >
-                        {row.invoiceNumber}
-                      </Link>
-                    </td>
-                    <td className="py-3 text-muted-foreground">{stageLabel(row.stageKey)}</td>
-                    <td className="py-3">
-                      <StatusPill tone={statusTone(row.status)}>
-                        {statusLabel(row.status)}
-                      </StatusPill>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </Card>
+          <Table minWidth={640} columns={HISTORY_COLUMNS}>
+            {activity.recent.map((row) => (
+              <TableRow key={row.id}>
+                {/* Already a calendar day in the ORG's timezone — sliced,
+                    never re-derived. See `dayMonth`. */}
+                <TableCell className="text-muted-foreground">
+                  {dayMonth(row.scheduledDate)}
+                </TableCell>
+                <TableCell className="font-semibold">{row.customerName}</TableCell>
+                <TableCell>
+                  <Link
+                    href={`/app/clients/${row.customerId}/invoices`}
+                    className="text-link hover:underline"
+                  >
+                    {row.invoiceNumber}
+                  </Link>
+                </TableCell>
+                <TableCell className="text-muted-foreground">{stageLabel(row.stageKey)}</TableCell>
+                <TableCell>
+                  <StatusPill tone={statusTone(row.status)}>{statusLabel(row.status)}</StatusPill>
+                </TableCell>
+              </TableRow>
+            ))}
+          </Table>
         )}
       </section>
-    </Shell>
+    </PageShell>
   );
 }
 
-/**
+/*
  * ⚠️ THE OLD PER-SCREEN FOOTER LINKS ARE GONE. They predated the shell and one
  * of them still called `/app` "Your account", which it stopped being in slice
  * 1.9. The sidebar is the way around the product now; a second, staler set of
  * links below the fold was only ever a way to get somewhere wrong.
+ *
+ * The local `Shell` that carried that note is gone too (2026-08-31). It was a
+ * hand-typed copy of `PageShell` — identical to the day it was written, which
+ * is exactly how it escaped notice while the book next door drifted to 1600.
  */
-function Shell({ children }: { children: React.ReactNode }) {
-  return (
-    <main className="flex w-full max-w-[1080px] flex-1 flex-col gap-[26px] px-10 pt-8 pb-9">
-      {children}
-    </main>
-  );
-}
