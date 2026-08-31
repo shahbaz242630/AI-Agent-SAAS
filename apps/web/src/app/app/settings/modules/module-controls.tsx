@@ -1,12 +1,11 @@
 "use client";
 
 import { useActionState, useState } from "react";
+import { PrimarySubmit } from "@/components/ui";
 import { setModule, type MailboxActionState } from "../actions";
 
 const INITIAL_STATE: MailboxActionState = {};
 
-const PRIMARY =
-  "rounded-[var(--radius-card)] bg-primary px-4 py-2 text-sm font-medium text-primary-foreground disabled:opacity-60";
 const SECONDARY =
   "rounded-[var(--radius-card)] bg-background px-4 py-2 text-sm font-medium hover:opacity-80 disabled:opacity-60";
 
@@ -114,24 +113,22 @@ export function ModuleControls({
         )}
 
         {showSeats && (
-          <button type="submit" name="intent" value="seats" disabled={pending} className={PRIMARY}>
+          <PrimarySubmit name="intent" value="seats" disabled={pending}>
             {pending ? "Saving…" : "Save seats"}
-          </button>
+          </PrimarySubmit>
         )}
 
         {/* Turning ON is one click. Turning OFF is the one that costs
             something, so it asks — see `confirming` below. */}
         {!enabled && (
-          <button
-            type="submit"
+          <PrimarySubmit
             name="intent"
             value="enable"
             onClick={() => setConfirming(false)}
             disabled={pending || blocked}
-            className={PRIMARY}
           >
             Turn on
-          </button>
+          </PrimarySubmit>
         )}
 
         {enabled && !confirming && (
@@ -171,15 +168,9 @@ export function ModuleControls({
             nothing is deleted.
           </p>
           <div className="flex flex-wrap gap-2">
-            <button
-              type="submit"
-              name="intent"
-              value="disable"
-              disabled={pending}
-              className={PRIMARY}
-            >
+            <PrimarySubmit name="intent" value="disable" disabled={pending}>
               {pending ? "Turning off…" : `Turn off ${productName}`}
-            </button>
+            </PrimarySubmit>
             <button
               type="button"
               onClick={() => setConfirming(false)}

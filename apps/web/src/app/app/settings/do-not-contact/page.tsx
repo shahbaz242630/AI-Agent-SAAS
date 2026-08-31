@@ -2,7 +2,7 @@ import { redirect } from "next/navigation";
 import { ApiError, apiFetch } from "@/lib/api";
 import { fetchOrganisations } from "@/lib/organisations";
 import { createClient } from "@/lib/supabase/server";
-import { EmptyState } from "@/components/ui";
+import { Card, EmptyState } from "@/components/ui";
 import {
   channelLabel,
   doNotContactCountLine,
@@ -11,7 +11,7 @@ import {
 } from "@/lib/do-not-contact";
 import { describeMoment } from "@/lib/today";
 import { CorrectControl } from "./correct-control";
-import { SettingsTabs } from "../settings-tabs";
+import { NoOrganisation, SettingsShell } from "../settings-shell";
 
 /**
  * Everyone Eva will not contact, and the way to fix an entry made by mistake
@@ -64,11 +64,9 @@ export default async function DoNotContactPage() {
 
   if (!organisation) {
     return (
-      <Shell>
-        <p className="w-full max-w-2xl text-sm text-muted-foreground">
-          Create an organisation first.
-        </p>
-      </Shell>
+      <Frame>
+        <NoOrganisation />
+      </Frame>
     );
   }
 
@@ -88,22 +86,13 @@ export default async function DoNotContactPage() {
   }
 
   return (
-    <Shell>
-      <section className="flex w-full max-w-3xl flex-col gap-2">
-        <h1 className="font-display text-[29px] leading-tight font-semibold">Do not contact</h1>
-        <p className="text-sm text-muted-foreground">
-          {`People Eva will never write to or ring for ${organisation.name}, whichever product they came from.`}
-        </p>
-      </section>
-
-      <SettingsTabs current="do-not-contact" />
-
+    <Frame name={organisation.name}>
       {/*
         ⚠️ THE PERMANENCE IS SAID FIRST, NOT AS A FOOTNOTE. Everything below is
         about the one exception to it, and a reader who meets the exception
         before the rule takes away the wrong impression.
       */}
-      <section className="flex w-full max-w-3xl flex-col gap-2 rounded-[var(--radius-card)] border border-border bg-surface px-6 py-4">
+      <Card className="flex flex-col gap-2 px-6 py-5">
         <p className="text-sm">
           When somebody asks not to be contacted, that holds forever and across everything — email
           and phone, enquiries and invoices alike.
@@ -113,10 +102,10 @@ export default async function DoNotContactPage() {
           is ever deleted: a correction is recorded alongside the original, with who made it and
           why.
         </p>
-      </section>
+      </Card>
 
       {forbidden || !rows ? (
-        <p className="w-full max-w-3xl text-sm text-muted-foreground">
+        <p className="text-sm text-muted-foreground">
           {`Your role can't see ${organisation.name}'s do-not-contact list. Ask an owner or administrator.`}
         </p>
       ) : rows.length === 0 ? (
@@ -125,43 +114,50 @@ export default async function DoNotContactPage() {
           detail="When somebody asks not to be contacted, they will appear here — and stay here."
         />
       ) : (
-        <section className="flex w-full max-w-3xl flex-col gap-3">
+        <section className="flex flex-col gap-3">
           <p className="text-sm text-muted-foreground">{doNotContactCountLine(rows.length)}</p>
 
           <ul className="flex flex-col gap-3">
             {rows.map((row) => (
-              <li
-                key={`${row.channel} ${row.value}`}
-                className="flex flex-col gap-3 rounded-[var(--radius-card)] border border-border bg-surface px-6 py-4"
-              >
-                <div className="flex flex-col gap-1">
-                  <p className="font-medium">{row.value}</p>
-                  <p className="text-sm text-muted-foreground">
-                    {`${channelLabel(row.channel)} · added ${describeMoment(row.since, timezone)} by ${recordedByLine(row.recordedBy)}`}
-                  </p>
-                  <p className="text-sm text-muted-foreground">
-                    {suppressionReasonLine(row.reason)}
-                  </p>
-                </div>
+              <li key={`${row.channel} ${row.value}`}>
+                <Card className="flex flex-col gap-3 px-6 py-4">
+                  <div className="flex flex-col gap-1">
+                    <p className="font-medium">{row.value}</p>
+                    <p className="text-sm text-muted-foreground">
+                      {`${channelLabel(row.channel)} · added ${describeMoment(row.since, timezone)} by ${recordedByLine(row.recordedBy)}`}
+                    </p>
+                    <p className="text-sm text-muted-foreground">
+                      {suppressionReasonLine(row.reason)}
+                    </p>
+                  </div>
 
-                <CorrectControl
-                  organisationId={organisation.id}
-                  channel={row.channel}
-                  value={row.value}
-                />
+                  <CorrectControl
+                    organisationId={organisation.id}
+                    channel={row.channel}
+                    value={row.value}
+                  />
+                </Card>
               </li>
             ))}
           </ul>
         </section>
       )}
-    </Shell>
+    </Frame>
   );
 }
 
-function Shell({ children }: { children: React.ReactNode }) {
+function Frame({ name, children }: { name?: string; children: React.ReactNode }) {
   return (
-    <main className="flex w-full max-w-[1080px] flex-1 flex-col gap-[26px] px-10 pt-8 pb-9">
+    <SettingsShell
+      title="Do not contact"
+      subtitle={
+        name
+          ? `People Eva will never write to or ring for ${name}, whichever product they came from.`
+          : "People Eva will never write to or ring, whichever product they came from."
+      }
+      current="do-not-contact"
+    >
       {children}
-    </main>
+    </SettingsShell>
   );
 }

@@ -3,6 +3,7 @@
 import { useActionState, useState } from "react";
 import type { ReminderStepDto } from "@eva/types";
 import { stageLabel } from "@/products/invoice-follow-up/reminder-activity";
+import { PrimarySubmit } from "@/components/ui";
 import {
   MAX_OFFSET_DAYS,
   describeDisabling,
@@ -285,13 +286,7 @@ export function StepForm({
       )}
 
       <div>
-        <button
-          type="submit"
-          disabled={pending}
-          className="cursor-pointer rounded-[var(--radius-control)] bg-primary px-4 py-2 text-[13px] font-semibold text-primary-foreground shadow-[var(--shadow-primary)] transition-opacity hover:opacity-90 disabled:opacity-60"
-        >
-          {pending ? "Saving…" : "Save this stage"}
-        </button>
+        <PrimarySubmit disabled={pending}>{pending ? "Saving…" : "Save this stage"}</PrimarySubmit>
       </div>
     </form>
   );

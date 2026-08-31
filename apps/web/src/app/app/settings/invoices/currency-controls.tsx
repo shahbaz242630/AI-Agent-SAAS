@@ -2,6 +2,7 @@
 
 import { useActionState } from "react";
 import { CURRENCY_SUGGESTIONS } from "@/lib/currencies";
+import { PrimarySubmit } from "@/components/ui";
 import { setDefaultCurrency, type SettingsActionState } from "./actions";
 
 /**
@@ -69,13 +70,7 @@ export function CurrencyControls({
       )}
 
       <div>
-        <button
-          type="submit"
-          disabled={pending}
-          className="rounded-[var(--radius-card)] bg-primary px-4 py-2 text-sm font-medium text-primary-foreground disabled:opacity-60"
-        >
-          {pending ? "Saving…" : "Save"}
-        </button>
+        <PrimarySubmit disabled={pending}>{pending ? "Saving…" : "Save"}</PrimarySubmit>
       </div>
     </form>
   );

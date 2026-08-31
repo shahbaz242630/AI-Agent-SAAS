@@ -1,11 +1,18 @@
 import Link from "next/link";
 
 /**
- * The four settings screens, as one row of pills (2026-08-09 design handoff).
+ * The five settings screens, as one row of pills (2026-08-09 design handoff).
  *
- * ⚠️ THE SIDEBAR HAS ONE "SETTINGS" LINK AND THERE ARE FOUR SCREENS BEHIND IT.
+ * ⚠️ THE SIDEBAR HAS ONE "SETTINGS" LINK AND THERE ARE FIVE SCREENS BEHIND IT.
  * Before this, the only way to reach Mailbox or Modules was to already know the
  * URL — the same maze the app shell was built to end, surviving one level down.
+ *
+ * ⚠️ IT SAID "FOUR" IN BOTH PLACES UNTIL 2026-08-30, NINE DAYS AFTER DO NOT
+ * CONTACT BECAME THE FIFTH. The note that added the fifth tab is thirty lines
+ * below and was written by somebody who never scrolled back up. Copy has no
+ * assertions unless somebody writes them — `settings-consistency.spec.tsx` now
+ * counts the tabs and reads this sentence, so the next tab cannot land without
+ * fixing it.
  *
  * ⚠️ NOT PERMISSION-FILTERED, the same rule as the sidebar. Every destination
  * explains its own refusal by name, and hiding a tab leaves a colleague unable

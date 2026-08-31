@@ -2,6 +2,7 @@
 
 import { useActionState, useState } from "react";
 import type { MailboxSummary } from "@/components/mailbox-card";
+import { PrimarySubmit } from "@/components/ui";
 import { replaceMessage } from "@/capabilities/mailbox/mailbox-messages";
 import {
   connectMailbox,
@@ -13,8 +14,6 @@ import {
 
 const INITIAL_STATE: MailboxActionState = {};
 
-const BUTTON_CLASS =
-  "rounded-[var(--radius-card)] bg-primary px-4 py-2 text-sm font-medium text-primary-foreground disabled:opacity-60";
 const SMALL_BUTTON_CLASS =
   "rounded-[var(--radius-card)] bg-muted px-3 py-1.5 text-xs font-medium hover:opacity-80 disabled:opacity-60";
 const DANGER_BUTTON_CLASS =
@@ -269,9 +268,7 @@ export function ConnectMailboxForm({
         </p>
       </div>
       <div>
-        <button type="submit" className={BUTTON_CLASS}>
-          {label ?? `Connect ${chosen.name} mailbox`}
-        </button>
+        <PrimarySubmit>{label ?? `Connect ${chosen.name} mailbox`}</PrimarySubmit>
       </div>
     </form>
   );

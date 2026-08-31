@@ -1,7 +1,7 @@
 "use client";
 
 import { useActionState, useState } from "react";
-import { PrimaryButton } from "@/components/ui";
+import { GhostButton, PrimarySubmit } from "@/components/ui";
 import { correctSuppression, type CorrectionState } from "./actions";
 
 /**
@@ -42,13 +42,9 @@ export function CorrectControl({
 
   if (!open) {
     return (
-      <button
-        type="button"
-        onClick={() => setOpen(true)}
-        className="rounded-[var(--radius-control)] border border-input-border bg-surface px-3 py-1.5 text-xs font-semibold hover:bg-chip-hover"
-      >
+      <GhostButton size="sm" onClick={() => setOpen(true)}>
         Recorded in error?
-      </button>
+      </GhostButton>
     );
   }
 
@@ -91,17 +87,17 @@ export function CorrectControl({
 
       {state.error && <p className="text-sm text-danger">{state.error}</p>}
 
+      {/* ⚠️ THE PRIMARY IS THE DASHBOARD-SIZE SUBMIT, NOT THE LARGE ONE. This
+          row used to pair `PrimaryButton` (`py-[11px]`, `text-sm` — the
+          sign-in/setup button) with a hand-written Cancel at `py-2`/13px, so
+          two buttons doing equal-and-opposite things stood at different
+          heights. This is a correction form inside a list row, not a screen
+          with one thing to do. */}
       <div className="flex flex-wrap items-center gap-3">
-        <PrimaryButton disabled={pending}>
+        <PrimarySubmit disabled={pending}>
           {pending ? "Recording…" : "Record it as an error"}
-        </PrimaryButton>
-        <button
-          type="button"
-          onClick={() => setOpen(false)}
-          className="rounded-[var(--radius-control)] border border-input-border bg-surface px-4 py-2 text-[13px] font-semibold hover:bg-chip-hover"
-        >
-          Cancel
-        </button>
+        </PrimarySubmit>
+        <GhostButton onClick={() => setOpen(false)}>Cancel</GhostButton>
       </div>
     </form>
   );
