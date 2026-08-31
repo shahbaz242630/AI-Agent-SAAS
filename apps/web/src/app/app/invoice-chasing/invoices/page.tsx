@@ -13,10 +13,19 @@ import { defaultInvoiceCurrency } from "@/lib/currencies";
 import { formatMoney } from "@/lib/money";
 import { can, readOnlyInvoicesLine } from "@/lib/permissions";
 import { createClient } from "@/lib/supabase/server";
-import { GhostLink } from "@/components/ui";
+import {
+  Card,
+  GhostLink,
+  Notice,
+  PageHeader,
+  PageShell,
+  PrimaryLink,
+  Table,
+} from "@/components/ui";
 import { AddRowForm } from "./add-row-form";
 import type { PickableClient } from "./client-picker";
 import { BookRows, type BookRow } from "./book-rows";
+import { BOOK_HEADINGS } from "./book-columns";
 
 /**
  * The whole book — every client's invoices on one screen (slice 1.6c, task 9).
@@ -112,14 +121,14 @@ export default async function InvoiceBookPage({
 
   if (!organisation) {
     return (
-      <Shell>
+      <PageShell wide>
         <p className="w-full text-sm text-muted-foreground">
           Create an organisation first.{" "}
           <Link href="/app/organisations/new" className="font-medium text-link hover:underline">
             New organisation
           </Link>
         </p>
-      </Shell>
+      </PageShell>
     );
   }
 
@@ -146,31 +155,33 @@ export default async function InvoiceBookPage({
 
   if (notEntitled) {
     return (
-      <Shell>
-        <section className="flex w-full flex-col gap-3 rounded-[var(--radius-card)] border border-border bg-surface px-6 py-4">
+      <PageShell wide>
+        {/* ⚠️ THAT LINK WAS THE SIXTH COPY OF THE WRONG PRIMARY (2026-08-31).
+            Card radius, `text-sm`, `font-medium`, no shadow — the exact shape
+            the settings pass replaced five times over, sitting on a screen
+            nobody had read side by side with them. `PrimaryLink` navigates, so
+            it is the right one here rather than `PrimarySubmit`. */}
+        <Card className="flex w-full flex-col gap-3 px-6 py-4">
           <p className="text-sm">
             {`${organisation.name} doesn't have Invoice Chasing, so there are no invoices to show yet.`}
           </p>
           <div>
-            <Link
-              href="/app/settings/modules"
-              className="rounded-[var(--radius-card)] bg-primary px-4 py-2 text-sm font-medium text-primary-foreground"
-            >
-              See your products
-            </Link>
+            <PrimaryLink href="/app/settings/modules">See your products</PrimaryLink>
           </div>
-        </section>
-      </Shell>
+        </Card>
+      </PageShell>
     );
   }
 
   if (forbidden || !book) {
     return (
-      <Shell>
+      <PageShell wide>
         <p className="w-full text-sm text-muted-foreground">
-          {`Your role doesn't have access to invoices for ${organisation.name}. Ask an owner or administrator.`}
+          {/* One wording for every refusal in the product — the settings pass
+              settled on this on 2026-08-30 and this screen was not in it. */}
+          {`Your role can't see invoices for ${organisation.name}. Ask an owner or administrator.`}
         </p>
-      </Shell>
+      </PageShell>
     );
   }
 
@@ -242,13 +253,11 @@ export default async function InvoiceBookPage({
   const canEditContacts = can(organisation, "contacts:write");
 
   return (
-    <Shell>
-      <section className="flex w-full flex-col gap-2">
-        <h1 className="font-display text-[29px] leading-tight font-semibold">Invoices</h1>
-        <p className="text-sm text-muted-foreground">
-          {`Everything ${organisation.name} is owed, oldest first. Eva chases what is left, never the total.`}
-        </p>
-      </section>
+    <PageShell wide>
+      <PageHeader
+        title="Invoices"
+        subtitle={`Everything ${organisation.name} is owed, oldest first. Eva chases what is left, never the total.`}
+      />
 
       {canWrite ? (
         <AddRowForm
@@ -267,22 +276,24 @@ export default async function InvoiceBookPage({
            `invoices:write` are separate permissions, so a role that may upload
            a spreadsheet but not type a row still needs its button — it just no
            longer has anything to sit beside. */
-        <div className="flex w-full max-w-6xl flex-col gap-3">
+        /* ⚠️ THE `max-w-6xl` HERE WAS A THIRD WIDTH ON A SCREEN THAT ALREADY
+           HAD TWO (removed 2026-08-31) — 1152px, on one branch of one screen,
+           so the read-only view of the book was narrower than the writable one
+           and nobody could see both at once to notice. */
+        <div className="flex w-full flex-col gap-3">
           {canImport && (
             <div className="flex flex-wrap items-center gap-2">
               <GhostLink href={IMPORT}>Upload a spreadsheet</GhostLink>
             </div>
           )}
-          <p className="w-full rounded-[var(--radius-card)] border border-border bg-surface px-6 py-3 text-sm text-muted-foreground">
-            {readOnlyInvoicesLine(organisation.name)}
-          </p>
+          <Notice tone="muted">{readOnlyInvoicesLine(organisation.name)}</Notice>
         </div>
       )}
 
       {/* The money, one currency at a time — with the others named beside it so
           choosing GBP cannot hide the AED (founder's ruling 2026-08-04). It
           counts what the TABS below have selected, and says which that is. */}
-      <section className="flex w-full flex-col gap-2 rounded-[var(--radius-card)] border border-border bg-surface px-6 py-4">
+      <Card className="flex w-full flex-col gap-2 px-6 py-4">
         <div className="flex flex-wrap items-baseline gap-3">
           <p className="text-sm font-medium">
             {bookTotalLine({
@@ -318,7 +329,7 @@ export default async function InvoiceBookPage({
             {otherCurrenciesLine(currencies, selectedCurrency)}
           </p>
         )}
-      </section>
+      </Card>
 
       <section className="flex w-full flex-col gap-3">
         <div className="flex flex-wrap items-center gap-2">
@@ -366,56 +377,24 @@ export default async function InvoiceBookPage({
       </section>
 
       {book.rows.length > 0 && (
-        <section className="w-full overflow-x-auto rounded-[var(--radius-card)] border border-border bg-surface px-6 py-3">
-          {/* ⚠️ THE MINIMUM GREW WITH THE COLUMN COUNT (2026-08-18). Email and
-              phone left the client cell and became columns of their own, and a
-              1200px floor is what stops the ten of them crushing each other
-              before the horizontal scroll takes over. The `<th>` count here is
-              the number `BOOK_COLUMNS` in `book-rows.tsx` must equal. */}
-          <table className="w-full min-w-[1200px] border-collapse text-sm">
-            {/* ⚠️ THE HEADER HAS TO STOP LOOKING LIKE ANOTHER ROW (founder,
-                2026-08-18: the book "looks really ugly, it shows like a table or
-                boxes"). It was body-sized grey text over a `border-muted` rule —
-                the same weight as the data beneath it, so the eye read eleven
-                rows where there are ten and a label. Smaller, bolder, tracked
-                and faint reads as a label; a hairline below it stops the rule
-                being the heaviest thing on the card.
-
-                ⚠️ SENTENCE CASE, NOT UPPERCASE. The design package uses
-                uppercase for pills and small section labels — "Outstanding ·
-                GBP", "Modules" — and never for a column heading. Clients shouted
-                its headers until today; the two tables agree now. */}
-            <thead>
-              <tr className="border-b border-hairline text-left text-[11.5px] font-semibold tracking-[0.04em] text-faint">
-                <th className="px-3 pt-1 pb-2.5">Client</th>
-                <th className="px-3 pt-1 pb-2.5">Email</th>
-                <th className="px-3 pt-1 pb-2.5">Phone</th>
-                <th className="px-3 pt-1 pb-2.5">Invoice</th>
-                <th className="px-3 pt-1 pb-2.5">Due</th>
-                <th className="px-3 pt-1 pb-2.5 text-right">Amount</th>
-                <th className="px-3 pt-1 pb-2.5 text-right">Outstanding</th>
-                <th className="px-3 pt-1 pb-2.5">Status</th>
-                <th className="px-3 pt-1 pb-2.5">Chasing</th>
-                {/* Pinned with its column — see the `td` in `book-rows.tsx`. */}
-                <th className="sticky right-0 bg-surface px-3 pt-1 pb-2.5">
-                  <span className="sr-only">Actions</span>
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {/* Rows are a client component because acting on one — paying it,
-                  pausing it, cancelling it — opens a panel underneath, and the
-                  rules and words for all of that come from
-                  `products/invoice-follow-up/invoice-lifecycle.ts` rather than being restated here. */}
-              <BookRows
-                organisationId={organisation.id}
-                rows={book.rows}
-                canWrite={canWrite}
-                canEditContacts={canEditContacts}
-              />
-            </tbody>
-          </table>
-        </section>
+        /* ⚠️ THE MINIMUM GREW WITH THE COLUMN COUNT (2026-08-18). Email and
+           phone left the client cell and became columns of their own, and a
+           1200px floor is what stops the ten of them crushing each other before
+           the horizontal scroll takes over. `BOOK_COLUMNS` in `book-rows.tsx`
+           is now DERIVED from `BOOK_HEADINGS.length` beside it, so the two can
+           no longer disagree — better than a test that notices afterwards. */
+        <Table minWidth={1200} columns={BOOK_HEADINGS}>
+          {/* Rows are a client component because acting on one — paying it,
+              pausing it, cancelling it — opens a panel underneath, and the
+              rules and words for all of that come from
+              `products/invoice-follow-up/invoice-lifecycle.ts` rather than being restated here. */}
+          <BookRows
+            organisationId={organisation.id}
+            rows={book.rows}
+            canWrite={canWrite}
+            canEditContacts={canEditContacts}
+          />
+        </Table>
       )}
 
       {book.totalCount > PAGE_SIZE && (
@@ -441,11 +420,11 @@ export default async function InvoiceBookPage({
           )}
         </nav>
       )}
-    </Shell>
+    </PageShell>
   );
 }
 
-/**
+/*
  * ⚠️ THE OLD PER-SCREEN FOOTER LINKS ARE GONE — the same removal the reminders
  * screen had in slice 1.9, finished here on 2026-08-11 after the founder found
  * the leftovers by walking the product.
@@ -455,29 +434,9 @@ export default async function InvoiceBookPage({
  * which stopped being the account page in slice 1.9 and is now Home. A second,
  * staler set of navigation is not redundancy; it is a way to get somewhere
  * other than where the label promised.
- */
-/**
- * ⚠️ THIS SCREEN IS WIDER THAN THE OTHER NINE, AND THAT IS DELIBERATE (founder,
- * 2026-08-18: *"if we utilize empty space on the page on the right side we will
- * not need the scroll bar"*).
  *
- * Every other screen caps its main column at the design package's 1080px,
- * which is a READING width — the measure at which a line of prose stays
- * comfortable. The book is not prose. It is ten columns of facts, and at 1080
- * it was scrolling sideways inside its own card while several hundred pixels of
- * empty paper sat to its right. A table that hides half of itself to protect a
- * reading measure has the trade exactly backwards.
- *
- * ⚠️ CAPPED RATHER THAN UNBOUNDED. Left to fill any monitor, ten columns on an
- * ultrawide put the client's name and its actions a whole arm apart, and the
- * eye loses the row between them. 1600 clears the table's 1200px floor plus its
- * padding on any normal wide screen — no horizontal scrollbar — without letting
- * a row grow past what one glance can follow.
+ * ⚠️ AND THE WIDTH THIS SCREEN INVENTED NOW LIVES IN THE KIT (2026-08-31). It
+ * kept its own 1600px `Shell` while `chasing` next door kept a 1080px copy, so
+ * two screens in one product disagreed and neither knew. Both are
+ * `PageShell wide` now; the reasoning for 1600 moved to `PageShell` with it.
  */
-function Shell({ children }: { children: React.ReactNode }) {
-  return (
-    <main className="flex w-full max-w-[1600px] flex-1 flex-col gap-[26px] px-10 pt-8 pb-9">
-      {children}
-    </main>
-  );
-}
