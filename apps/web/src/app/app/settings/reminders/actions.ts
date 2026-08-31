@@ -41,6 +41,16 @@ export interface ReminderStepActionState {
    * the currency screen hit first.
    */
   submitted?: { direction: OffsetDirection; days: string; enabled: boolean };
+  /**
+   * ⚠️ A CHANGE TOKEN, NOT A TIMESTAMP — nothing displays it and nothing should
+   * reason about when it happened. The form keys off it so that every answer
+   * from the server rebuilds the editor from what is true now. Without it, a
+   * save that stores the SAME value produces an identical state object, the
+   * form is never rebuilt, and the reset React performs is left standing — the
+   * defect of 2026-08-31, where pressing Save twice moved a reminder from 7
+   * days after the due date to 7 days before it. See `StepForm`.
+   */
+  at?: number;
 }
 
 async function getAccessToken(): Promise<string | null> {
@@ -81,12 +91,12 @@ export async function updateReminderStep(
   const submitted = { direction, days: rawDays, enabled };
 
   if (direction !== "on" && rawDays === "") {
-    return { stepId, submitted, error: "Enter how many days." };
+    return { stepId, submitted, at: Date.now(), error: "Enter how many days." };
   }
   const days = direction === "on" ? 0 : Number(rawDays);
 
   const invalid = validateOffset(direction, days);
-  if (invalid) return { stepId, submitted, error: invalid };
+  if (invalid) return { stepId, submitted, at: Date.now(), error: invalid };
 
   const offsetDays = toOffsetDays(direction, days);
 
@@ -108,6 +118,7 @@ export async function updateReminderStep(
     return {
       stepId,
       submitted,
+      at: Date.now(),
       error:
         error instanceof ApiError
           ? (humanRefusal(error.status, "change-reminder-timing") ?? error.message)
@@ -125,6 +136,7 @@ export async function updateReminderStep(
 
   return {
     stepId,
+    at: Date.now(),
     success: enabled
       ? `Saved — ${describeOffset(offsetDays).toLowerCase()}. Invoices you are already chasing have been rescheduled too.`
       : "Saved — Eva will skip this stage. Invoices you are already chasing have been rescheduled too.",
