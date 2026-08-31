@@ -11,8 +11,9 @@ import {
 } from "@/capabilities/mailbox/mailbox-errors";
 import { disconnectMessage } from "@/capabilities/mailbox/mailbox-messages";
 import { createClient } from "@/lib/supabase/server";
+import { Card, Notice, PrimaryLink } from "@/components/ui";
 import { ConnectMailboxForm, MailboxActions } from "./mailbox-controls";
-import { SettingsTabs } from "../settings-tabs";
+import { NoOrganisation, SettingsShell } from "../settings-shell";
 
 // Response shapes mirror the API contracts (apps/api modules/mailboxes).
 interface OrganisationSummary {
@@ -105,21 +106,16 @@ export default async function MailboxSettingsPage({
     errorCode && !showConsentHelp ? mailboxErrorMessage(errorCode, provider) : null;
 
   return (
-    <main className="flex w-full max-w-[1080px] flex-1 flex-col gap-[26px] px-10 pt-8 pb-9">
-      <section className="flex w-full max-w-2xl flex-col gap-2">
-        <h1 className="font-display text-[29px] leading-tight font-semibold">Mailbox settings</h1>
-        {/* ⚠️ SAID "the Microsoft 365 mailbox" UNTIL 3.1b. Spotted on the live
-            page immediately after shipping the Gmail picker directly beneath
-            it — a heading promising Microsoft above a control offering Gmail.
-            The third sentence this slice made false, and the third found by
-            looking at the screen rather than by a test. */}
-        <p className="text-sm text-muted-foreground">
-          Connect the mailbox Eva sends from — Outlook, Microsoft 365 or Gmail.
-        </p>
-      </section>
-
-      <SettingsTabs current="mailbox" />
-
+    // ⚠️ THE SUBTITLE SAID "the Microsoft 365 mailbox" UNTIL 3.1b. Spotted on
+    // the live page immediately after shipping the Gmail picker directly
+    // beneath it — a heading promising Microsoft above a control offering
+    // Gmail. The third sentence this slice made false, and the third found by
+    // looking at the screen rather than by a test.
+    <SettingsShell
+      title="Mailbox settings"
+      subtitle="Connect the mailbox Eva sends from — Outlook, Microsoft 365 or Gmail."
+      current="mailbox"
+    >
       {/* ONE message, three endings. `test_email` only ever arrives alongside
           `connected=1`, so a separate box for the failure printed "Mailbox
           connected successfully" directly above "we couldn't send its test
@@ -127,18 +123,13 @@ export default async function MailboxSettingsPage({
           styled as a caveat, not an error: the connection succeeded and read
           access was proven, only the send did not land. */}
       {flashConnected && (
-        <p
-          role="status"
-          className={`w-full max-w-2xl rounded-[var(--radius-card)] border border-border bg-surface px-6 py-3 text-sm ${
-            testEmailFailed ? "text-muted-foreground" : "text-success"
-          }`}
-        >
+        <Notice tone={testEmailFailed ? "muted" : "success"}>
           {params.test_email === "sent"
             ? "Mailbox connected. We've sent a test email to it — check the inbox."
             : testEmailFailed
               ? "Mailbox connected, but we couldn't send its test email. Try Send test email below."
               : "Mailbox connected successfully."}
-        </p>
+        </Notice>
       )}
       {/* An approving administrator no longer lands here at all — they get the
           public /microsoft-approved receipt, because they usually have no Eva
@@ -148,16 +139,13 @@ export default async function MailboxSettingsPage({
           people: the ones filed under that mailbox, and everyone who was never
           filed and follows the default wherever it goes. */}
       {params.disconnected === "1" && (
-        <p
-          role="status"
-          className="w-full max-w-2xl rounded-[var(--radius-card)] border border-border bg-surface px-6 py-3 text-sm"
-        >
+        <Notice>
           {disconnectMessage(
             Number(params.moved ?? 0),
             Number(params.unfiled ?? 0),
             typeof params.to === "string" ? params.to : null,
           )}
-        </p>
+        </Notice>
       )}
       {/* A replace was asked for and could not be done — the mailbox it named
           had already been disconnected. Degrading to a plain connect is right;
@@ -165,23 +153,13 @@ export default async function MailboxSettingsPage({
           3 forbids: the old address is gone and its clients fell back to the
           default while the customer believes their book followed. */}
       {params.replace === "degraded" && (
-        <p
-          role="alert"
-          className="w-full max-w-2xl rounded-[var(--radius-card)] border border-border bg-surface px-6 py-3 text-sm text-danger"
-        >
+        <Notice tone="danger">
           The mailbox you asked to replace had already been disconnected, so this address was added
           as a new one instead. Any clients filed under the old address are now chased from your
           default mailbox and need re-filing.
-        </p>
+        </Notice>
       )}
-      {flashError && (
-        <p
-          role="alert"
-          className="w-full max-w-2xl rounded-[var(--radius-card)] border border-border bg-surface px-6 py-3 text-sm text-danger"
-        >
-          {flashError}
-        </p>
-      )}
+      {flashError && <Notice tone="danger">{flashError}</Notice>}
       {showConsentHelp && (
         <AdminConsentHelp
           accountKind={adminConsent?.accountKind ?? "unknown"}
@@ -192,19 +170,13 @@ export default async function MailboxSettingsPage({
       )}
 
       {!organisation ? (
-        <p className="w-full max-w-2xl text-sm text-muted-foreground">
-          Create an organisation first.{" "}
-          <Link href="/app/organisations/new" className="font-medium text-link hover:underline">
-            New organisation
-          </Link>
-        </p>
+        <NoOrganisation />
       ) : forbidden ? (
-        <p className="w-full max-w-2xl text-sm text-muted-foreground">
-          Your role doesn&apos;t have access to mailbox settings for {organisation.name}. Ask an
-          owner or administrator.
+        <p className="text-sm text-muted-foreground">
+          {`Your role can't see ${organisation.name}'s mailbox settings. Ask an owner or administrator.`}
         </p>
       ) : notEntitled ? (
-        <section className="flex w-full max-w-2xl flex-col gap-3 rounded-[var(--radius-card)] border border-border bg-surface px-6 py-4">
+        <Card className="flex flex-col gap-3 px-6 py-5">
           {/*
             One interpolated string, deliberately — NOT `{organisation.name}`
             followed by JSX text. Next 16's build drops the space between an
@@ -218,17 +190,18 @@ export default async function MailboxSettingsPage({
           <p className="text-sm">
             {`${organisation.name} doesn't have Invoice Chasing, so there's no mailbox to connect yet.`}
           </p>
+          {/* ⚠️ WAS A HAND-ROLLED BUTTON UNTIL 2026-08-30, AND THE WRONG SHAPE.
+              It used the CARD radius rather than the control radius, `text-sm`
+              rather than the dashboard's 13px, `font-medium` rather than
+              semibold, and carried no shadow — so the one button on this screen
+              was visibly not the button every other screen uses. `PrimaryLink`
+              is that button, and it has been in the kit the whole time. */}
           <div>
-            <Link
-              href="/app/settings/modules"
-              className="rounded-[var(--radius-card)] bg-primary px-4 py-2 text-sm font-medium text-primary-foreground"
-            >
-              See your products
-            </Link>
+            <PrimaryLink href="/app/settings/modules">See your products</PrimaryLink>
           </div>
-        </section>
+        </Card>
       ) : status ? (
-        <section className="flex w-full max-w-2xl flex-col gap-4 rounded-[var(--radius-card)] border border-border bg-surface px-6 py-4">
+        <Card className="flex flex-col gap-4 px-6 py-5">
           {status.mailboxes.length === 0 ? (
             <p className="text-sm text-muted-foreground">No mailbox connected yet.</p>
           ) : (
@@ -286,7 +259,7 @@ export default async function MailboxSettingsPage({
               {...(status.mailboxes.length === 0 ? {} : { label: "Connect another mailbox" })}
             />
           )}
-        </section>
+        </Card>
       ) : null}
 
       {/* ⚠️ "Back to your organisations" is gone (2026-08-11): it pointed at
@@ -299,6 +272,6 @@ export default async function MailboxSettingsPage({
           Your clients
         </Link>
       </div>
-    </main>
+    </SettingsShell>
   );
 }

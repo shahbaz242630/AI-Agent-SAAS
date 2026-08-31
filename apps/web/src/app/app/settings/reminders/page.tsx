@@ -5,9 +5,10 @@ import { fetchOrganisations } from "@/lib/organisations";
 import { can } from "@/lib/permissions";
 import { MIN_DAYS_BETWEEN_REMINDERS } from "@/products/invoice-follow-up/reminder-sequence";
 import { createClient } from "@/lib/supabase/server";
+import { Card, Notice } from "@/components/ui";
 import { ReminderStepList } from "./reminder-step-list";
 import { StepControls } from "./step-controls";
-import { SettingsTabs } from "../settings-tabs";
+import { NoOrganisation, SettingsShell } from "../settings-shell";
 
 /**
  * When Eva chases (Slice 1.8; founder ruling 2026-08-08 — "first reminder 3
@@ -44,23 +45,20 @@ export default async function ReminderSettingsPage() {
 
   if (!organisation) {
     return (
-      <Shell>
-        <p className="w-full max-w-2xl text-sm text-muted-foreground">
-          Create an organisation first.
-        </p>
-      </Shell>
+      <Frame>
+        <NoOrganisation />
+      </Frame>
     );
   }
 
   // The API's own answer about this caller, never a role name (task 8).
   if (!can(organisation, "reminders:read")) {
     return (
-      <Shell>
-        <Header name={organisation.name} />
-        <p className="w-full max-w-2xl text-sm text-muted-foreground">
-          Your role cannot see when Eva chases. Ask an owner or administrator.
+      <Frame name={organisation.name}>
+        <p className="text-sm text-muted-foreground">
+          {`Your role can't see when Eva chases. Ask an owner or administrator.`}
         </p>
-      </Shell>
+      </Frame>
     );
   }
 
@@ -85,15 +83,12 @@ export default async function ReminderSettingsPage() {
 
   if (!sequence) {
     return (
-      <Shell>
-        <Header name={organisation.name} />
-        <p className="w-full max-w-2xl rounded-[var(--radius-card)] border border-border bg-surface px-6 py-5 text-sm">
-          {loadError}
-        </p>
-        <p className="w-full max-w-2xl text-sm text-muted-foreground">
+      <Frame name={organisation.name}>
+        <Notice>{loadError}</Notice>
+        <p className="text-sm text-muted-foreground">
           Your timings are unchanged — this page could not read them, and reads nothing else.
         </p>
-      </Shell>
+      </Frame>
     );
   }
 
@@ -102,10 +97,8 @@ export default async function ReminderSettingsPage() {
   const steps = [...sequence.steps].sort((a, b) => a.offsetDays - b.offsetDays);
 
   return (
-    <Shell>
-      <Header name={organisation.name} />
-
-      <section className="flex w-full max-w-2xl flex-col gap-3 rounded-[var(--radius-card)] border border-border bg-surface px-6 py-5">
+    <Frame name={organisation.name}>
+      <Card className="flex flex-col gap-3 px-6 py-5">
         <h2 className="text-base font-semibold">How this works</h2>
         <p className="text-sm">
           Every reminder is timed from the invoice&rsquo;s own due date, so each invoice is chased
@@ -120,7 +113,7 @@ export default async function ReminderSettingsPage() {
         <p className="text-sm text-muted-foreground">
           {`Eva always leaves at least ${MIN_DAYS_BETWEEN_REMINDERS} days between reminders. If you set two closer together than that, she spaces them out rather than sending both at once.`}
         </p>
-      </section>
+      </Card>
 
       {canWrite ? (
         /**
@@ -131,12 +124,14 @@ export default async function ReminderSettingsPage() {
          * on it. Now each stage says when it goes out on one line, and opens
          * only when somebody wants to change it.
          */
-        <section className="flex w-full max-w-3xl flex-col gap-4">
-          <ol className="flex flex-col rounded-[var(--radius-card)] border border-border bg-surface px-5 py-2 sm:px-7">
-            {steps.map((step) => (
-              <StepControls key={step.id} organisationId={organisation.id} step={step} />
-            ))}
-          </ol>
+        <section className="flex flex-col gap-4">
+          <Card className="px-5 py-2 sm:px-7">
+            <ol className="flex flex-col">
+              {steps.map((step) => (
+                <StepControls key={step.id} organisationId={organisation.id} step={step} />
+              ))}
+            </ol>
+          </Card>
           {/*
             ⚠️ THIS IS NOT THE CURRENCY DEFAULT. Changing a timing reschedules
             invoices the customer is ALREADY chasing, in the same transaction as
@@ -153,33 +148,37 @@ export default async function ReminderSettingsPage() {
           </p>
         </section>
       ) : (
-        <section className="flex w-full max-w-2xl flex-col gap-3">
+        <section className="flex flex-col gap-3">
           <ReminderStepList steps={steps} />
           <p className="text-sm text-muted-foreground">
             {`Your role can see ${organisation.name}'s reminder timings but not change them. Ask an owner or administrator.`}
           </p>
         </section>
       )}
-    </Shell>
+    </Frame>
   );
 }
 
-function Header({ name }: { name: string }) {
+/**
+ * ⚠️ ONE FRAME, NOT A `Shell` AND A `Header` YOU HAVE TO REMEMBER TO PAIR.
+ * This screen has four exits — no organisation, no permission, the API did not
+ * answer, and the schedule itself — and the old split meant three of them
+ * opened with `<Shell><Header/>` typed out again. The no-organisation exit was
+ * the one that forgot, so the screen a customer meets before they have an
+ * organisation was the only settings screen with no heading and no tabs.
+ */
+function Frame({ name, children }: { name?: string; children: React.ReactNode }) {
   return (
-    <>
-      <section className="flex w-full max-w-2xl flex-col gap-2">
-        <h1 className="font-display text-[29px] leading-tight font-semibold">When Eva chases</h1>
-        <p className="text-sm text-muted-foreground">{`The reminder schedule ${name} uses on every invoice.`}</p>
-      </section>
-      <SettingsTabs current="reminders" />
-    </>
-  );
-}
-
-function Shell({ children }: { children: React.ReactNode }) {
-  return (
-    <main className="flex w-full max-w-[1080px] flex-1 flex-col gap-[26px] px-10 pt-8 pb-9">
+    <SettingsShell
+      title="When Eva chases"
+      subtitle={
+        name
+          ? `The reminder schedule ${name} uses on every invoice.`
+          : "The reminder schedule Eva uses on every invoice."
+      }
+      current="reminders"
+    >
       {children}
-    </main>
+    </SettingsShell>
   );
 }

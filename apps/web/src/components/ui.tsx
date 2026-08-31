@@ -12,6 +12,25 @@ import Link from "next/link";
  */
 
 /**
+ * The frame every screen inside the app shell sits in.
+ *
+ * ⚠️ THIS EXACT CLASS STRING IS WRITTEN OUT IN FOURTEEN FILES (counted
+ * 2026-08-30). It has not drifted yet, which is the only reason the product
+ * still looks like one product — but fourteen hand-typed copies of a layout is
+ * fourteen places to find when the page padding is wrong once, and the
+ * fifteenth screen is written by copying whichever of them was open.
+ *
+ * Settings adopted it first; the remaining screens follow.
+ */
+export function PageShell({ children }: { children: React.ReactNode }) {
+  return (
+    <main className="flex w-full max-w-[1080px] flex-1 flex-col gap-[26px] px-10 pt-8 pb-9">
+      {children}
+    </main>
+  );
+}
+
+/**
  * The title block every screen opens with.
  *
  * ⚠️ THE SUBTITLE IS NOT DECORATION. Each one says what the screen is FOR in a
@@ -76,7 +95,16 @@ export function CounterCard({
   );
 }
 
-/** The white surface everything sits on. */
+/**
+ * The white surface everything sits on.
+ *
+ * ⚠️ SHARED WITH `Notice` BELOW, ON PURPOSE. They are the same surface and
+ * differ only in what they wrap — a block of content, or one announced
+ * sentence. Writing the border twice is how the edge of a confirmation drifts
+ * from the edge of the card it sits above.
+ */
+const SURFACE = "rounded-[var(--radius-card)] border border-border bg-surface";
+
 export function Card({
   className = "",
   children,
@@ -84,12 +112,47 @@ export function Card({
   className?: string;
   children: React.ReactNode;
 }) {
+  return <div className={`${SURFACE} ${className}`.trim()}>{children}</div>;
+}
+
+/**
+ * Something that has just happened, said once, at the top of a screen.
+ *
+ * ⚠️ THIS WAS WRITTEN OUT FOUR TIMES IN ONE FILE BEFORE IT EXISTED — mailbox
+ * settings said connected, disconnected, replace-degraded and failed in four
+ * hand-typed copies of the same box. Four copies is four chances for the
+ * padding to drift, and the next screen needing a confirmation would have made
+ * five.
+ *
+ * ⚠️ THE TONE PICKS THE ARIA ROLE, AND THAT IS NOT COSMETIC. A failure has to
+ * interrupt somebody using a screen reader (`alert`); a success must not
+ * (`status`). Deriving it here means no caller has to remember the pairing —
+ * the old copies got it right four times out of four and the fifth was a coin
+ * toss.
+ */
+const NOTICE_TONES = {
+  neutral: "",
+  success: "text-success",
+  muted: "text-muted-foreground",
+  danger: "text-danger",
+} as const;
+
+export type NoticeTone = keyof typeof NOTICE_TONES;
+
+export function Notice({
+  tone = "neutral",
+  children,
+}: {
+  tone?: NoticeTone;
+  children: React.ReactNode;
+}) {
   return (
-    <div
-      className={`rounded-[var(--radius-card)] border border-border bg-surface ${className}`.trim()}
+    <p
+      role={tone === "danger" ? "alert" : "status"}
+      className={`${SURFACE} px-6 py-3 text-sm ${NOTICE_TONES[tone]}`.trim()}
     >
       {children}
-    </div>
+    </p>
   );
 }
 
@@ -281,6 +344,52 @@ export function PrimaryAction({
 }
 
 /**
+ * The same primary action when it SUBMITS a form at dashboard size.
+ *
+ * ⚠️ THE GAP THIS FILLS IS WHY TWO "Save" BUTTONS DRIFTED APART. `PrimaryLink`
+ * cannot submit, `PrimaryAction` is a disclosure that must keep `type="button"`,
+ * and `PrimaryButton` below is deliberately LARGER — the one-thing-to-do button
+ * for sign-in and setup. A dashboard form's Save had no component at all, so
+ * Currency and Reminders each hand-wrote one and they came out different:
+ * Reminders got the control radius, 13px, semibold and the shadow; Currency got
+ * the CARD radius, `text-sm`, `font-medium`, no shadow and no hover at all.
+ * Same word, same job, two visibly different buttons on sibling screens.
+ *
+ * ⚠️ `disabled` IS WIRED TO THE FORM'S PENDING STATE BY EVERY CALLER, and the
+ * transition is what makes that read as a state rather than a flicker.
+ */
+export function PrimarySubmit({
+  disabled,
+  name,
+  value,
+  onClick,
+  children,
+}: {
+  disabled?: boolean | undefined;
+  /**
+   * ⚠️ `name`/`value` CARRY AN INTENT, AND THAT IS LOAD-BEARING ON PRODUCTS.
+   * One form there has three submits — save seats, turn on, turn off — and the
+   * button that was pressed is the only thing that distinguishes them.
+   */
+  name?: string | undefined;
+  value?: string | undefined;
+  onClick?: (() => void) | undefined;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="submit"
+      disabled={disabled}
+      {...(name === undefined ? {} : { name, value })}
+      {...(onClick ? { onClick } : {})}
+      className={`cursor-pointer ${PRIMARY_CONTROL} transition-opacity disabled:opacity-60`}
+    >
+      {children}
+    </button>
+  );
+}
+
+/**
  * The one primary action on a screen, when it submits a form rather than
  * following a link.
  *
@@ -347,14 +456,57 @@ export function BackChip({ href, children }: { href: string; children: React.Rea
   );
 }
 
-/** A secondary action: same weight of decision, less weight of ink. */
+/**
+ * A secondary action: same weight of decision, less weight of ink.
+ *
+ * ⚠️ THE BOX IS SHARED WITH `GhostButton` AND SIZED FROM ONE PLACE. `md` is the
+ * dashboard control, matching `PRIMARY_CONTROL` exactly so a primary and a
+ * secondary in the same row are the same height; `sm` is the smaller disclosure
+ * trigger that opens something inside a list row.
+ */
+const GHOST_CONTROL =
+  "rounded-[var(--radius-control)] border border-input-border bg-surface font-semibold hover:bg-chip-hover";
+
+const GHOST_SIZES = {
+  sm: "px-3 py-1.5 text-xs",
+  md: "px-4 py-2 text-[13px]",
+} as const;
+
 export function GhostLink({ href, children }: { href: string; children: React.ReactNode }) {
   return (
-    <Link
-      href={href}
-      className="rounded-[var(--radius-control)] border border-input-border bg-surface px-4 py-2 text-[13px] font-semibold hover:bg-chip-hover"
-    >
+    <Link href={href} className={`${GHOST_CONTROL} ${GHOST_SIZES.md}`}>
       {children}
     </Link>
+  );
+}
+
+/**
+ * The same secondary action when it does something in place rather than
+ * navigating.
+ *
+ * ⚠️ IT EXISTS BECAUSE A CANCEL SAT BESIDE A PRIMARY AT A DIFFERENT HEIGHT.
+ * Do not contact's correction form paired the LARGE `PrimaryButton`
+ * (`py-[11px]`, `text-sm`) with a hand-written Cancel at `py-2`/`text-[13px]`,
+ * in the same row — which is precisely the drift `PRIMARY_CONTROL` was written
+ * to prevent, arriving by the one route it did not cover: a button nobody had
+ * built, so somebody typed one.
+ */
+export function GhostButton({
+  onClick,
+  size = "md",
+  children,
+}: {
+  onClick: () => void;
+  size?: keyof typeof GHOST_SIZES;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`cursor-pointer ${GHOST_CONTROL} ${GHOST_SIZES[size]}`}
+    >
+      {children}
+    </button>
   );
 }
