@@ -1,5 +1,6 @@
 import type { TenantTx } from "../permissions/permissions.js";
 import { writeAuditLog } from "../audit/audit-log.js";
+import { unwrapForwardedEmail } from "./forwarded-email.js";
 
 /**
  * Turning a delivered email into a lead and its evidence (Slice 3.1b).
@@ -125,12 +126,26 @@ export async function createLeadFromEmail(
   organisationId: string,
   enquiry: EmailEnquiry,
 ): Promise<CreatedLead> {
-  const { name, email } = parseFromHeader(enquiry.from);
+  /**
+   * ⚠️ A MANUALLY FORWARDED ENQUIRY IS ABOUT SOMEBODY ELSE, AND BOTH HALVES OF
+   * IT MOVE (slice 3.1c-0b). When a customer presses Forward, the `From` header
+   * becomes THEM and their covering note sits above the real message — so
+   * without this the lead is filed against the customer, quotes their note as
+   * the enquiry, and 3.1c would answer them instead of the person who asked.
+   * Seen on a real production lead.
+   *
+   * `unwrapForwardedEmail` returns null for anything it cannot read with
+   * confidence, and null means "use the message exactly as it arrived" — the
+   * behaviour that has always been here.
+   */
+  const forwarded = unwrapForwardedEmail(enquiry.text);
+  const fromHeader = forwarded?.from ?? enquiry.from;
+  const { name, email } = parseFromHeader(fromHeader);
   if (!email) {
-    throw new Error(`Could not read a sender address from '${enquiry.from}'`);
+    throw new Error(`Could not read a sender address from '${fromHeader}'`);
   }
 
-  const body = excerpt(enquiry.text);
+  const body = excerpt(forwarded?.body ?? enquiry.text);
   const lead = await tx.lead.create({
     data: {
       organisationId,
@@ -157,7 +172,9 @@ export async function createLeadFromEmail(
            */
           senderAddress: email,
           recipientAddress: enquiry.deliveredTo,
-          subject: enquiry.subject,
+          // The forwarded block's own subject when there is one: the outer
+          // subject is whatever the forwarder's client prefixed with "Fwd:".
+          subject: forwarded?.subject ?? enquiry.subject,
           occurredAt: enquiry.receivedAt,
           rawExcerpt: body,
           createdBy: null,

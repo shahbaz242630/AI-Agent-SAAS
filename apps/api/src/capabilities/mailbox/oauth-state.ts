@@ -30,24 +30,24 @@ const MAX_LOGIN_HINT_LENGTH = 320;
 export type OAuthStatePurpose = "connect" | "admin_consent";
 
 /**
- * Which Eva screen this connection was started from, so the callback can return
- * the user to it. Signed into the state rather than passed as a query
- * parameter, because Microsoft hands `state` back untouched and anything else
- * would have to be re-supplied by the browser mid-flow.
+ * ⚠️ `OAuthFlow` LIVED HERE AND IS DELETED (slice 3.1c-0b). It existed for ONE
+ * job: deciding whether the callback returned the browser to `/app/onboarding`
+ * or to the mailbox settings screen. Both ends of that choice are gone —
+ * onboarding stopped asking for a mailbox, and the return path is now derived
+ * from the PRODUCT the connection was for.
  *
- * It is an ENUM, never a URL. The callback maps it to a path from a fixed
- * server-side table (`FLOW_RETURN_PATHS`). Accepting a redirect target from the
- * client — even a signed one — would make this an open redirect the moment a
- * state token leaked, and Microsoft's own redirect_uri allowlist would not
- * catch it because the hop happens after we are back on our own origin.
+ * What was left was an enum with ONE reachable value, threaded through the
+ * signed state, the validation schema, a server action and a hidden form
+ * field, deciding nothing — the `ends_at` trap migration 0024 named:
+ * machinery whose only value is the one nobody varies.
+ *
+ * ⚠️ THE SAFETY PROPERTY IT CARRIED IS UNCHANGED. The callback builds its
+ * destination from the signed state and a server-side rule, NEVER from
+ * anything the caller supplies. Accepting a redirect target from the client —
+ * even a signed one — would be an open redirect the moment a token leaked,
+ * and the provider's redirect_uri allowlist would not catch it, because the
+ * hop happens after we are back on our own origin.
  */
-export type OAuthFlow = "onboarding" | "settings";
-
-const OAUTH_FLOWS: readonly OAuthFlow[] = ["onboarding", "settings"];
-
-/** Where a connection started when the state does not say — every state minted
- *  before onboarding existed, and any that fails to verify. */
-export const DEFAULT_OAUTH_FLOW: OAuthFlow = "settings";
 
 /**
  * `connect` was 10 minutes and that is NOT long enough â€” proven on 2026-07-31,
@@ -94,9 +94,6 @@ export interface OAuthStateClaims {
   /** The address the user typed in Eva, so the callback can still name it
    *  after Microsoft declines â€” Microsoft tells us nothing about who tried. */
   loginHint?: string;
-  /** The screen this started from. Absent on states minted before onboarding
-   *  existed, which is why every reader falls back to DEFAULT_OAUTH_FLOW. */
-  flow?: OAuthFlow;
   /**
    * The mailbox this connection REPLACES (slice 1.6b, ruling 3), so the new
    * address inherits its clients and its default status.
@@ -130,10 +127,6 @@ function key(secret: string): Uint8Array {
  * clean ?error=invalid_state redirect the callback owes the user. (Same
  * defect class as the Task 4 String(payload.refresh_token) fix.)
  */
-function isOAuthFlow(value: unknown): value is OAuthFlow {
-  return typeof value === "string" && OAUTH_FLOWS.includes(value as OAuthFlow);
-}
-
 function readUuidClaim(value: unknown): string {
   if (typeof value !== "string" || !UUID_PATTERN.test(value)) throw new InvalidOAuthStateError();
   return value;
@@ -171,12 +164,6 @@ export async function verifyOAuthState(
     const purpose = payload.purpose ?? "connect";
     if (purpose !== expectedPurpose) throw new InvalidOAuthStateError();
     const loginHint = payload.loginHint;
-    // An unrecognised flow is DROPPED rather than rejected. The signature has
-    // already proved we minted this token, so a value outside the enum means
-    // our own code changed, not that anyone is attacking â€” and refusing it
-    // would strand a mid-flight connection across a deploy. The reader falls
-    // back to DEFAULT_OAUTH_FLOW, which lands the user somewhere real.
-    const flow = payload.flow;
     /**
      * Dropped rather than rejected if it is not uuid-shaped, for the same
      * reason as `flow`: the signature already proves we minted this token, so a
@@ -215,7 +202,6 @@ export async function verifyOAuthState(
       loginHint.length <= MAX_LOGIN_HINT_LENGTH
         ? { loginHint }
         : {}),
-      ...(isOAuthFlow(flow) ? { flow } : {}),
       ...(typeof replacesMailboxId === "string" && UUID_PATTERN.test(replacesMailboxId)
         ? { replacesMailboxId }
         : {}),

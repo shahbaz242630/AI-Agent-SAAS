@@ -357,7 +357,15 @@ export const MODULE_CAPABILITIES: Record<ModuleKey, readonly Capability[]> = {
    */
   lead_follow_up_email: ["mailbox"],
   lead_follow_up_voice: ["voice"],
-  voice_credit_controller: ["voice", "invoice_ledger"],
+  /**
+   * ⚠️ `mailbox` IS HERE BECAUSE OF RULING 42, AND SINCE SLICE 3.1c-0 IT ALSO
+   * SWITCHES ON SEAT COUNTING. Voice Credit Control sends ONE email before it
+   * ever calls, so it needs a mailbox like any sending product — and
+   * `countSeatsUsed` now derives "does this product have seats" from this very
+   * list. Without the entry the product would have sent email from a mailbox
+   * nobody was counting or charging for.
+   */
+  voice_credit_controller: ["voice", "mailbox", "invoice_ledger"],
   ai_receptionist: ["voice"],
 };
 
@@ -410,7 +418,14 @@ export const MODULE_CATALOGUE: Record<ModuleKey, ModuleDescriptor> = {
   voice_credit_controller: {
     name: "Voice Credit Control",
     slug: "voice-credit-control",
-    blurb: "Follows up overdue invoices by phone when email has not worked.",
+    /**
+     * ⚠️ IT SAID "by phone when email has not worked" AND THAT CONTRADICTED
+     * RULING 42, on the screen that SELLS it. The founder's model is ONE email
+     * first and then calls for the remaining reminders — not calling as a
+     * fallback after email fails. A blurb describing a different product than
+     * the one we would build is the worst place for this to be wrong.
+     */
+    blurb: "Chases overdue invoices with one email, then follows up by phone.",
     live: false,
   },
   /**
