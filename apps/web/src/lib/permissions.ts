@@ -49,7 +49,14 @@ export type WebPermissionKey =
    * and it is a different sentence from "your role can't", per §0d.
    */
   | "leads:read"
-  | "leads:write";
+  | "leads:write"
+  /**
+   * Slice 3.1c-1 — changing the wordings Eva replies with. **Owner only**
+   * (founder ruling 2026-09-01), and the one key on this list that an
+   * administrator does not hold, so a screen must never treat it as implied by
+   * `leads:write`.
+   */
+  | "lead_templates:manage";
 
 /** The shape every page already fetches from `GET /organisations`. */
 export interface OrganisationAccess {
@@ -107,8 +114,27 @@ export function readOnlyImportsLine(organisationName: string): string {
  */
 export function humanRefusal(status: number | undefined, action: WriteAction): string | null {
   if (status !== 403) return null;
-  return `${REFUSED[action]} Ask an owner or administrator.`;
+  return REFUSED[action];
 }
+
+/**
+ * ⚠️ WHO TO ASK IS PART OF THE SENTENCE NOW, AND IT USED TO BE APPENDED HERE.
+ *
+ * Two things forced the change on 2026-09-01:
+ *
+ *   1. **It was already printing twice.** `correct-suppression` ends with "Ask
+ *      an owner or administrator." in its own text, and this function appended
+ *      the same sentence again — so the do-not-contact screen has been saying
+ *      it back to back. Live, on a real screen, since the correction path
+ *      shipped. Nothing caught it because copy has no assertions.
+ *   2. **It is no longer always true.** `edit-reply-template` is owner ONLY
+ *      (founder ruling, "owner only for templates"), so telling somebody to
+ *      ask an administrator sends them to a colleague who will be refused in
+ *      exactly the same way.
+ *
+ * Each entry now carries its whole sentence, and `refusal-copy.spec.ts` fails
+ * if one forgets to say who to ask or says it twice.
+ */
 
 /** The write a person was attempting, so the refusal can name it. */
 export type WriteAction =
@@ -128,7 +154,9 @@ export type WriteAction =
   | "correct-suppression"
   // Slice 3.1b — the guided forwarding setup.
   | "forwarding-setup"
-  | "forwarding-request";
+  | "forwarding-request"
+  // Slice 3.1c-1 — the wordings Eva replies with.
+  | "edit-reply-template";
 
 /**
  * ⚠️ `Record<WriteAction, string>` IS THE EXHAUSTIVENESS GUARANTEE. Adding a
@@ -136,30 +164,33 @@ export type WriteAction =
  * falls back to a permission key at the moment someone is stuck.
  */
 const REFUSED: Record<WriteAction, string> = {
-  "create-invoice": "Your role can't raise invoices.",
-  "edit-invoice": "Your role can't edit invoices.",
+  "create-invoice": "Your role can't raise invoices. Ask an owner or administrator.",
+  "edit-invoice": "Your role can't edit invoices. Ask an owner or administrator.",
   // ⚠️ NOT "edit-invoice". Correcting the address Eva writes to is a change
   // to the CONTACT, a different record behind a different permission
   // (`contacts:write`), and it works on invoices that are far past the point
   // of being editable themselves. A shared sentence would tell somebody their
   // role cannot edit invoices when the thing they were refused was a phone
   // number.
-  "edit-contact": "Your role can't change a client's contact details.",
-  "record-payment": "Your role can't record payments.",
+  "edit-contact":
+    "Your role can't change a client's contact details. Ask an owner or administrator.",
+  "record-payment": "Your role can't record payments. Ask an owner or administrator.",
   // Pause, resume, cancel — named by what they have in common rather than
   // guessing which one was clicked, because one sentence that is true of all
   // three beats three that could each be shown for the wrong action.
-  "change-invoice": "Your role can't start, pause or cancel chasing an invoice.",
-  "add-row": "Your role can't add invoices.",
-  "upload-import": "Your role can't upload invoices.",
-  "confirm-import": "Your role can't import invoices.",
-  "cancel-import": "Your role can't discard an upload.",
-  "change-settings": "Your role can't change invoice settings.",
+  "change-invoice":
+    "Your role can't start, pause or cancel chasing an invoice. Ask an owner or administrator.",
+  "add-row": "Your role can't add invoices. Ask an owner or administrator.",
+  "upload-import": "Your role can't upload invoices. Ask an owner or administrator.",
+  "confirm-import": "Your role can't import invoices. Ask an owner or administrator.",
+  "cancel-import": "Your role can't discard an upload. Ask an owner or administrator.",
+  "change-settings": "Your role can't change invoice settings. Ask an owner or administrator.",
   // Deliberately NOT folded into `change-settings`: "invoice settings" is the
   // currency default and changes nothing that exists, whereas this reschedules
   // every invoice already being chased. Telling someone the wrong one is the
   // standing §0d mistake — name the thing they were actually refused.
-  "change-reminder-timing": "Your role can't change when Eva chases.",
+  "change-reminder-timing":
+    "Your role can't change when Eva chases. Ask an owner or administrator.",
   /**
    * ⚠️ THE ONLY WRITE LEFT ON AN ENQUIRY, SINCE 2026-08-21. `log-lead` sat
    * beside this until the manual form was removed — Lead Follow-up by Email is
@@ -170,7 +201,8 @@ const REFUSED: Record<WriteAction, string> = {
    * and a vague refusal sends them looking for the wrong thing while a
    * compliance request sits unactioned. Name what they were refused.
    */
-  "stop-contacting": "Your role can't record a do-not-contact request.",
+  "stop-contacting":
+    "Your role can't record a do-not-contact request. Ask an owner or administrator.",
   /**
    * ⚠️ SEPARATE FROM `stop-contacting` BECAUSE THE PERMISSION IS SEPARATE, AND
    * THAT IS THE SAFEGUARD. Recording a do-not-contact is `leads:write`, which
@@ -184,7 +216,28 @@ const REFUSED: Record<WriteAction, string> = {
   // their own forwarding; the second is somebody looking at a request that
   // may be an attempt on their enquiries. Telling the second person "you
   // can't set up forwarding" would answer a question they did not ask.
-  "forwarding-setup": "Your role can't set up forwarding.",
-  "forwarding-request": "Your role can't answer a request to forward mail here.",
+  "forwarding-setup": "Your role can't set up forwarding. Ask an owner or administrator.",
+  "forwarding-request":
+    "Your role can't answer a request to forward mail here. Ask an owner or administrator.",
   "correct-suppression": "Your role can't undo a do-not-contact. Ask an owner or administrator.",
+  /**
+   * ⚠️ ONE SENTENCE FOR ALL THREE WRITES — add, rewrite and delete — because
+   * they share a permission and a screen, and the person refused needs the same
+   * thing from any of them. That is the `change-invoice` precedent: one
+   * sentence true of all three beats three that could each be shown for the
+   * wrong action.
+   *
+   * ⚠️ "THE REPLIES EVA SENDS", NOT "TEMPLATES". Somebody refused here is
+   * trying to change what a stranger receives in their business's name. The
+   * word on the screen has to be the thing, not our filing term for it.
+   */
+  /**
+   * The only entry that does NOT say "or administrator", and that is the whole
+   * reason each sentence now carries its own. Founder ruling 2026-09-01,
+   * "owner only for templates" — an administrator is refused here too, so
+   * sending somebody to one would cost them a second conversation to find out
+   * they had been pointed at the wrong colleague.
+   */
+  "edit-reply-template":
+    "Only an owner can change the replies Eva sends to enquiries. Ask an owner.",
 };

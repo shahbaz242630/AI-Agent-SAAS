@@ -705,3 +705,102 @@ export function TableCell({
     </td>
   );
 }
+
+/**
+ * A text field, on the one treatment that is correct.
+ *
+ * ⚠️ ADDED FOR THE SAME REASON `PrimarySubmit` AND `Table` WERE, AND THE COUNT
+ * IS WORSE. Five settings screens carry five text inputs in FOUR different
+ * treatments — three border colours (`input-border`, `muted-foreground/20`,
+ * `muted-foreground/30`) and two radii. Only Reminders' `step-controls.tsx` is
+ * on the kit's CONTROL radius, which is the one the buttons beside it use.
+ * Nobody chose four; the kit had no input, so every form typed one.
+ *
+ * ⚠️ THIS DELIBERATELY DOES NOT CONVERT THE OTHER FOUR SCREENS. Ruling 44 —
+ * one area at a time, extracting as you go — and the field alignment is part
+ * of the parked UI/UX roll-out, which lands on every screen in one change or
+ * the product goes half-and-half. What this stops is a FIFTH treatment being
+ * born on a new screen while that roll-out waits.
+ *
+ * ⚠️ `border-input-border` AND `bg-surface`, MATCHING `GHOST_CONTROL` EXACTLY.
+ * A field and the secondary button next to it are the same edge; when they
+ * differ, a row of controls looks assembled from two kits.
+ */
+const FIELD_CONTROL =
+  "w-full rounded-[var(--radius-control)] border border-input-border bg-surface px-3 py-2 text-sm";
+
+/** The label above a field. Semibold at 13px — matched to `PrimarySubmit`. */
+const FIELD_LABEL = "flex flex-col gap-1 text-[13px] font-semibold text-label";
+
+export function TextField({
+  name,
+  label,
+  defaultValue,
+  maxLength,
+  required,
+  placeholder,
+}: {
+  name: string;
+  label: string;
+  defaultValue?: string | undefined;
+  maxLength?: number | undefined;
+  required?: boolean | undefined;
+  placeholder?: string | undefined;
+}) {
+  return (
+    <label className={FIELD_LABEL}>
+      {label}
+      <input
+        name={name}
+        type="text"
+        {...(defaultValue === undefined ? {} : { defaultValue })}
+        {...(maxLength === undefined ? {} : { maxLength })}
+        {...(required === undefined ? {} : { required })}
+        {...(placeholder === undefined ? {} : { placeholder })}
+        className={`${FIELD_CONTROL} font-normal`}
+      />
+    </label>
+  );
+}
+
+/**
+ * The same field for something a person writes several lines of.
+ *
+ * ⚠️ `font-normal` UNDOES THE LABEL'S SEMIBOLD, and it is not cosmetic here.
+ * The label wraps the control, so without it a customer types the words Eva
+ * will send in bold and cannot tell whether that is formatting they are
+ * choosing. The send path is plain text; nothing they type carries weight.
+ */
+export function TextArea({
+  name,
+  label,
+  defaultValue,
+  rows = 8,
+  maxLength,
+  required,
+  hint,
+}: {
+  name: string;
+  label: string;
+  defaultValue?: string | undefined;
+  rows?: number | undefined;
+  maxLength?: number | undefined;
+  required?: boolean | undefined;
+  /** Said under the field, where somebody reads it before typing, not after. */
+  hint?: string | undefined;
+}) {
+  return (
+    <label className={FIELD_LABEL}>
+      {label}
+      <textarea
+        name={name}
+        rows={rows}
+        {...(defaultValue === undefined ? {} : { defaultValue })}
+        {...(maxLength === undefined ? {} : { maxLength })}
+        {...(required === undefined ? {} : { required })}
+        className={`${FIELD_CONTROL} font-normal`}
+      />
+      {hint && <span className="text-[12px] font-normal text-faint">{hint}</span>}
+    </label>
+  );
+}

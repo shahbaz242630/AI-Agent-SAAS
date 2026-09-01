@@ -13,6 +13,7 @@ import { SuppressionModule } from "./platform/suppression/suppression.module.js"
 import { ImportsModule } from "./products/invoice-follow-up/imports/imports.module.js";
 import { InvoiceDocumentsModule } from "./products/invoice-follow-up/invoice-documents/invoice-documents.module.js";
 import { InvoicesModule } from "./products/invoice-follow-up/invoices/invoices.module.js";
+import { LeadReplyTemplatesModule } from "./products/lead-follow-up-email/templates/lead-reply-templates.module.js";
 import { MailboxesModule } from "./capabilities/mailbox/mailboxes.module.js";
 import { MonitoringModule } from "./platform/monitoring/monitoring.module.js";
 import { OrganisationsModule } from "./platform/organisations/organisations.module.js";
@@ -44,6 +45,7 @@ import { sentryErrorReporter } from "./common/monitoring/sentry.js";
     MailboxesModule,
     EntitlementsModule,
     LeadsModule,
+    LeadReplyTemplatesModule,
     SuppressionModule,
     LoggerModule.forRoot({
       pinoHttp: {

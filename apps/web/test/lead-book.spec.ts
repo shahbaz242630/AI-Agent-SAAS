@@ -9,7 +9,7 @@ import {
   leadStatusLabel,
   leadStatusTone,
   type AlsoAffected,
-} from "@/products/lead-follow-up/lead-book";
+} from "@/products/lead-follow-up-email/lead-book";
 import { describeMoment } from "@/lib/today";
 
 describe("lead vocabulary", () => {

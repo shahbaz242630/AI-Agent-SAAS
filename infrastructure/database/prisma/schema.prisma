@@ -46,6 +46,7 @@ model Organisation {
   inboundAddresses InboundAddress[]
   inboundMessages  InboundMessage[]
   inboundForwardingRequests InboundForwardingRequest[]
+  leadReplyTemplates LeadReplyTemplate[]
 
   @@map("organisations")
 }
@@ -979,4 +980,48 @@ model InboundMessage {
   @@index([organisationId])
   @@index([organisationId, status, receivedAt(sort: Desc)])
   @@map("inbound_messages")
+}
+
+/// The wording Eva replies to an enquiry with (slice 3.1c-1, migration 0035).
+///
+/// ⚠️ THE LEAD PRODUCT'S FIRST OWNED TABLE, AND THE ONLY ONE IT OWNS. The LEAD
+/// itself stays in `platform/` (ruling 56) because Lead Follow-up by Call and
+/// the planned CRM are separate products that will want the same record, and a
+/// product's tables are exclusively owned. What this product owns is the
+/// REPLY — starting with the words it is written in.
+///
+/// Three defaults are created on first read (`ensureDefaultTemplates`), the
+/// `ensureDefaultSequence` precedent. Every one of them is the customer's to
+/// rewrite; that is the feature.
+model LeadReplyTemplate {
+  id             String       @id @default(uuid()) @db.Uuid
+  organisationId String       @map("organisation_id") @db.Uuid
+  /// What the customer calls it in their own list. Never sent to anybody.
+  name           String
+  /// What Eva actually writes. Plain text: the mailbox adapters send text
+  /// (`bodyText`), so offering rich text would promise formatting the send
+  /// path does not carry.
+  body           String
+  /// ⚠️ EXACTLY ONE AUTOMATIC TEMPLATE PER ORGANISATION (ruling 55) — the only
+  /// thing Eva ever sends on her own. The rest are saved wordings a human
+  /// picks from the enquiry screen.
+  isAutomatic    Boolean      @default(false) @map("is_automatic")
+  createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy      String?      @map("created_by") @db.Uuid
+  deletedAt      DateTime?    @map("deleted_at") @db.Timestamptz(6)
+  organisation   Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+
+  @@index([organisationId])
+  /// ⚠️ TWO PARTIAL UNIQUE INDEXES LIVE IN MIGRATION 0035 AND NOT HERE, because
+  /// Prisma cannot express `WHERE` on an index — the 0011/0013/0017/0034
+  /// precedent. `lead_reply_templates_single_automatic_key` is one automatic
+  /// reply per organisation among the live rows;
+  /// `lead_reply_templates_live_name_key` is one name per organisation, and it
+  /// is what makes the lazy seeding idempotent without a bookkeeping column.
+  ///
+  /// ⚠️ AND `REVOKE DELETE` LIVES THERE TOO. Deletion is soft. A hard delete
+  /// would take the wording Eva sent somebody out from under the evidence of
+  /// having sent it.
+  @@map("lead_reply_templates")
 }
