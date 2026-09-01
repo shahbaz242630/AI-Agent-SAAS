@@ -56,12 +56,10 @@ import {
   type MailProviderRegistry,
 } from "./mail-provider.js";
 import {
-  DEFAULT_OAUTH_FLOW,
   signOAuthState,
   verifyConnectState,
   verifyOAuthState,
   type ConnectStateClaims,
-  type OAuthFlow,
   type OAuthStateClaims,
 } from "./oauth-state.js";
 
@@ -106,8 +104,8 @@ const AUTH_EXPIRED_MESSAGE = "Microsoft authorisation expired â€” reconnect
  * from anything the caller supplies — so this remains impossible to turn into
  * an open redirect.
  */
-function flowReturnPath(flow: OAuthFlow, moduleKey: ModuleKey): string {
-  return flow === "onboarding" ? "/app/onboarding" : moduleHref(moduleKey, "mailbox");
+function mailboxReturnPath(moduleKey: ModuleKey): string {
+  return moduleHref(moduleKey, "mailbox");
 }
 
 /**
@@ -506,10 +504,6 @@ export class MailboxesService {
       // oauth-state.ts. Not optional for a connect, and never guessed.
       moduleKey: input.moduleKey,
       ...(input.emailAddress ? { loginHint: input.emailAddress } : {}),
-      // Rides on the state because Microsoft returns `state` untouched and
-      // nothing else survives the round trip â€” the browser is at Microsoft in
-      // between, so we cannot hold this in a cookie we control.
-      ...(input.flow ? { flow: input.flow } : {}),
       ...(input.replacesMailboxId ? { replacesMailboxId: input.replacesMailboxId } : {}),
     });
     const chosen = input.provider ?? "microsoft";
@@ -626,7 +620,7 @@ export class MailboxesService {
        * and guessing one would drop the customer on a mailbox screen belonging
        * to something they were not connecting. `/app` is where they choose.
        */
-      hints.moduleKey ? flowReturnPath(hints.flow, hints.moduleKey) : "/app"
+      hints.moduleKey ? mailboxReturnPath(hints.moduleKey) : "/app"
     }?provider=${provider}`;
     if (query.error) {
       // The belt-and-braces branch. The classifier is correct â€” fed AADSTS90094
@@ -1149,13 +1143,12 @@ export class MailboxesService {
    */
   private async recoverStateHints(
     state?: string,
-  ): Promise<{ flow: OAuthFlow; loginHint: string | null; moduleKey: ModuleKey | null }> {
-    const nothing = { flow: DEFAULT_OAUTH_FLOW, loginHint: null, moduleKey: null };
+  ): Promise<{ loginHint: string | null; moduleKey: ModuleKey | null }> {
+    const nothing = { loginHint: null, moduleKey: null };
     if (!state) return nothing;
     try {
       const claims = await verifyOAuthState(this.env.OAUTH_STATE_SECRET, state);
       return {
-        flow: claims.flow ?? DEFAULT_OAUTH_FLOW,
         loginHint: claims.loginHint ?? null,
         // Which product's screen to return to. Absent only when the state did
         // not verify, which the caller handles by sending them to the hub.

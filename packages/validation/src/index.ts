@@ -876,10 +876,13 @@ export const mailboxConnectSchema = z.object({
    */
   moduleKey: z.enum(MODULE_KEYS),
   emailAddress: z.string().trim().email().max(320).optional(),
-  /** Which Eva screen this was started from, so the callback returns the user
-   *  there. A closed enum, never a URL — the API maps it to a path from its
-   *  own table, so a caller cannot choose where the browser lands. */
-  flow: z.enum(["onboarding", "settings"]).optional(),
+  /**
+   * ⚠️ `flow` WAS HERE AND IS GONE (slice 3.1c-0b). It chose between returning
+   * the browser to onboarding or to mailbox settings; onboarding no longer
+   * connects mailboxes and the return path is derived from `moduleKey`, so it
+   * had ONE reachable value and decided nothing. The callback still builds its
+   * destination server-side from the signed state, never from the caller.
+   */
   /**
    * Replace this mailbox rather than adding another (slice 1.6b, ruling 3).
    * The new address inherits the old one's clients and its default status,

@@ -231,9 +231,6 @@ export function ConnectMailboxForm({
       {/* Rides the signed OAuth state, so the mailbox the customer is about to
           grant us lands against the product they started from and no other. */}
       <input type="hidden" name="moduleKey" value={moduleKey} />
-      {/* Rides the signed OAuth state so the return lands back here rather than
-          in the setup flow. */}
-      <input type="hidden" name="flow" value="settings" />
 
       <fieldset className="flex flex-col gap-1">
         <legend className="text-sm font-medium">Where do you send email from?</legend>

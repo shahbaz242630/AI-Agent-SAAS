@@ -30,43 +30,30 @@ describe("OAuth state JWT (Slice 1.6, ruling 4)", () => {
   });
 
   /**
-   * The flow decides where the callback sends the browser back to. It survives
-   * the round trip only because it is signed into the state — the browser is at
-   * Microsoft in between, so nothing we hold locally comes back with it.
+   * ⚠️ THE `flow` CLAIM IS GONE (slice 3.1c-0b) AND THE TESTS FOR IT WENT WITH
+   * IT. It chose between returning the browser to onboarding or to mailbox
+   * settings; onboarding stopped connecting mailboxes and the return path is
+   * now derived from the product, so the claim had one reachable value and
+   * decided nothing.
+   *
+   * What replaces those tests is the one property that still matters: a state
+   * ALREADY IN FLIGHT carrying the old claim must still verify. Somebody was
+   * mid-connection when this deployed, and refusing them would turn a tidy-up
+   * into a failed connection they cannot explain.
    */
-  describe("return flow", () => {
-    it("round-trips the flow when one was given", async () => {
-      const state = await signOAuthState(SECRET, { ...CLAIMS, flow: "onboarding" });
-      await expect(verifyOAuthState(SECRET, state)).resolves.toMatchObject({
-        flow: "onboarding",
-      });
-    });
-
-    it("omits the flow entirely when none was given, so readers apply their own default", async () => {
-      const state = await signOAuthState(SECRET, CLAIMS);
-      await expect(verifyOAuthState(SECRET, state)).resolves.not.toHaveProperty("flow");
-    });
-
-    /**
-     * DROPPED, not rejected. The signature has already proved we minted this
-     * token, so a value outside the enum means our own code changed — refusing
-     * it would strand a connection mid-flight across a deploy for no safety
-     * gain. The reader falls back to the settings page, which is somewhere real.
-     */
-    it("drops an unrecognised flow rather than failing the whole state", async () => {
-      const state = await new SignJWT({
-        ...CLAIMS,
-        purpose: "connect",
-        flow: "https://evil.example",
-      })
-        .setProtectedHeader({ alg: "HS256", typ: "JWT" })
-        .setIssuedAt()
-        .setExpirationTime("10m")
-        .sign(new TextEncoder().encode(SECRET));
-      const claims = await verifyOAuthState(SECRET, state);
-      expect(claims).not.toHaveProperty("flow");
-      expect(claims.organisationId).toBe(CLAIMS.organisationId);
-    });
+  it("still verifies a state carrying the old flow claim, and ignores it", async () => {
+    const state = await new SignJWT({
+      ...CLAIMS,
+      purpose: "connect",
+      flow: "onboarding",
+    })
+      .setProtectedHeader({ alg: "HS256", typ: "JWT" })
+      .setIssuedAt()
+      .setExpirationTime("10m")
+      .sign(new TextEncoder().encode(SECRET));
+    const claims = await verifyOAuthState(SECRET, state);
+    expect(claims.organisationId).toBe(CLAIMS.organisationId);
+    expect(claims).not.toHaveProperty("flow");
   });
 
   /**

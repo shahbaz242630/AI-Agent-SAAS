@@ -1026,31 +1026,15 @@ describe("Mailboxes (Slice 1.6)", () => {
         .expect(200);
     });
 
-    /** The seam between the web app and the callback: the flow has to reach the
-     *  signed state here, or the round trip through Microsoft loses it and the
-     *  customer is dropped on the settings page mid-setup. */
-    it("carries the requested flow onto the signed state", async () => {
-      const response = await request(app.getHttpServer())
-        .post(`/organisations/${org.id}/mailboxes/connect`)
-        .set("Authorization", `Bearer ${tokenFor("owner")}`)
-        .send({
-          emailAddress: "sara@acme.example",
-          flow: "onboarding",
-          moduleKey: "email_credit_controller",
-        })
-        .expect(200);
-
-      const state = new URL(response.body.authorizeUrl).searchParams.get("state")!;
-      expect((await verifyOAuthState(TEST_OAUTH_STATE_SECRET, state)).flow).toBe("onboarding");
-    });
-
-    it("rejects a flow outside the known set rather than trusting the caller", async () => {
-      await request(app.getHttpServer())
-        .post(`/organisations/${org.id}/mailboxes/connect`)
-        .set("Authorization", `Bearer ${tokenFor("owner")}`)
-        .send({ flow: "https://evil.example", moduleKey: "email_credit_controller" })
-        .expect(400);
-    });
+    /**
+     * ⚠️ TWO `flow` TESTS LIVED HERE AND WENT WITH THE CLAIM (slice 3.1c-0b).
+     * They proved the requested screen reached the signed state, and that an
+     * unknown one was refused. Both are moot: onboarding no longer connects a
+     * mailbox, so the return path is derived from the product and there is no
+     * screen left to choose. What replaced them is the product itself, which
+     * IS carried on the state and IS refused when unknown — see the
+     * `moduleKey` tests above and in `oauth-state.spec.ts`.
+     */
   });
 
   describe("GET /integrations/microsoft/callback (@Public)", () => {
@@ -1059,7 +1043,6 @@ describe("Mailboxes (Slice 1.6)", () => {
       extra: {
         purpose?: "connect" | "admin_consent";
         loginHint?: string;
-        flow?: "onboarding" | "settings";
       } = {},
     ): Promise<string> {
       const ownerMember = org.members.find((member) => member.roleKey === "owner")!;
@@ -1568,54 +1551,13 @@ describe("Mailboxes (Slice 1.6)", () => {
     });
 
     /**
-     * The flow rides the signed state because the browser is at Microsoft in
-     * between — nothing we hold locally survives the round trip. It is an enum
-     * mapped to a path server-side, never a URL, so a leaked state cannot be
-     * turned into an open redirect.
+     * ⚠️ THE CALLBACK NO LONGER CHOOSES BETWEEN SCREENS (slice 3.1c-0b), so the
+     * three tests that lived here are gone. It returns the browser to the
+     * MAILBOX SCREEN OF THE PRODUCT the connection was for — asserted on every
+     * redirect test in this file, since each now expects
+     * `/app/invoice-chasing/mailbox` — or to the hub when the state will not
+     * verify and names no product at all.
      */
-    describe("returning to the screen the connection started from", () => {
-      it("sends a connection started in onboarding back to the setup flow", async () => {
-        await owner.emailAccount.updateMany({
-          where: { organisationId: org.id, deletedAt: null },
-          data: { deletedAt: new Date() },
-        });
-        const response = await request(app.getHttpServer())
-          .get(
-            `/integrations/microsoft/callback?code=fake&state=${await mintState(org.id, { flow: "onboarding" })}`,
-          )
-          .expect(302);
-
-        expect(response.headers.location).toBe(
-          "http://localhost:3000/app/onboarding?provider=microsoft&connected=1&test_email=sent",
-        );
-      });
-
-      /** The decline path resolves the flow BEFORE the state is verified for
-       *  real, so it needs its own proof that it lands in the right place. */
-      it("sends a decline during onboarding back to the setup flow", async () => {
-        const state = await mintState(org.id, {
-          flow: "onboarding",
-          loginHint: "sara@acme.example",
-        });
-        const response = await request(app.getHttpServer())
-          .get(`/integrations/microsoft/callback?error=access_denied&state=${state}`)
-          .expect(302);
-
-        expect(response.headers.location).toBe(
-          "http://localhost:3000/app/onboarding?provider=microsoft&error=consent_denied&hint=sara%40acme.example",
-        );
-      });
-
-      it("falls back to the settings page for a state that names no flow", async () => {
-        const response = await request(app.getHttpServer())
-          .get(`/integrations/microsoft/callback?error=access_denied&state=${await mintState()}`)
-          .expect(302);
-
-        expect(response.headers.location).toBe(
-          "http://localhost:3000/app/invoice-chasing/mailbox?provider=microsoft&error=consent_denied",
-        );
-      });
-    });
 
     it("reconnecting the SAME address reuses its row and consumes no second seat", async () => {
       // Was "reconnect replaces the single live connection (ruling 6)". The

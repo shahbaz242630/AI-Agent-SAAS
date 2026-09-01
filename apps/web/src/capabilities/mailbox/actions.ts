@@ -50,27 +50,6 @@ function readModuleKey(formData: FormData): ModuleKey | null {
 }
 
 /**
- * Which screen a connection was started from. The API carries this on the
- * signed OAuth state and maps it back to a path from its own fixed table, so
- * the round trip through the provider returns the user where they began.
- *
- * A closed set, and re-checked here rather than forwarded as typed.
- *
- * ⚠️ `onboarding` IS LEGACY AS OF SLICE 3.1c-0 AND NOTHING MINTS IT ANY MORE.
- * Onboarding stopped connecting mailboxes (founder ruling 2026-09-01) — you
- * connect one inside the product that will use it. The value stays in the set
- * so a connection already in flight across that deploy still lands somewhere
- * real rather than being refused.
- */
-const CONNECT_FLOWS = ["onboarding", "settings"] as const;
-type ConnectFlow = (typeof CONNECT_FLOWS)[number];
-
-function readFlow(formData: FormData): ConnectFlow {
-  const value = String(formData.get("flow") ?? "");
-  return CONNECT_FLOWS.includes(value as ConnectFlow) ? (value as ConnectFlow) : "settings";
-}
-
-/**
  * Which mailbox provider the customer picked (Slice 3.1b step 3).
  *
  * Anything unrecognised falls back to Microsoft — the provider that has always
@@ -116,11 +95,10 @@ async function resolveConnectTarget(
   moduleKey: ModuleKey,
   accessToken: string,
   emailAddress: string,
-  flow: ConnectFlow,
   provider: ConnectProvider,
   replacesMailboxId: string | null = null,
 ): Promise<string> {
-  const back = flow === "onboarding" ? "/app/onboarding" : mailboxPath(moduleKey);
+  const back = mailboxPath(moduleKey);
   try {
     const response = await apiFetch(
       `/organisations/${organisationId}/mailboxes/connect`,
@@ -134,7 +112,6 @@ async function resolveConnectTarget(
           // in packages/validation.
           moduleKey,
           provider,
-          flow,
           ...(replacesMailboxId ? { replacesMailboxId } : {}),
         }),
       },
@@ -175,7 +152,6 @@ export async function connectMailbox(formData: FormData): Promise<void> {
       moduleKey,
       accessToken,
       emailAddress,
-      readFlow(formData),
       readProvider(formData),
       // Present only on the Replace form (slice 1.6b, ruling 3). Empty means an
       // ordinary connect, which is the overwhelmingly common case.

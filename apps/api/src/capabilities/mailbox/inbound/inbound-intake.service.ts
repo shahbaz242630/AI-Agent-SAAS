@@ -15,6 +15,7 @@ import {
 } from "./gmail-forwarding-confirmation.js";
 // eslint-disable-next-line @typescript-eslint/consistent-type-imports
 import { ForwardingConfirmationsService } from "./forwarding-confirmations.service.js";
+import { readInboundVerdicts, refusalReason } from "./spam-verdict.js";
 
 /**
  * What happens to a message between the door and the book (Slice 3.1b).
@@ -190,6 +191,33 @@ export class InboundIntakeService {
         confirmation,
       );
       return { status: "ignored", reason: "forwarding-confirmation" };
+    }
+
+    /**
+     * (3b) SPAM AND MALWARE — the provider's verdict, ruling 32 (slice 3.1c-0b).
+     *
+     * ⚠️ AFTER THE FORWARDING CONFIRMATION, DELIBERATELY. Google's confirmation
+     * is the one message the whole setup journey depends on, and it is matched
+     * by a narrow shape we control. Refusing it on a spam false-positive would
+     * hang a customer's screen on "waiting" forever with nothing to click and
+     * no way for them to know why — a worse outcome than filing one junk lead.
+     *
+     * ⚠️ THE MESSAGE IS STILL STORED, WITH ITS BODY. Refusing means "do not make
+     * a lead of it", never "throw it away": `store` keeps the row and the reason,
+     * so a customer asking "where did that go?" can be answered, and a
+     * false-positive is recoverable rather than gone.
+     */
+    const refusal = refusalReason(message.headers);
+    if (refusal) {
+      await this.store(organisationId, record.id, message, from, {
+        status: "ignored",
+        failureReason: refusal,
+      });
+      this.logger.info(
+        { organisationId, providerMessageId, verdicts: readInboundVerdicts(message.headers) },
+        "inbound message refused on the provider's verdict",
+      );
+      return { status: "ignored", reason: "provider-verdict" };
     }
 
     // (4) Body, lead and evidence, in one transaction.
