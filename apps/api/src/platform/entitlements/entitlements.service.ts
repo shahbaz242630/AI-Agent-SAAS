@@ -238,11 +238,27 @@ export class EntitlementsService {
     return input.seats;
   }
 
-  /** Units in use. Only the email credit controller has anything countable
-   *  today; a voice product's unit would be a phone number. */
+  /**
+   * Units in use, FOR ONE PRODUCT. A seat is one address on one product, so a
+   * mailbox connected for Lead Follow-up is not counted against Invoice
+   * Chasing and never was meant to be (ruling 36, migration 0034).
+   *
+   * ⚠️ THIS COUNTED EVERY MAILBOX IN THE ORGANISATION UNTIL 2026-09-01, and it
+   * was hardcoded to `email_credit_controller`. The pair meant a customer who
+   * bought ONLY Lead Follow-up and connected Gmail had that seat billed to a
+   * product they did not own — while Invoice Chasing's own seat count silently
+   * included mailboxes belonging to something else.
+   *
+   * ⚠️ WHICH PRODUCTS HAVE SEATS IS DERIVED, NOT LISTED. A product has
+   * countable seats exactly when it needs the `mailbox` capability. Voice
+   * Credit Control gains `mailbox` the moment ruling 42's first email lands,
+   * and its seats begin counting on that change alone — there is no second
+   * list here to remember to update. A voice product's own unit would be a
+   * phone number, which is a different thing to count and not yet countable.
+   */
   private async countSeatsUsed(tx: TenantTx, moduleKey: ModuleKey): Promise<number | null> {
-    if (moduleKey !== "email_credit_controller") return null;
-    return tx.emailAccount.count({ where: { deletedAt: null } });
+    if (!MODULE_CAPABILITIES[moduleKey].includes("mailbox")) return null;
+    return tx.emailAccount.count({ where: { deletedAt: null, moduleKey } });
   }
 
   /**
@@ -255,28 +271,53 @@ export class EntitlementsService {
    * sellable; saying what is missing and linking the fix is the 1.13
    * `noWorkingMailbox` pattern.
    */
-  private async resolveCapabilities(tx: TenantTx): Promise<Set<Capability>> {
-    const held = new Set<Capability>();
+  private async resolveCapabilities(tx: TenantTx): Promise<Map<ModuleKey, Set<Capability>>> {
     /**
-     * The invoice ledger is our own schema — it ships with the code, so every
-     * organisation has it. It is listed rather than assumed because the BRD
-     * names it ("Email Credit Controller data model present") as what voice
-     * credit control needs, and writing it down is what stops somebody
-     * re-reading that line as "must buy invoice follow-up" a second time.
+     * ⚠️ THIS ANSWER IS PER PRODUCT, AND UNTIL 2026-09-01 IT WAS NOT — WHICH
+     * WAS A LIVE DEFECT, not merely a gap. The old line read
+     * `emailAccount.count({ deletedAt: null }) > 0` for the whole organisation,
+     * so connecting Outlook for Invoice Chasing made Lead Follow-up report
+     * itself set up, on screen, with a mailbox it had never been given. The
+     * customer would have been told they were ready and the first reply would
+     * have left the wrong account. Founder ruling 2026-09-01: the two products
+     * share nothing.
+     *
+     * One grouped query rather than one per product: five counts on a settings
+     * screen is five round trips to say something a single GROUP BY says once.
      */
-    held.add("invoice_ledger");
-    if ((await tx.emailAccount.count({ where: { deletedAt: null } })) > 0) held.add("mailbox");
-    // `voice` is deliberately absent: there is no voice stack yet, so both
-    // voice products correctly report it missing rather than claiming readiness.
-    return held;
+    const mailboxCounts = await tx.emailAccount.groupBy({
+      by: ["moduleKey"],
+      where: { deletedAt: null },
+      _count: { _all: true },
+    });
+    const hasMailbox = new Set(
+      mailboxCounts.filter((row) => row._count._all > 0).map((row) => row.moduleKey),
+    );
+
+    return new Map(
+      MODULE_KEYS.map((moduleKey) => {
+        const held = new Set<Capability>();
+        /**
+         * The invoice ledger is our own schema — it ships with the code, so every
+         * organisation has it. It is listed rather than assumed because the BRD
+         * names it ("Email Credit Controller data model present") as what voice
+         * credit control needs, and writing it down is what stops somebody
+         * re-reading that line as "must buy invoice follow-up" a second time.
+         */
+        held.add("invoice_ledger");
+        if (hasMailbox.has(moduleKey)) held.add("mailbox");
+        // `voice` is deliberately absent: there is no voice stack yet, so both
+        // voice products correctly report it missing rather than claiming readiness.
+        return [moduleKey, held] as const;
+      }),
+    );
   }
 
   private async describeAll(tx: TenantTx): Promise<ModuleStatusDto[]> {
     const rows = await tx.organisationModule.findMany({ where: { deletedAt: null } });
     const byKey = new Map(rows.map((row) => [row.moduleKey, row]));
     const enabled = new Set(rows.filter((row) => row.enabled).map((row) => row.moduleKey));
-    const seatsUsed = await this.countSeatsUsed(tx, "email_credit_controller");
-    const capabilities = await this.resolveCapabilities(tx);
+    const capabilitiesByModule = await this.resolveCapabilities(tx);
 
     return Promise.all(
       MODULE_KEYS.map(async (moduleKey) => {
@@ -286,7 +327,14 @@ export class EntitlementsService {
           enabled: row?.enabled ?? false,
           source: (row?.source as ModuleStatusDto["source"]) ?? null,
           seats: row?.seats ?? 1,
-          seatsUsed: moduleKey === "email_credit_controller" ? seatsUsed : null,
+          /**
+           * ⚠️ EACH PRODUCT'S OWN COUNT. This was one number, measured on
+           * Invoice Chasing and shown only on Invoice Chasing's card; every
+           * other product reported `null` regardless of what it had connected.
+           * Lead Follow-up now reports its own, and correctly reports 0 rather
+           * than borrowing another product's mailboxes.
+           */
+          seatsUsed: await this.countSeatsUsed(tx, moduleKey),
           enabledAt: row?.enabledAt?.toISOString() ?? null,
           disabledAt: row?.disabledAt?.toISOString() ?? null,
           endsAt: row?.endsAt?.toISOString() ?? null,
@@ -299,7 +347,7 @@ export class EntitlementsService {
            * connect a mailbox" BEFORE the sale rather than refusing it.
            */
           missingCapabilities: MODULE_CAPABILITIES[moduleKey].filter(
-            (capability) => !capabilities.has(capability),
+            (capability) => !capabilitiesByModule.get(moduleKey)!.has(capability),
           ),
         };
       }),

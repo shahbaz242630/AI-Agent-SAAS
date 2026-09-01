@@ -7,6 +7,10 @@ const CLAIMS = {
   organisationId: "8b043d9f-c730-4274-90a7-ec3322e8a827",
   userId: "cc07bfd6-d514-4e4d-9fa9-1674b3958b73",
   nonce: "n-1",
+  // Which product the mailbox is for (slice 3.1c-0). Mandatory on a CONNECT
+  // state — see the two tests at the end of this file for why it refuses
+  // rather than degrading like `flow` and `replacesMailboxId` do.
+  moduleKey: "email_credit_controller" as const,
 };
 
 describe("OAuth state JWT (Slice 1.6, ruling 4)", () => {
@@ -139,5 +143,53 @@ describe("OAuth state JWT (Slice 1.6, ruling 4)", () => {
       .setExpirationTime("10m")
       .sign(new TextEncoder().encode(SECRET));
     await expect(verifyOAuthState(SECRET, state)).rejects.toBeInstanceOf(InvalidOAuthStateError);
+  });
+
+  /**
+   * Which product a mailbox is for (slice 3.1c-0, ruling 36).
+   *
+   * ⚠️ THIS IS THE ONE CLAIM THAT REFUSES RATHER THAN DEGRADES, and the pair
+   * below is the whole argument. `flow` and `replacesMailboxId` both fall back
+   * to something harmless when unreadable — a real screen, or a plain connect.
+   * There is no harmless fallback for the product: guessing files the mailbox
+   * against one the customer never chose, bills its seat, and looks entirely
+   * successful on every screen.
+   */
+  describe("the product a connect is for", () => {
+    const unsigned = (claims: Record<string, unknown>) =>
+      new SignJWT(claims)
+        .setProtectedHeader({ alg: "HS256", typ: "JWT" })
+        .setIssuedAt()
+        .setExpirationTime("10m")
+        .sign(new TextEncoder().encode(SECRET));
+
+    it("refuses a connect state that names no product", async () => {
+      const { moduleKey: _dropped, ...withoutProduct } = CLAIMS;
+      await expect(verifyOAuthState(SECRET, await unsigned(withoutProduct))).rejects.toBeInstanceOf(
+        InvalidOAuthStateError,
+      );
+    });
+
+    it("refuses a connect state naming a product that does not exist", async () => {
+      const state = await unsigned({ ...CLAIMS, moduleKey: "no_such_product" });
+      await expect(verifyOAuthState(SECRET, state)).rejects.toBeInstanceOf(InvalidOAuthStateError);
+    });
+
+    /**
+     * ⚠️ AND ADMIN CONSENT NEEDS NONE, WHICH IS THE MODEL RATHER THAN AN
+     * OVERSIGHT. It is one Microsoft TENANT approving the Eva app; it connects
+     * no mailbox and belongs to no product, so demanding one would invent a
+     * fact. Asserted so a later "tidy-up" cannot make it mandatory everywhere.
+     */
+    it("accepts an admin_consent state with no product at all", async () => {
+      const { moduleKey: _dropped, ...withoutProduct } = CLAIMS;
+      const state = await signOAuthState(SECRET, {
+        ...withoutProduct,
+        purpose: "admin_consent",
+      });
+      await expect(verifyOAuthState(SECRET, state, "admin_consent")).resolves.toMatchObject({
+        purpose: "admin_consent",
+      });
+    });
   });
 });

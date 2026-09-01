@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import { moduleHref, moduleName, type ModuleKey } from "@eva/types";
 import { AdminConsentHelp } from "@/components/admin-consent-help";
 import { MailboxCard, type MailboxSummary } from "@/components/mailbox-card";
 import { ApiError, apiFetch } from "@/lib/api";
@@ -11,9 +12,32 @@ import {
 } from "@/capabilities/mailbox/mailbox-errors";
 import { disconnectMessage } from "@/capabilities/mailbox/mailbox-messages";
 import { createClient } from "@/lib/supabase/server";
-import { Card, Notice, PrimaryLink } from "@/components/ui";
+import { Card, Notice, PageHeader, PageShell, PrimaryLink } from "@/components/ui";
 import { ConnectMailboxForm, MailboxActions } from "./mailbox-controls";
-import { NoOrganisation, SettingsShell } from "../settings-shell";
+
+/**
+ * "Which mailbox does THIS product send from" — one screen, one door per
+ * product (slice 3.1c-0).
+ *
+ * ⚠️ IT LIVES HERE RATHER THAN UNDER `/app/settings/mailbox`, AND THAT IS A
+ * FOUNDER RULING (2026-09-01): *"they should have full complete seperate
+ * setups.. nothing combined/shared"*. A mailbox belongs to ONE product now
+ * (ruling 36, migration 0034), so a single shared settings screen could only
+ * ever show one product's mailboxes as though they were the organisation's —
+ * which is the confusion the whole slice removes.
+ *
+ * ⚠️ ONE COMPONENT, NOT TWO COPIES, AND RULING 44 IS WHY. The instruction for
+ * the UI pass is to extract the shared piece properly so the next area is an
+ * import rather than a paste. Two products want the identical screen; the only
+ * thing that differs is which product's mailboxes it asks for and where its
+ * links point. Both come from `moduleKey`, so both product pages are a
+ * three-line wrapper and there is exactly one place to fix a defect.
+ *
+ * ⚠️ THE PRODUCT IS ALSO CARRIED INTO EVERY WRITE. `ConnectMailboxForm` and
+ * `MailboxActions` take it and put it on the request, because the API refuses a
+ * connect that does not name one rather than guessing — see the note on
+ * `moduleKey` in `packages/validation`.
+ */
 
 // Response shapes mirror the API contracts (apps/api modules/mailboxes).
 interface OrganisationSummary {
@@ -34,9 +58,11 @@ interface AdminConsent {
   organisationName: string | null;
 }
 
-export default async function MailboxSettingsPage({
+export async function MailboxScreen({
+  moduleKey,
   searchParams,
 }: {
+  moduleKey: ModuleKey;
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const params = await searchParams;
@@ -50,6 +76,7 @@ export default async function MailboxSettingsPage({
   // Single-org app today — the /app list precedent; org switching is a later slice.
   const organisations = await fetchOrganisations<OrganisationSummary>(accessToken);
   const organisation = organisations[0];
+  const productName = moduleName(moduleKey);
 
   let status: MailboxList | null = null;
   let forbidden = false;
@@ -57,7 +84,13 @@ export default async function MailboxSettingsPage({
   if (organisation) {
     try {
       status = (await (
-        await apiFetch(`/organisations/${organisation.id}/mailboxes`, accessToken)
+        await apiFetch(
+          // ⚠️ `?module=` IS NOT OPTIONAL. The API refuses a mailbox list that
+          // does not name a product rather than returning both products' rows
+          // mixed together — the answer that would look right and be wrong.
+          `/organisations/${organisation.id}/mailboxes?module=${moduleKey}`,
+          accessToken,
+        )
       ).json()) as MailboxList;
     } catch (error) {
       if (error instanceof ApiError && error.status === 401) redirect("/sign-in");
@@ -106,16 +139,15 @@ export default async function MailboxSettingsPage({
     errorCode && !showConsentHelp ? mailboxErrorMessage(errorCode, provider) : null;
 
   return (
-    // ⚠️ THE SUBTITLE SAID "the Microsoft 365 mailbox" UNTIL 3.1b. Spotted on
-    // the live page immediately after shipping the Gmail picker directly
-    // beneath it — a heading promising Microsoft above a control offering
-    // Gmail. The third sentence this slice made false, and the third found by
-    // looking at the screen rather than by a test.
-    <SettingsShell
-      title="Mailbox settings"
-      subtitle="Connect the mailbox Eva sends from — Outlook, Microsoft 365 or Gmail."
-      current="mailbox"
-    >
+    <PageShell>
+      {/* ⚠️ THE SUBTITLE NAMES THE PRODUCT, AND THAT IS THE WHOLE POINT OF THE
+          SPLIT. "The mailbox Eva sends from" was true when there was one; with
+          a mailbox per product it is the sentence that would let somebody
+          connect Gmail here and expect their invoice chasers to use it. */}
+      <PageHeader
+        title="Mailbox"
+        subtitle={`Connect the mailbox ${productName} sends from — Outlook, Microsoft 365 or Gmail.`}
+      />
       {/* ONE message, three endings. `test_email` only ever arrives alongside
           `connected=1`, so a separate box for the failure printed "Mailbox
           connected successfully" directly above "we couldn't send its test
@@ -170,7 +202,12 @@ export default async function MailboxSettingsPage({
       )}
 
       {!organisation ? (
-        <NoOrganisation />
+        <Card className="flex flex-col gap-3 px-6 py-5">
+          <p className="text-sm">Create an organisation first.</p>
+          <div>
+            <PrimaryLink href="/app/organisations/new">New organisation</PrimaryLink>
+          </div>
+        </Card>
       ) : forbidden ? (
         <p className="text-sm text-muted-foreground">
           {`Your role can't see ${organisation.name}'s mailbox settings. Ask an owner or administrator.`}
@@ -188,14 +225,8 @@ export default async function MailboxSettingsPage({
             administrator" defect of 2026-07-31.
           */}
           <p className="text-sm">
-            {`${organisation.name} doesn't have Invoice Chasing, so there's no mailbox to connect yet.`}
+            {`${organisation.name} doesn't have ${productName}, so there's no mailbox to connect yet.`}
           </p>
-          {/* ⚠️ WAS A HAND-ROLLED BUTTON UNTIL 2026-08-30, AND THE WRONG SHAPE.
-              It used the CARD radius rather than the control radius, `text-sm`
-              rather than the dashboard's 13px, `font-medium` rather than
-              semibold, and carried no shadow — so the one button on this screen
-              was visibly not the button every other screen uses. `PrimaryLink`
-              is that button, and it has been in the kit the whole time. */}
           <div>
             <PrimaryLink href="/app/settings/modules">See your products</PrimaryLink>
           </div>
@@ -227,6 +258,7 @@ export default async function MailboxSettingsPage({
                   actions={
                     <MailboxActions
                       organisationId={organisation.id}
+                      moduleKey={moduleKey}
                       mailbox={mailbox}
                       canPromote={status!.mailboxes.length > 1}
                     />
@@ -250,6 +282,7 @@ export default async function MailboxSettingsPage({
           ) : (
             <ConnectMailboxForm
               organisationId={organisation.id}
+              moduleKey={moduleKey}
               defaultAddress={attemptedAddress}
               /* ⚠️ NO LABEL ON THE FIRST CONNECT SINCE 3.1b. It used to read
                  "Connect Outlook mailbox", which stopped being true the moment
@@ -262,16 +295,18 @@ export default async function MailboxSettingsPage({
         </Card>
       ) : null}
 
-      {/* ⚠️ "Back to your organisations" is gone (2026-08-11): it pointed at
-          `/app`, which has been Home rather than a list of organisations since
-          slice 1.9, and the sidebar reaches Home from here anyway. "Your
-          clients" stays — it is a real onward step from mailbox settings, not a
-          duplicate of the way back. */}
+      {/* Back into the product this mailbox belongs to, rather than to
+          `/app/clients` as the shared settings screen did. Clients are Invoice
+          Chasing's filing (founder ruling 2026-09-01) and mean nothing here for
+          any other product. */}
       <div className="flex flex-wrap items-center gap-4">
-        <Link href="/app/clients" className="text-sm font-medium text-link hover:underline">
-          Your clients
+        <Link
+          href={moduleHref(moduleKey)}
+          className="text-sm font-medium text-link hover:underline"
+        >
+          {`Back to ${productName}`}
         </Link>
       </div>
-    </SettingsShell>
+    </PageShell>
   );
 }

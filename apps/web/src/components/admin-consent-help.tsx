@@ -60,8 +60,16 @@ export function AdminConsentHelp({ accountKind, url, organisationName, attempted
         "",
         url,
         "",
-        "It asks for permission to read and send mail from my mailbox. Nothing is sent",
-        "until I finish setting it up.",
+        // ⚠️ THIS SENTENCE IS WHY THE SCOPE WAS NARROWED (2026-09-01). It is read
+        // by the one person whose refusal blocks the whole connection, and it
+        // used to say "read and send". Eva asks for `Mail.ReadBasic` now and has
+        // never read anyone's messages — so the honest sentence is also the one
+        // most likely to get a yes. Keep it matching SCOPES in
+        // `graph-mail-provider.ts`; a promise softer than the request is worse
+        // than the old wording.
+        "It asks for permission to send mail from my mailbox, and to check the mailbox",
+        "exists. It does not read our messages. Nothing is sent until I finish setting",
+        "it up.",
         "",
         "Thanks",
       ].join("\n")

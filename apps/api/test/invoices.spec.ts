@@ -2095,6 +2095,9 @@ describe("Invoices: recording a payment", () => {
     await owner.emailAccount.create({
       data: {
         organisationId: org.id,
+        // Invoice Chasing: the only product that could own a mailbox
+        // before migration 0034, so every existing fixture is one.
+        moduleKey: "email_credit_controller",
         provider: "microsoft",
         emailAddress: `pay-${randomUUID().slice(0, 8)}@example.com`,
         isPrimary: true,
@@ -2397,6 +2400,9 @@ describe("Invoices: chaseBlockedReason (does Eva actually chase this?)", () => {
     await owner.emailAccount.create({
       data: {
         organisationId: org.id,
+        // Invoice Chasing: the only product that could own a mailbox
+        // before migration 0034, so every existing fixture is one.
+        moduleKey: "email_credit_controller",
         provider: "microsoft",
         emailAddress: `chase-${randomUUID().slice(0, 8)}@example.com`,
         isPrimary: true,
@@ -2623,6 +2629,9 @@ describe("Invoices: chaseBlockedReason (does Eva actually chase this?)", () => {
     const account = await owner.emailAccount.create({
       data: {
         organisationId: mailboxless.id,
+        // Invoice Chasing: the only product that could own a mailbox
+        // before migration 0034, so every existing fixture is one.
+        moduleKey: "email_credit_controller",
         provider: "microsoft",
         emailAddress: `late-${randomUUID().slice(0, 8)}@example.com`,
         isPrimary: true,
@@ -2744,6 +2753,9 @@ describe("Invoices: the book shows who Eva will write to", () => {
     await owner.emailAccount.create({
       data: {
         organisationId: org.id,
+        // Invoice Chasing: the only product that could own a mailbox
+        // before migration 0034, so every existing fixture is one.
+        moduleKey: "email_credit_controller",
         provider: "microsoft",
         emailAddress: `book-${randomUUID().slice(0, 8)}@example.com`,
         isPrimary: true,

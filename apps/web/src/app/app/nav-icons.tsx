@@ -88,6 +88,33 @@ function EnquiriesIcon(props: IconProps) {
   );
 }
 
+/**
+ * An @ — the ADDRESS a product sends from (Slice 3.1c-0).
+ *
+ * ⚠️ NEITHER THE PLANE NOR THE ENVELOPE, AND THE SIDEBAR IS WHY. Chasing is the
+ * plane (sending) and Enquiries the open envelope (arriving) — and in Lead
+ * Follow-up's nav, Mailbox sits DIRECTLY BELOW Enquiries. A second envelope
+ * there would put near-identical marks on consecutive rows, which is the one
+ * pair a glance most needs to tell apart.
+ *
+ * ⚠️ IT WAS A POST BOX FIRST, AND THAT FAILED ON THE SCREEN. Dome, slot, post
+ * and flag is four shapes; every other icon in this file is one or two, and at
+ * 17px with a 2px stroke the four collapsed into a smudge that read as "⊟P".
+ * Found by zooming into the rendered sidebar, not by any test — the icon was
+ * PRESENT, correctly keyed and correctly imported, and still unreadable.
+ *
+ * An @ is one glyph everybody already parses, it means "address" precisely
+ * rather than by metaphor, and two smooth curves survive being drawn small.
+ */
+function MailboxIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <circle cx="12" cy="12" r="3.4" />
+      <path d="M15.4 12v1.9a2.4 2.4 0 0 0 4.8 0V12a8.2 8.2 0 1 0-3.3 6.6" />
+    </Icon>
+  );
+}
+
 export function SettingsIcon(props: IconProps) {
   return (
     <Icon {...props}>
@@ -208,10 +235,14 @@ export const NAV_ICONS: Readonly<Record<string, (props: IconProps) => React.JSX.
   [moduleHref("email_credit_controller")]: HomeIcon,
   [moduleHref("email_credit_controller", "invoices")]: InvoicesIcon,
   [moduleHref("email_credit_controller", "chasing")]: ChasingIcon,
+  /* Slice 3.1c-0. Each product owns its mailbox now, so BOTH need the key —
+     added with the screens, for the reason the note below already gives. */
+  [moduleHref("email_credit_controller", "mailbox")]: MailboxIcon,
   /* Slice 3.1a. Added WITH the screens rather than after them: the sidebar
      went half-illustrated for five weeks last time an icon key was left
      behind, and it is invisible because a missing key renders nothing. */
   [moduleHref("lead_follow_up_email", "enquiries")]: EnquiriesIcon,
+  [moduleHref("lead_follow_up_email", "mailbox")]: MailboxIcon,
   "/app/clients": ClientsIcon,
   "/app/settings/reminders": SettingsIcon,
 };

@@ -158,7 +158,7 @@ export function attentionItems(input: {
       headline: "No mailbox is connected",
       detail:
         "Eva has nowhere to send from, so nothing will go out. Nothing is lost — connect a mailbox and anything waiting sends on the next run.",
-      href: "/app/settings/mailbox",
+      href: moduleHref("email_credit_controller", "mailbox"),
       linkLabel: "Connect a mailbox",
     });
   }

@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
+import { moduleHref } from "@eva/types";
 import { ApiError, apiFetch } from "@/lib/api";
 import { createClient } from "@/lib/supabase/server";
 
@@ -113,7 +114,7 @@ export async function addClient(
   // The mailbox settings card shows a client count, and that count is the copy
   // that states the cost of a Disconnect or a Replace BEFORE the click. Leaving
   // it stale understates what the user is about to lose.
-  revalidatePath("/app/settings/mailbox");
+  revalidatePath(moduleHref("email_credit_controller", "mailbox"));
   return { success: "Client added." };
 }
 
@@ -203,7 +204,7 @@ export async function assignClients(
     return failed(error);
   }
   revalidatePath(CLIENTS_PATH);
-  revalidatePath("/app/settings/mailbox");
+  revalidatePath(moduleHref("email_credit_controller", "mailbox"));
   // "0 moved" is a real answer, not a failure: they were already there. Saying
   // "moved 0 clients" would read as a bug, so it gets its own sentence.
   if (moved === 0) return { success: "Those clients were already filed there." };

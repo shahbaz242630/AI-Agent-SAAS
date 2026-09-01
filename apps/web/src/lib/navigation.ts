@@ -66,18 +66,37 @@ export const PRODUCT_NAV: Partial<Record<ModuleKey, readonly NavItem[]>> = {
       label: "Chasing",
       description: "What Eva has actually sent",
     },
+    /**
+     * ⚠️ EACH PRODUCT CARRIES ITS OWN MAILBOX ENTRY (slice 3.1c-0). It was one
+     * tab under Settings until 2026-09-01, when the founder ruled the two
+     * products get *"full complete seperate setups.. nothing combined/shared"*.
+     * A mailbox belongs to one product, so there is no organisation-wide
+     * mailbox screen left to link to.
+     */
+    {
+      href: moduleHref("email_credit_controller", "mailbox"),
+      label: "Mailbox",
+      description: "The address Eva chases from",
+    },
   ],
   /**
-   * Slice 3.1a. One section, because the product has one screen — and no
-   * "Home" entry, because its root only redirects here until 3.1c gives it a
-   * dashboard worth the click. A nav item pointing at a redirect is a menu
-   * entry that lies about where it goes.
+   * Slice 3.1a, and TWO sections since 3.1c-0 — Mailbox joined Enquiries when
+   * mailbox setup moved inside each product (founder ruling 2026-09-01).
+   *
+   * Still no "Home" entry: the product's root only redirects to Enquiries until
+   * 3.1c gives it a dashboard worth the click, and a nav item pointing at a
+   * redirect is a menu entry that lies about where it goes.
    */
   lead_follow_up_email: [
     {
       href: moduleHref("lead_follow_up_email", "enquiries"),
       label: "Enquiries",
       description: "Everyone who has got in touch",
+    },
+    {
+      href: moduleHref("lead_follow_up_email", "mailbox"),
+      label: "Mailbox",
+      description: "The address Eva replies from",
     },
   ],
 };

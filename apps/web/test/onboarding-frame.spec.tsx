@@ -20,7 +20,7 @@ import { OnboardingFrame } from "@/app/app/onboarding/onboarding-frame";
 // fails on correct markup is worse than no test.
 const PANE_TITLE = "The heading of the pane";
 
-const render = (current: 1 | 2 | 3, organisationName: string | null = null) =>
+const render = (current: 1 | 2, organisationName: string | null = null) =>
   renderToStaticMarkup(
     <OnboardingFrame
       current={current}
@@ -51,40 +51,44 @@ function statusOf(html: string, label: string): string {
 describe("the setup frame", () => {
   /**
    * ⚠️ THE REASON THE RAIL EXISTS. The screen it replaced showed a bar with a
-   * label, so a customer on step one could see that a step two existed but not
-   * what it wanted — and what it wants is access to their email. Naming it up
-   * front is what makes the request expected rather than alarming.
+   * label, so a customer on step one could see that a later step existed but
+   * not what it wanted. Naming each one up front is what makes it expected.
    */
   it("names every step, and what each is for, from the very first one", () => {
     const html = render(1);
     expect(html).toContain("Your business");
-    expect(html).toContain("Your mailbox");
-    expect(html).toContain("Where Eva sends from");
+    expect(html).toContain("What should we call you?");
     expect(html).toContain("Done");
   });
 
+  /**
+   * ⚠️ THE MAILBOX STEP IS GONE AND MUST STAY GONE (founder ruling
+   * 2026-09-01). A mailbox belongs to one product, and setup runs before a
+   * product is chosen — so asking here could only guess on the customer's
+   * behalf. Asserted rather than assumed: putting the step back is a one-line
+   * change to `STEPS`, and nothing else in this file would notice.
+   */
+  it("does not ask for a mailbox", () => {
+    const html = render(1) + render(2, "Northgate Plumbing");
+    expect(html).not.toContain("Your mailbox");
+    expect(html).not.toContain("Where Eva sends from");
+  });
+
   it("marks exactly one step as the current one", () => {
-    for (const step of [1, 2, 3] as const) {
+    for (const step of [1, 2] as const) {
       expect(render(step).match(/aria-current="step"/g)).toHaveLength(1);
     }
   });
 
-  /** The off-by-one, stated three times because it is the whole point. */
+  /** The off-by-one, stated twice because it is the whole point. */
   it("puts the tick behind you and the ring on where you are", () => {
     const first = render(1);
     expect(statusOf(first, "Your business")).toBe("Current step:");
-    expect(statusOf(first, "Your mailbox")).toBe("Not started:");
     expect(statusOf(first, "Done")).toBe("Not started:");
 
     const second = render(2, "Northgate Plumbing");
     expect(statusOf(second, "Your business")).toBe("Completed:");
-    expect(statusOf(second, "Your mailbox")).toBe("Current step:");
-    expect(statusOf(second, "Done")).toBe("Not started:");
-
-    const third = render(3, "Northgate Plumbing");
-    expect(statusOf(third, "Your business")).toBe("Completed:");
-    expect(statusOf(third, "Your mailbox")).toBe("Completed:");
-    expect(statusOf(third, "Done")).toBe("Current step:");
+    expect(statusOf(second, "Done")).toBe("Current step:");
   });
 
   /**
@@ -115,15 +119,14 @@ describe("the setup frame", () => {
 
   /**
    * ⚠️ "BACK" LEAVES SETUP; IT DOES NOT MEAN "THE PREVIOUS STEP". The design
-   * sends step two back to step one, and this flow cannot: by then the
-   * organisation exists and nothing renames one. On step three setup is over
-   * and the pane offers two real destinations, so a third pointing outwards
-   * would only be a way to lose somebody who has just finished.
+   * sends a later step back to step one, and this flow cannot: by then the
+   * organisation exists and nothing renames one. On the last step setup is over
+   * and the pane offers a real destination, so another pointing outwards would
+   * only be a way to lose somebody who has just finished.
    */
   it("offers a way out of setup on the unfinished steps, and none on the last", () => {
     expect(render(1)).toContain("← Back");
-    expect(render(2)).toContain("← Back");
-    expect(render(3)).not.toContain("← Back");
+    expect(render(2)).not.toContain("← Back");
   });
 
   it("says which account this is, since there is no sidebar to say it", () => {
@@ -140,7 +143,7 @@ describe("the setup frame", () => {
 
   /** The two facts worth knowing before handing a product access to your email. */
   it("keeps the reassurances on every step", () => {
-    for (const step of [1, 2, 3] as const) {
+    for (const step of [1, 2] as const) {
       expect(render(step)).toContain("never a third-party address");
       expect(render(step)).toContain("never chases more than what&#x27;s left");
     }

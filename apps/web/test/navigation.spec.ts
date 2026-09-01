@@ -47,7 +47,7 @@ describe("app navigation", () => {
         expect(isActiveSection(item.href, "/app")).toBe(false);
       }
       expect(isActiveSection("/app/invoices/import", "/app")).toBe(false);
-      expect(isActiveSection("/app/settings/mailbox", "/app")).toBe(false);
+      expect(isActiveSection("/app/settings/reminders", "/app")).toBe(false);
     });
 
     it("marks Home active only on Home itself", () => {
@@ -120,7 +120,8 @@ describe("the chooser has its own chrome (founder, 2026-08-20)", () => {
       "/app/clients/abc/invoices",
       "/app/invoice-chasing",
       "/app/invoice-chasing/invoices/import",
-      "/app/settings/mailbox",
+      "/app/invoice-chasing/mailbox",
+      "/app/lead-follow-up-email/mailbox",
       "/app/settings/reminders",
       ...NAV_ITEMS.map((item) => item.href),
     ];

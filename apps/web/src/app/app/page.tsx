@@ -5,6 +5,7 @@ import { ApiError, apiFetch } from "@/lib/api";
 import { fetchOrganisations } from "@/lib/organisations";
 import { hubGroups, startableProducts } from "@/lib/product-hub";
 import { createClient } from "@/lib/supabase/server";
+import { Notice } from "@/components/ui";
 import { StartProductButton } from "./start-product-button";
 
 /**
@@ -42,7 +43,12 @@ interface ModuleStatus {
   enabled: boolean;
 }
 
-export default async function AppHubPage() {
+export default async function AppHubPage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
+  const params = await searchParams;
   const supabase = await createClient();
   const { data: claimsData } = await supabase.auth.getClaims();
   if (!claimsData?.claims) redirect("/sign-in");
@@ -110,6 +116,19 @@ export default async function AppHubPage() {
    */
   const firstVisit = !unreadable && held.length === 0;
 
+  /**
+   * Only the codes that can actually reach the hub — the ones raised BEFORE the
+   * callback knows which product it is for. Everything else is rendered by the
+   * product's own mailbox screen, which has the provider and the full story.
+   */
+  const errorCode = typeof params.error === "string" ? params.error : null;
+  const mailboxError =
+    errorCode === "invalid_state"
+      ? "That mailbox connection attempt expired or could not be verified, so nothing was connected."
+      : errorCode
+        ? "That mailbox connection did not complete, so nothing was connected."
+        : null;
+
   return (
     /* ⚠️ CENTRED AND NARROW, BECAUSE THERE IS NO SIDEBAR TO BALANCE AGAINST
        (founder, 2026-08-20). Every other signed-in screen is a working surface
@@ -117,6 +136,29 @@ export default async function AppHubPage() {
        the left edge of a wide empty page reads as a page that failed to
        finish loading. `mx-auto` is doing the work the sidebar used to. */
     <main className="mx-auto flex w-full max-w-[860px] flex-1 flex-col gap-[26px] px-10 pt-10 pb-14">
+      {/**
+       * ⚠️ A FAILED MAILBOX CONNECTION CAN LAND HERE, AND MUST NOT LAND
+       * SILENTLY (slice 3.1c-0).
+       *
+       * A mailbox belongs to one product now, so the callback returns the
+       * browser to that product's mailbox screen. When the state cannot be
+       * verified at all — forged, expired, or an admin-consent token used to
+       * complete a connect — there IS no product to name, and guessing one
+       * would drop the customer on a screen for something they were not
+       * connecting (or on a 402 for a product they do not own). The hub is the
+       * honest destination.
+       *
+       * But the hub was not listening. Before this, `?error=` arrived here and
+       * rendered nothing: the customer clicked Connect, was sent to Microsoft,
+       * came back, and saw an ordinary product list with no hint that anything
+       * had failed. That is the silent-failure family, introduced by the very
+       * change that made the redirect honest.
+       */}
+      {mailboxError && (
+        <Notice tone="danger">
+          {`${mailboxError} You can try again from the mailbox screen inside the product you were setting up.`}
+        </Notice>
+      )}
       <section className="flex w-full flex-col gap-2">
         <h1 className="font-display text-[29px] leading-tight font-semibold">
           {organisation.name}

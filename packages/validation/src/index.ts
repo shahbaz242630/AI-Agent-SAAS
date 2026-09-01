@@ -849,37 +849,57 @@ export type MicrosoftCallbackQuery = z.infer<typeof microsoftCallbackQuerySchema
  * whether an administrator can even exist. Eva never asks for the password;
  * that happens at Microsoft.
  */
-export const mailboxConnectSchema = z
-  .object({
-    /**
-     * Which provider to connect (Slice 3.1b step 3).
-     *
-     * ⚠️ DEFAULTS TO `microsoft` SO EVERY EXISTING CALLER KEEPS WORKING. The
-     * settings screen and onboarding both called this endpoint with no provider
-     * for months; making it required would 400 them all, and the failure would
-     * land on the product we already sell rather than on the new one.
-     */
-    provider: z.enum(["microsoft", "google"]).optional(),
-    emailAddress: z.string().trim().email().max(320).optional(),
-    /** Which Eva screen this was started from, so the callback returns the user
-     *  there. A closed enum, never a URL — the API maps it to a path from its
-     *  own table, so a caller cannot choose where the browser lands. */
-    flow: z.enum(["onboarding", "settings"]).optional(),
-    /**
-     * Replace this mailbox rather than adding another (slice 1.6b, ruling 3).
-     * The new address inherits the old one's clients and its default status,
-     * and the old row is disconnected in the same transaction.
-     *
-     * It is its own action, NOT "disconnect then reconnect": disconnecting
-     * first drops every allocation to the default, so the clients would be
-     * chased from the wrong address in the gap and nobody would be told.
-     */
-    replacesMailboxId: z.uuid().optional(),
-  })
-  // The whole body is optional: connect worked without one before onboarding
-  // existed, and the settings page still calls it that way. Without the default
-  // an absent body parses as undefined and 400s.
-  .default({});
+export const mailboxConnectSchema = z.object({
+  /**
+   * Which provider to connect (Slice 3.1b step 3).
+   *
+   * ⚠️ DEFAULTS TO `microsoft` SO EVERY EXISTING CALLER KEEPS WORKING. The
+   * settings screen and onboarding both called this endpoint with no provider
+   * for months; making it required would 400 them all, and the failure would
+   * land on the product we already sell rather than on the new one.
+   */
+  provider: z.enum(["microsoft", "google"]).optional(),
+  /**
+   * WHICH PRODUCT this mailbox is for (ruling 36, slice 3.1c-0).
+   *
+   * ⚠️ REQUIRED, AND DELIBERATELY NOT DEFAULTED THE WAY `provider` ABOVE IS.
+   * `provider` could default safely because guessing "microsoft" for an old
+   * caller produced the mailbox they were already asking for. There is no
+   * equivalent guess here: defaulting to Invoice Chasing would file a
+   * customer's Lead Follow-up mailbox against another product's seat, and
+   * every screen would show green while the first reply left the wrong
+   * account. The whole slice exists to stop the two products sharing a
+   * mailbox, and an optional field with a default would quietly re-create it.
+   *
+   * The cost is a 400 for any caller that omits it — loud, immediate, and
+   * fixed by naming the product. All callers are ours and move in this slice.
+   */
+  moduleKey: z.enum(MODULE_KEYS),
+  emailAddress: z.string().trim().email().max(320).optional(),
+  /** Which Eva screen this was started from, so the callback returns the user
+   *  there. A closed enum, never a URL — the API maps it to a path from its
+   *  own table, so a caller cannot choose where the browser lands. */
+  flow: z.enum(["onboarding", "settings"]).optional(),
+  /**
+   * Replace this mailbox rather than adding another (slice 1.6b, ruling 3).
+   * The new address inherits the old one's clients and its default status,
+   * and the old row is disconnected in the same transaction.
+   *
+   * It is its own action, NOT "disconnect then reconnect": disconnecting
+   * first drops every allocation to the default, so the clients would be
+   * chased from the wrong address in the gap and nobody would be told.
+   */
+  replacesMailboxId: z.uuid().optional(),
+});
+/**
+ * ⚠️ `.default({})` WAS REMOVED IN SLICE 3.1c-0, AND ITS ABSENCE IS THE POINT.
+ * The whole body used to be optional — connect worked without one before
+ * onboarding existed — so an empty POST parsed into `{}` and succeeded. With
+ * `moduleKey` required there is no such thing as a connect that does not say
+ * which product it is for, and a default could only supply a guess. An absent
+ * or product-less body now 400s, which is exactly the outcome we want: loud,
+ * immediate, and fixed by naming the product.
+ */
 
 export type MailboxConnectInput = z.infer<typeof mailboxConnectSchema>;
 

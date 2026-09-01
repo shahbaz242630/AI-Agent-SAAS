@@ -941,6 +941,9 @@ describe("Schema conventions (BRD 10)", () => {
   describe("email_accounts seats reshaping (Slice 1.6a)", () => {
     const mailbox = (address: string, overrides: Record<string, unknown> = {}) => ({
       organisationId: DEMO_ORGANISATION_ID,
+      // Which product owns it (migration 0034). Overridable, because the
+      // per-product rules below need two different values.
+      moduleKey: "email_credit_controller",
       provider: "microsoft",
       emailAddress: address,
       ...overrides,
@@ -975,16 +978,32 @@ describe("Schema conventions (BRD 10)", () => {
       await prisma.emailAccount.delete({ where: { id: first.id } });
     });
 
-    it("allows exactly one primary mailbox per organisation", async () => {
+    /**
+     * ⚠️ ONE PRIMARY PER ORGANISATION *PER PRODUCT* SINCE MIGRATION 0034.
+     * It was one per organisation from 0017 until 2026-09-01, which is why
+     * a second product could never have a default at all — its first
+     * mailbox hit this index and the insert failed with nothing on any
+     * screen to explain it. Both halves are asserted: still one within a
+     * product, and now one EACH across two.
+     */
+    it("allows exactly one primary mailbox per organisation, per product", async () => {
       const a = `prim-a-${randomUUID().slice(0, 8)}@example.com`;
       const b = `prim-b-${randomUUID().slice(0, 8)}@example.com`;
+      const c = `prim-c-${randomUUID().slice(0, 8)}@example.com`;
       const first = await prisma.emailAccount.create({ data: mailbox(a, { isPrimary: true }) });
       await expect(
         prisma.emailAccount.create({ data: mailbox(b, { isPrimary: true }) }),
       ).rejects.toThrow();
+      // The OTHER product gets its own default, and that is the change.
+      const other = await prisma.emailAccount.create({
+        data: mailbox(c, { isPrimary: true, moduleKey: "lead_follow_up_email" }),
+      });
+      expect(other.isPrimary).toBe(true);
       // Non-primary siblings are fine — that is the whole point of seats.
       const second = await prisma.emailAccount.create({ data: mailbox(b) });
-      await prisma.emailAccount.deleteMany({ where: { id: { in: [first.id, second.id] } } });
+      await prisma.emailAccount.deleteMany({
+        where: { id: { in: [first.id, second.id, other.id] } },
+      });
       expect(second.isPrimary).toBe(false);
     });
 
@@ -1111,6 +1130,8 @@ describe("Schema conventions (BRD 10)", () => {
       return prisma.emailAccount.create({
         data: {
           organisationId,
+          // Client filing is Invoice Chasing's (founder ruling 2026-09-01).
+          moduleKey: "email_credit_controller",
           provider: "microsoft",
           emailAddress: `alloc-${randomUUID().slice(0, 8)}@example.com`,
         },

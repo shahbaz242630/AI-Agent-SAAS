@@ -12,56 +12,56 @@ import { attentionItems } from "@/products/invoice-follow-up/dashboard";
  * production mailbox connection fails on an Entra redirect URI, and there was
  * no way to reach the product at all.
  *
- * The customer it traps for real is the one whose IT administrator has to
- * approve the connection — a wait of days, which this very page has a helper
- * for. They could not add an invoice, import a spreadsheet, or look at the
- * thing they had just signed up for. They would assume it was broken.
+ * ⚠️ THAT STEP IS GONE AS OF 2026-09-01, AND THE TESTS THAT READ IT WENT WITH
+ * IT. A mailbox belongs to one product (ruling 36) and onboarding runs before a
+ * product is chosen, so the founder ruled the step out entirely — you connect a
+ * mailbox inside the product that will use it. The old trap is now structurally
+ * impossible: there is no mailbox step to be stuck on.
  *
- * Read from source rather than rendered: `mailbox-step.tsx` imports the
- * `connectMailbox` server action, and pulling that into a unit test drags the
- * server Supabase client with it.
+ * ⚠️ BUT THE PROMISE IT RELIED ON MATTERS MORE NOW, NOT LESS. Before, most
+ * people left setup WITH a mailbox and skipping was the exception. Now EVERY
+ * new customer reaches the product without one, so "Home says what is missing"
+ * is no longer a safety net for a minority — it is the only thing standing
+ * between a new customer and a product that silently does nothing. Both halves
+ * are asserted below: what onboarding says on the way out, and what Home says
+ * when they arrive.
  */
 
-const MAILBOX_STEP = fileURLToPath(
-  new URL("../src/app/app/onboarding/mailbox-step.tsx", import.meta.url),
+const ONBOARDING_PAGE = fileURLToPath(
+  new URL("../src/app/app/onboarding/page.tsx", import.meta.url),
 );
 
-const source = readFileSync(MAILBOX_STEP, "utf8")
-  // The comments explain the defect by name, so they are not evidence of the fix.
+const onboardingSource = readFileSync(ONBOARDING_PAGE, "utf8")
+  // The comments explain the change by name, so they are not evidence of it.
   .replace(/\/\*[\s\S]*?\*\//g, " ")
   .replace(/\{\/\*[\s\S]*?\*\/\}/g, " ");
 
-describe("onboarding step two", () => {
-  it("offers a way into the product without a mailbox", () => {
-    expect(source).toMatch(/href="\/app"/);
+describe("the end of setup", () => {
+  it("no longer asks for a mailbox", () => {
+    expect(onboardingSource).not.toMatch(/MailboxStep/);
+    expect(onboardingSource).not.toMatch(/mailboxes\/connect/);
   });
 
   /**
-   * ⚠️ FORWARD, NOT BACK. The step above cannot be undone — the organisation
-   * exists by then and no endpoint renames one — so a "Back" here would offer
-   * something impossible. This link goes on into the product.
+   * ⚠️ THE SENTENCE THAT REPLACES THE STEP. Ending on "you're set up" with
+   * nothing else would be false in the one way that costs a customer: Eva
+   * cannot send anything until a product has a mailbox, and somebody who reads
+   * "done" and leaves would find nothing happening with no idea why.
    */
-  it("does not present the exit as a way backwards", () => {
-    const linkText = /href="\/app"[\s\S]{0,200}?>([^<]+)</.exec(source)?.[1]?.trim() ?? "";
+  it("names the mailbox as the next thing, rather than claiming setup is finished", () => {
+    expect(onboardingSource).toMatch(/mailbox/i);
+    expect(onboardingSource).toMatch(/href="\/app"/);
+  });
 
+  /** Forward, not back: the organisation exists by now and nothing renames one. */
+  it("does not present the way out as a way backwards", () => {
+    const linkText =
+      /href="\/app"[\s\S]{0,200}?>([^<]+)</.exec(onboardingSource)?.[1]?.trim() ?? "";
     expect(linkText.length).toBeGreaterThan(0);
     expect(linkText).not.toMatch(/back/i);
   });
-
-  it("still leads with connecting the mailbox — skipping is the quieter option", () => {
-    expect(source).toMatch(/Connect mailbox/);
-    // The primary action is a button; the exit is a plain link.
-    expect(source).toMatch(/PrimaryButton/);
-  });
 });
 
-/**
- * ⚠️ THE PROMISE THE EXIT RELIES ON. Skipping is only honest because Home says
- * what skipping cost: a customer who lands there with no mailbox is told that
- * nothing will send until one is connected, and given the way back. If this
- * card ever stops appearing, the link above becomes a quiet dead end instead of
- * a choice.
- */
 describe("what Home tells someone who skipped", () => {
   const noActivity = { sentLast7Days: 0, waiting: 0, failedLast7Days: 0, scheduled: 0 };
 
@@ -78,7 +78,9 @@ describe("what Home tells someone who skipped", () => {
     expect(card?.detail).toMatch(/nothing will go out/i);
     // Nothing is lost by skipping — anything waiting sends once a mailbox is on.
     expect(card?.detail).toMatch(/nothing is lost/i);
-    expect(card?.href).toBe("/app/settings/mailbox");
+    // Invoice Chasing's own mailbox screen since slice 3.1c-0 — there is no
+    // organisation-wide one left to send anybody to.
+    expect(card?.href).toBe("/app/invoice-chasing/mailbox");
   });
 
   /** `null` means "we could not tell" — no permission, or no Invoice Chasing —

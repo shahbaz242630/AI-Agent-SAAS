@@ -1360,7 +1360,10 @@ export class InvoicesService {
      * then refuses, which is the defect one layer along.
      */
     const healthyMailboxes = await tx.emailAccount.count({
-      where: { deletedAt: null, healthStatus: "active" },
+      // This product's own mailboxes. Counting the organisation's would predict
+      // a chase that `resolveSendingMailbox` — now product-scoped — refuses,
+      // which is precisely the one-layer-along defect the note above warns of.
+      where: { deletedAt: null, healthStatus: "active", moduleKey: "email_credit_controller" },
     });
     for (const row of stillUndecided) {
       blockers.set(row.id, healthyMailboxes > 0 ? null : "no_mailbox");

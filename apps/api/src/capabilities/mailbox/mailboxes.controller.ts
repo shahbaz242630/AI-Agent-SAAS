@@ -17,7 +17,12 @@ import type {
   MailboxListDto,
   MailboxTestEmailResultDto,
 } from "@eva/types";
-import { mailboxConnectSchema, type MailboxConnectInput } from "@eva/validation";
+import {
+  mailboxConnectSchema,
+  moduleKeyParamSchema,
+  type MailboxConnectInput,
+} from "@eva/validation";
+import type { ModuleKey } from "@eva/types";
 import { ZodValidationPipe } from "../../common/validation/zod-validation.pipe.js";
 import {
   CurrentAuthUser,
@@ -42,12 +47,20 @@ import { OwnedBy } from "../../common/monitoring/owner.js";
 export class MailboxesController {
   constructor(private readonly mailboxesService: MailboxesService) {}
 
+  /**
+   * ⚠️ `module` IS REQUIRED, NOT OPTIONAL (slice 3.1c-0). Mailbox setup lives
+   * inside each product now (founder ruling 2026-09-01), so "the
+   * organisation's mailboxes" is no longer a question with one answer. An
+   * omitted product is a 400 rather than a list mixing both products together,
+   * which is the answer that would look right and be wrong.
+   */
   @Get()
   listMailboxes(
     @CurrentAuthUser() authUser: AuthUser,
     @Param("organisationId", ParseUUIDPipe) organisationId: string,
+    @Query("module", new ZodValidationPipe(moduleKeyParamSchema)) moduleKey: ModuleKey,
   ): Promise<MailboxListDto> {
-    return this.mailboxesService.listMailboxes(authUser, organisationId);
+    return this.mailboxesService.listMailboxes(authUser, organisationId, moduleKey);
   }
 
   // Mints a state JWT and returns a URL; it creates no resource, so 200 not

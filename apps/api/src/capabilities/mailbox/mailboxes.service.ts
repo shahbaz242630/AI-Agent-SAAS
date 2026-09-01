@@ -12,7 +12,9 @@ import {
 // eslint-disable-next-line @typescript-eslint/consistent-type-imports
 import { PinoLogger } from "nestjs-pino";
 import { withTenant } from "@eva/database";
+import { moduleHref } from "@eva/types";
 import type {
+  ModuleKey,
   EmailAccountHealthStatus,
   MailboxAdminConsentDto,
   MailboxConnectDto,
@@ -56,7 +58,9 @@ import {
 import {
   DEFAULT_OAUTH_FLOW,
   signOAuthState,
+  verifyConnectState,
   verifyOAuthState,
+  type ConnectStateClaims,
   type OAuthFlow,
   type OAuthStateClaims,
 } from "./oauth-state.js";
@@ -85,10 +89,26 @@ const AUTH_EXPIRED_MESSAGE = "Microsoft authorisation expired â€” reconnect
  * `redirect_uri` allowlist has already done its work and would not catch a
  * second hop somewhere else.
  */
-const FLOW_RETURN_PATHS: Record<OAuthFlow, string> = {
-  onboarding: "/app/onboarding",
-  settings: "/app/settings/mailbox",
-};
+/**
+ * Where the callback sends the browser back to.
+ *
+ * ⚠️ A FUNCTION OF THE PRODUCT SINCE SLICE 3.1c-0, NOT A CONSTANT TABLE. Mailbox
+ * setup lives inside each product now (founder ruling 2026-09-01), so there is
+ * no single `/app/settings/mailbox` left to return to — landing there would be
+ * a 404, and landing on the OTHER product's screen would show the customer a
+ * list that does not contain the mailbox they just connected.
+ *
+ * ⚠️ `onboarding` IS LEGACY AND NOTHING MINTS IT ANY MORE. Onboarding stopped
+ * asking for a mailbox in the same slice. The branch stays so a connection
+ * already in flight across that deploy still lands somewhere real.
+ *
+ * The path is still built here from a closed enum and the signed state — never
+ * from anything the caller supplies — so this remains impossible to turn into
+ * an open redirect.
+ */
+function flowReturnPath(flow: OAuthFlow, moduleKey: ModuleKey): string {
+  return flow === "onboarding" ? "/app/onboarding" : moduleHref(moduleKey, "mailbox");
+}
 
 /**
  * Where the `/adminconsent` return goes â€” deliberately NOT one of the paths
@@ -114,8 +134,15 @@ const TEST_EMAIL = {
  *  wrestling Prisma's GetPayload generics under exactOptionalPropertyTypes). */
 type ConnectedAccount = NonNullable<Awaited<ReturnType<TenantTx["emailAccount"]["findFirst"]>>>;
 
-/** The product whose seats a mailbox occupies (slice 1.6a). */
-const MAILBOX_MODULE = "email_credit_controller";
+/**
+ * ⚠️ `MAILBOX_MODULE = "email_credit_controller"` LIVED HERE UNTIL 2026-09-01
+ * AND IS DELETED, NOT MOVED. Every seat check, readiness check and send keyed
+ * off that one constant, so a mailbox connected for Lead Follow-up was counted
+ * against Invoice Chasing's seats — a product the customer might not even own.
+ * The product now travels: on the connect request, on the signed OAuth state,
+ * and on the mailbox row itself (migration 0034). If you find yourself wanting
+ * a default here again, that is the bug this slice removed.
+ */
 
 /**
  * What `resolveSendingMailbox` answered, and HOW (slice 1.6b, Task 6).
@@ -211,17 +238,25 @@ export class MailboxesService {
 
   /** GET .../mailboxes â€” mailbox:read. Sanitized; tokens NEVER leave the
    *  database (plan Â§8 risk 1). Reads are not audited. */
-  async listMailboxes(authUser: AuthUser, organisationId: string): Promise<MailboxListDto> {
+  async listMailboxes(
+    authUser: AuthUser,
+    organisationId: string,
+    moduleKey: ModuleKey,
+  ): Promise<MailboxListDto> {
     const user = await this.usersService.resolveOrProvision(authUser);
     return withTenant(this.prisma.db, { organisationId, userId: user.id }, async (tx) => {
       await requirePermission(tx, organisationId, user.id, "mailbox:read");
+      await this.requireProduct(tx, moduleKey);
+      // ⚠️ Scoped to ONE product. Mailbox setup now lives inside each product
+      // (founder ruling 2026-09-01), so this list is what that product owns —
+      // never every mailbox in the organisation.
       const accounts = await tx.emailAccount.findMany({
-        where: { deletedAt: null },
+        where: { deletedAt: null, moduleKey },
         // Primary first, then oldest — a stable order so the list does not
         // reshuffle under the customer between renders.
         orderBy: [{ isPrimary: "desc" }, { createdAt: "asc" }],
       });
-      const seats = await this.seatsFor(tx);
+      const seats = await this.seatsFor(tx, moduleKey);
       /**
        * How many clients each mailbox actually chases (slice 1.6b). ONE grouped
        * query rather than one per mailbox — this runs on every settings render,
@@ -284,6 +319,7 @@ export class MailboxesService {
   async resolveSendingMailbox(
     tx: TenantTx,
     organisationId: string,
+    moduleKey: ModuleKey,
     customer: { organisationId: string; emailAccountId: string | null },
   ): Promise<SendingMailboxResolution | null> {
     /**
@@ -315,11 +351,29 @@ export class MailboxesService {
      * the debtor sees a conversation scattered across mailboxes.
      */
     const live = await tx.emailAccount.findMany({
-      where: { deletedAt: null },
+      where: { deletedAt: null, moduleKey },
       orderBy: { createdAt: "asc" },
     });
     const healthy = live.filter((account) => account.healthStatus === "active");
 
+    /**
+     * The per-client filing (slice 1.6b, ruling 1) — "chase Bob's Builders from
+     * accounts@, everyone else from mike@".
+     *
+     * ⚠️ FOUNDER RULING 2026-09-01: THIS FILING IS AN INVOICE CHASING FEATURE,
+     * AND NOTHING ELSE READS IT. Clients are shared across products (ruling 15)
+     * but a mailbox now belongs to one product, so a shared client filed under
+     * Invoice Chasing's `accounts@` leaves every other product with no answer.
+     * Lead Follow-up ignores the filing entirely and replies from its own
+     * product default.
+     *
+     * ⚠️ AND THAT COSTS NO `if` AND NO FLAG, WHICH IS WHY IT IS WRITTEN THIS
+     * WAY. `live` is already scoped to the product above, so a mailbox filed
+     * against a DIFFERENT product simply is not in the candidate set and this
+     * `find` cannot match it. The rule enforces itself through the same filter
+     * that makes sending product-scoped, rather than through a second branch
+     * that could later be edited apart from it.
+     */
     if (customer.emailAccountId) {
       const allocated = healthy.find((account) => account.id === customer.emailAccountId);
       if (allocated) return { account: allocated, source: "allocated" };
@@ -344,11 +398,35 @@ export class MailboxesService {
     return null;
   }
 
+  /**
+   * "Does this organisation actually hold the product this mailbox is for?"
+   *
+   * ⚠️ NEEDED THE MOMENT MAILBOXES BECAME PER-PRODUCT (slice 3.1c-0), AND NOT
+   * BEFORE. `requirePermission` asks whether the organisation holds ANY product
+   * granting `mailbox:manage` — which was the whole question while a mailbox
+   * belonged to the organisation. It is now only half of it: a customer who
+   * bought Lead Follow-up alone holds that permission, and without this check
+   * could connect a mailbox FOR INVOICE CHASING — a product they never bought,
+   * consuming a seat on a module row that does not exist and so falls back to
+   * the default of one.
+   *
+   * 402 rather than 403, the 1.6a distinction: "your organisation hasn't got
+   * this product" is an upgrade prompt, not "ask your owner for permission".
+   * It is the code the mailbox screen already renders as "you don't have X, so
+   * there's no mailbox to connect yet".
+   */
+  private async requireProduct(tx: TenantTx, moduleKey: ModuleKey): Promise<void> {
+    const held = await tx.organisationModule.findFirst({
+      where: { moduleKey, enabled: true, deletedAt: null },
+    });
+    if (!held) throw new ModuleNotEntitledException([moduleKey]);
+  }
+
   /** Seats bought for the mailbox-bearing product. Fails CLOSED: a missing or
    *  disabled module row reads as the default rather than as unlimited. */
-  private async seatsFor(tx: TenantTx): Promise<number> {
+  private async seatsFor(tx: TenantTx, moduleKey: ModuleKey): Promise<number> {
     const module = await tx.organisationModule.findFirst({
-      where: { moduleKey: MAILBOX_MODULE, deletedAt: null },
+      where: { moduleKey, deletedAt: null },
     });
     return module?.seats ?? DEFAULT_SEATS;
   }
@@ -361,11 +439,12 @@ export class MailboxesService {
   async connect(
     authUser: AuthUser,
     organisationId: string,
-    input: MailboxConnectInput = {},
+    input: MailboxConnectInput,
   ): Promise<MailboxConnectDto> {
     const user = await this.usersService.resolveOrProvision(authUser);
     await withTenant(this.prisma.db, { organisationId, userId: user.id }, async (tx) => {
       await requirePermission(tx, organisationId, user.id, "mailbox:manage");
+      await this.requireProduct(tx, input.moduleKey);
       /**
        * A FRIENDLY pre-check, not the authoritative one — that lives in the
        * callback, inside the write transaction, because this reads and the
@@ -377,9 +456,11 @@ export class MailboxesService {
        * and refusing it would strand a customer whose only mailbox has an
        * expired grant at exactly the moment they are trying to fix it.
        */
-      const seats = await this.seatsFor(tx);
+      const seats = await this.seatsFor(tx, input.moduleKey);
+      // Per product: this pre-check must agree with the authoritative one in
+      // the callback, and that one counts only this product's mailboxes.
       const live = await tx.emailAccount.findMany({
-        where: { deletedAt: null },
+        where: { deletedAt: null, moduleKey: input.moduleKey },
         select: { id: true, emailAddress: true },
       });
       /**
@@ -421,6 +502,9 @@ export class MailboxesService {
       organisationId,
       userId: user.id,
       nonce: randomUUID(),
+      // Which product this mailbox is for — see the claim's note in
+      // oauth-state.ts. Not optional for a connect, and never guessed.
+      moduleKey: input.moduleKey,
       ...(input.emailAddress ? { loginHint: input.emailAddress } : {}),
       // Rides on the state because Microsoft returns `state` untouched and
       // nothing else survives the round trip â€” the browser is at Microsoft in
@@ -534,7 +618,16 @@ export class MailboxesService {
      * page falls back to whatever it assumed before, which is Microsoft.
      * Everything downstream therefore appends with `&`.
      */
-    const base = `${this.env.WEB_ORIGIN}${FLOW_RETURN_PATHS[hints.flow]}?provider=${provider}`;
+    const base = `${this.env.WEB_ORIGIN}${
+      /**
+       * ⚠️ NULL WHEN THE STATE WOULD NOT VERIFY, AND THE HUB IS THE HONEST
+       * ANSWER THEN. `hints` is a best-effort read taken BEFORE verification so
+       * a failure can still be explained; an unreadable state names no product,
+       * and guessing one would drop the customer on a mailbox screen belonging
+       * to something they were not connecting. `/app` is where they choose.
+       */
+      hints.moduleKey ? flowReturnPath(hints.flow, hints.moduleKey) : "/app"
+    }?provider=${provider}`;
     if (query.error) {
       // The belt-and-braces branch. The classifier is correct â€” fed AADSTS90094
       // it returns admin_consent_required, verified against deployed staging â€”
@@ -556,9 +649,9 @@ export class MailboxesService {
     }
     if (query.admin_consent) return this.handleAdminConsentReturn(query);
     if (!query.state) return `${base}&error=invalid_state`;
-    let claims: OAuthStateClaims;
+    let claims: ConnectStateClaims;
     try {
-      claims = await verifyOAuthState(this.env.OAUTH_STATE_SECRET, query.state);
+      claims = await verifyConnectState(this.env.OAUTH_STATE_SECRET, query.state);
     } catch {
       return `${base}&error=invalid_state`;
     }
@@ -576,6 +669,10 @@ export class MailboxesService {
         { organisationId: claims.organisationId, userId: claims.userId },
         async (tx) => {
           await requirePermission(tx, claims.organisationId, claims.userId, "mailbox:manage");
+          // Re-checked at the moment of the write, not just at connect: the
+          // product may have been switched off during the provider round trip,
+          // and the callback maps this to `?error=module_not_entitled`.
+          await this.requireProduct(tx, claims.moduleKey);
         },
       );
     } catch (error) {
@@ -677,7 +774,7 @@ export class MailboxesService {
            */
           const locked = await tx.$queryRaw<{ seats: number }[]>`
             SELECT seats FROM organisation_modules
-            WHERE module_key = ${MAILBOX_MODULE} AND deleted_at IS NULL
+            WHERE module_key = ${claims.moduleKey} AND deleted_at IS NULL
             FOR UPDATE`;
           const seats = locked[0]?.seats ?? DEFAULT_SEATS;
 
@@ -690,16 +787,35 @@ export class MailboxesService {
            */
           const replacing = claims.replacesMailboxId
             ? await tx.emailAccount.findFirst({
-                where: { id: claims.replacesMailboxId, deletedAt: null },
+                // Scoped to the product as well as the id: a state naming a
+                // mailbox belonging to the OTHER product must not be able to
+                // replace it, and re-checking here costs nothing.
+                where: {
+                  id: claims.replacesMailboxId,
+                  moduleKey: claims.moduleKey,
+                  deletedAt: null,
+                },
               })
             : null;
 
-          // Reconnecting an address reuses its row and consumes no new seat.
-          // Case-insensitive to match the database index, so Sara@ and sara@
-          // cannot end up as two rows and two seats.
+          /**
+           * Reconnecting an address reuses its row and consumes no new seat.
+           * Case-insensitive to match the database index, so Sara@ and sara@
+           * cannot end up as two rows and two seats.
+           *
+           * ⚠️ SCOPED TO THE PRODUCT, AND THIS IS THE LINE THE WHOLE RULING
+           * RESTS ON. Without `moduleKey` here, a customer connecting
+           * `mike@mikesplumbing.co.uk` to Lead Follow-up would match the row
+           * Invoice Chasing already owns and UPDATE it — silently moving their
+           * chasing mailbox to the other product instead of creating the second
+           * connection, with no second seat, no second grant, and no error.
+           * The founder's ruling of 2026-09-01 is precisely that the same
+           * address on two products is two independent mailboxes.
+           */
           const existing = await tx.emailAccount.findFirst({
             where: {
               deletedAt: null,
+              moduleKey: claims.moduleKey,
               emailAddress: { equals: profile.emailAddress, mode: "insensitive" },
             },
           });
@@ -707,8 +823,13 @@ export class MailboxesService {
             // The replaced mailbox is about to free its seat, so it must not be
             // counted against the limit — see the trap note in `connect`. This
             // is the authoritative check; the one in `connect` is only friendly.
+            // Counted per product: a seat is one address on ONE product.
             const live = await tx.emailAccount.count({
-              where: { deletedAt: null, ...(replacing ? { id: { not: replacing.id } } : {}) },
+              where: {
+                deletedAt: null,
+                moduleKey: claims.moduleKey,
+                ...(replacing ? { id: { not: replacing.id } } : {}),
+              },
             });
             if (live >= seats) throw new SeatLimitReachedError();
           }
@@ -719,10 +840,16 @@ export class MailboxesService {
                 data: {
                   ...data,
                   organisationId: claims.organisationId,
+                  moduleKey: claims.moduleKey,
                   createdBy: claims.userId,
-                  // The first mailbox an organisation connects becomes the one
-                  // 1.7 sends from; later ones are added alongside it.
-                  isPrimary: (await tx.emailAccount.count({ where: { deletedAt: null } })) === 0,
+                  // The first mailbox a PRODUCT connects becomes the one it
+                  // sends from; later ones are added alongside it. Per product,
+                  // because each product has its own default (migration 0034) —
+                  // org-wide, the second product could never get one.
+                  isPrimary:
+                    (await tx.emailAccount.count({
+                      where: { deletedAt: null, moduleKey: claims.moduleKey },
+                    })) === 0,
                 },
               });
           await writeAuditLog(tx, {
@@ -1022,13 +1149,20 @@ export class MailboxesService {
    */
   private async recoverStateHints(
     state?: string,
-  ): Promise<{ flow: OAuthFlow; loginHint: string | null }> {
-    if (!state) return { flow: DEFAULT_OAUTH_FLOW, loginHint: null };
+  ): Promise<{ flow: OAuthFlow; loginHint: string | null; moduleKey: ModuleKey | null }> {
+    const nothing = { flow: DEFAULT_OAUTH_FLOW, loginHint: null, moduleKey: null };
+    if (!state) return nothing;
     try {
       const claims = await verifyOAuthState(this.env.OAUTH_STATE_SECRET, state);
-      return { flow: claims.flow ?? DEFAULT_OAUTH_FLOW, loginHint: claims.loginHint ?? null };
+      return {
+        flow: claims.flow ?? DEFAULT_OAUTH_FLOW,
+        loginHint: claims.loginHint ?? null,
+        // Which product's screen to return to. Absent only when the state did
+        // not verify, which the caller handles by sending them to the hub.
+        moduleKey: claims.moduleKey ?? null,
+      };
     } catch {
-      return { flow: DEFAULT_OAUTH_FLOW, loginHint: null };
+      return nothing;
     }
   }
 
@@ -1114,8 +1248,16 @@ export class MailboxesService {
          * explain.
          */
         if (account.isPrimary) {
+          /**
+           * ⚠️ THE SUCCESSOR COMES FROM THE SAME PRODUCT. Unscoped, disconnecting
+           * Invoice Chasing's default would promote a mailbox the customer
+           * connected for Lead Follow-up — handing one product's chasers to the
+           * other product's address, silently, with an audit row saying only
+           * that the primary changed. The two products share nothing (founder
+           * ruling 2026-09-01), and "nothing" includes each other's fallbacks.
+           */
           const successor = await tx.emailAccount.findFirst({
-            where: { deletedAt: null },
+            where: { deletedAt: null, moduleKey: account.moduleKey },
             orderBy: { createdAt: "asc" },
           });
           if (successor) {
@@ -1141,7 +1283,11 @@ export class MailboxesService {
          * saying so is more honest than naming an address that no longer exists.
          */
         const fallback = await tx.emailAccount.findFirst({
-          where: { deletedAt: null, isPrimary: true },
+          // Scoped: an organisation now holds one primary PER PRODUCT
+          // (migration 0034), so "the primary" without a product would name
+          // whichever row came back first and could report the other product's
+          // address as where these clients had moved to.
+          where: { deletedAt: null, isPrimary: true, moduleKey: account.moduleKey },
           select: { emailAddress: true },
         });
         /**
@@ -1183,26 +1329,42 @@ export class MailboxesService {
     mailboxId: string,
   ): Promise<MailboxListDto> {
     const user = await this.usersService.resolveOrProvision(authUser);
-    await withTenant(this.prisma.db, { organisationId, userId: user.id }, async (tx) => {
-      await requirePermission(tx, organisationId, user.id, "mailbox:manage");
-      const account = await this.findMailbox(tx, mailboxId);
-      if (account.isPrimary) return;
-      // Demote first: the index would reject the promotion otherwise.
-      await tx.emailAccount.updateMany({
-        where: { deletedAt: null, isPrimary: true },
-        data: { isPrimary: false },
-      });
-      await tx.emailAccount.update({ where: { id: account.id }, data: { isPrimary: true } });
-      await writeAuditLog(tx, {
-        organisationId,
-        actorUserId: user.id,
-        action: "mailbox.primary_changed",
-        entityType: "email_account",
-        entityId: account.id,
-        metadata: { reason: "chosen_by_user" },
-      });
-    });
-    return this.listMailboxes(authUser, organisationId);
+    // Returned from the transaction rather than read after it: the reply lists
+    // THIS mailbox's product, and only the transaction can see which that is.
+    const moduleKey = await withTenant(
+      this.prisma.db,
+      { organisationId, userId: user.id },
+      async (tx): Promise<ModuleKey> => {
+        await requirePermission(tx, organisationId, user.id, "mailbox:manage");
+        const account = await this.findMailbox(tx, mailboxId);
+        if (account.isPrimary) return account.moduleKey as ModuleKey;
+        /**
+         * Demote first: the index would reject the promotion otherwise.
+         *
+         * ⚠️ WITHIN THIS MAILBOX'S PRODUCT ONLY. Unscoped, this demoted EVERY
+         * primary in the organisation — so choosing a new default for Invoice
+         * Chasing would silently clear Lead Follow-up's, and that product would
+         * fall back to "oldest healthy mailbox" with nothing on any screen to say
+         * why. The founder's rule of 2026-09-01 is that neither product can move
+         * the other; this is one of the two places that could.
+         */
+        await tx.emailAccount.updateMany({
+          where: { deletedAt: null, isPrimary: true, moduleKey: account.moduleKey },
+          data: { isPrimary: false },
+        });
+        await tx.emailAccount.update({ where: { id: account.id }, data: { isPrimary: true } });
+        await writeAuditLog(tx, {
+          organisationId,
+          actorUserId: user.id,
+          action: "mailbox.primary_changed",
+          entityType: "email_account",
+          entityId: account.id,
+          metadata: { reason: "chosen_by_user" },
+        });
+        return account.moduleKey as ModuleKey;
+      },
+    );
+    return this.listMailboxes(authUser, organisationId, moduleKey);
   }
 
   /**

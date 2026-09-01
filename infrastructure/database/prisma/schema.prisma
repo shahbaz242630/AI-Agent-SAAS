@@ -627,6 +627,21 @@ model HumanEscalation {
 model EmailAccount {
   id                    String       @id @default(uuid()) @db.Uuid
   organisationId        String       @map("organisation_id") @db.Uuid
+  /// Which PRODUCT this mailbox belongs to (ruling 36, migration 0034). A
+  /// mailbox serves exactly one product: two products mean two connections,
+  /// two seats and two OAuth grants, even for the same address.
+  ///
+  /// ⚠️ NO DEFAULT, ON PURPOSE. Migration 0034 adds the column with one, uses
+  /// it to back-fill, then drops it — so any insert that does not name a
+  /// product fails loudly rather than silently filing the mailbox under
+  /// Invoice Chasing. Constrained to `MODULE_KEYS` by
+  /// `email_accounts_module_key_check`, which `mailbox-module-keys.spec.ts`
+  /// keeps in step with the TypeScript list.
+  ///
+  /// ⚠️ NOT A SECURITY BOUNDARY. The tenant boundary is `organisation_id` and
+  /// RLS enforces only that. Both products belong to the same tenant, so
+  /// scoping a query by product is the API's job, never the database's.
+  moduleKey             String       @map("module_key")
   provider              String       @default("microsoft")
   emailAddress          String       @map("email_address")
   displayName           String?      @map("display_name")
@@ -638,8 +653,10 @@ model EmailAccount {
   lastHealthCheckAt     DateTime?    @map("last_health_check_at") @db.Timestamptz(6)
   lastError             String?      @map("last_error")
   connectedBy           String?      @map("connected_by") @db.Uuid
-  /// The mailbox 1.7 sends from. Exactly one per organisation, enforced by a
-  /// partial unique index (migration 0017) that schema.prisma cannot express.
+  /// The mailbox a product sends from. Exactly one per organisation PER
+  /// PRODUCT since migration 0034 — it was one per organisation from 0017
+  /// until then, which is why the second product could not have a default at
+  /// all. Enforced by a partial unique index that schema.prisma cannot express.
   isPrimary             Boolean      @default(false) @map("is_primary")
   createdAt             DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt             DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
@@ -655,6 +672,13 @@ model EmailAccount {
   /// composite foreign key needs, and it is what makes a cross-tenant client
   /// allocation impossible in the database rather than merely unlikely in code.
   @@unique([organisationId, id])
+  /// ⚠️ THREE MORE INDEXES LIVE IN MIGRATIONS AND NOT HERE, because all three
+  /// are PARTIAL (`WHERE deleted_at IS NULL`) and Prisma cannot express that:
+  /// `email_accounts_live_address_key` (one address per organisation per
+  /// product), `email_accounts_single_primary_key` (one default per
+  /// organisation per product) and `email_accounts_organisation_module_idx`
+  /// (the lookup every seat count, readiness check and send now makes). All
+  /// three were re-scoped from "per organisation" by migration 0034.
   @@map("email_accounts")
 }
 

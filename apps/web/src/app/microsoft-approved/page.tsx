@@ -39,10 +39,10 @@ export default function MicrosoftApprovedPage() {
       <section className="flex w-full max-w-xl flex-col gap-2 rounded-[var(--radius-card)] bg-muted px-6 py-5 text-sm">
         <h2 className="font-semibold">What you&apos;ve approved</h2>
         <p className="text-muted-foreground">
-          Eva can read and send email from a mailbox{" "}
-          <strong>only once its owner connects it</strong>, and only from that mailbox. Approving
-          this doesn&apos;t give Eva access to anyone else&apos;s mail, and nothing is sent until
-          they finish setting it up.
+          Eva can send email from a mailbox <strong>only once its owner connects it</strong>, and
+          only from that mailbox. She does not read anyone&apos;s messages — the only thing she
+          checks is that the mailbox exists. Approving this doesn&apos;t give Eva access to anyone
+          else&apos;s mail, and nothing is sent until they finish setting it up.
         </p>
         <p className="text-muted-foreground">
           You can withdraw this at any time from Microsoft Entra admin centre, under Enterprise
@@ -53,11 +53,16 @@ export default function MicrosoftApprovedPage() {
       {/* For the case where the approver IS the customer — a sole trader or an
           owner who administers their own Microsoft 365. Anyone else can ignore
           it; it leads to a sign-in page, which is correct for them. */}
+      {/* ⚠️ IT LANDS ON THE HUB RATHER THAN ON A MAILBOX SCREEN, AND IT HAS TO.
+          A mailbox belongs to one product since slice 3.1c-0, and this page is
+          public — reached from a forwarded link, with no session and no idea
+          which product the approval was for. Naming one would be a guess shown
+          to the person whose goodwill the whole journey depends on. */}
       <Link
-        href="/app/settings/mailbox"
+        href="/app"
         className="rounded-[var(--radius-card)] bg-primary px-4 py-2 text-sm font-medium text-primary-foreground"
       >
-        Connect a mailbox
+        Open Eva
       </Link>
     </main>
   );

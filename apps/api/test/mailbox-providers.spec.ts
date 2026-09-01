@@ -102,6 +102,9 @@ describe("Mailbox providers: the database and the registry agree", () => {
       owner.emailAccount.create({
         data: {
           organisationId: organisation!.id,
+          // Invoice Chasing: the only product that could own a mailbox
+          // before migration 0034, so every existing fixture is one.
+          moduleKey: "email_credit_controller",
           provider: "carrier-pigeon",
           emailAddress: "nope@example.com",
         },

@@ -55,6 +55,9 @@ describe("audit_logs timestamps (one clock)", () => {
     return owner.emailAccount.create({
       data: {
         organisationId: org.id,
+        // Invoice Chasing: the only product that could own a mailbox
+        // before migration 0034, so every existing fixture is one.
+        moduleKey: "email_credit_controller",
         provider: "microsoft",
         emailAddress: `${label}-${randomUUID().slice(0, 8)}@example.com`,
         isPrimary: false,
@@ -93,6 +96,9 @@ describe("audit_logs timestamps (one clock)", () => {
         const created = await tx.emailAccount.create({
           data: {
             organisationId: org.id,
+            // Invoice Chasing: the only product that could own a mailbox
+            // before migration 0034, so every existing fixture is one.
+            moduleKey: "email_credit_controller",
             provider: "microsoft",
             emailAddress: `to-${randomUUID().slice(0, 8)}@example.com`,
             isPrimary: false,
@@ -136,6 +142,9 @@ describe("audit_logs timestamps (one clock)", () => {
       const created = await tx.emailAccount.create({
         data: {
           organisationId: org.id,
+          // Invoice Chasing: the only product that could own a mailbox
+          // before migration 0034, so every existing fixture is one.
+          moduleKey: "email_credit_controller",
           provider: "microsoft",
           emailAddress: `ordered-to-${randomUUID().slice(0, 8)}@example.com`,
           isPrimary: false,

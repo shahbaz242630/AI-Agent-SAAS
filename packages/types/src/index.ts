@@ -201,6 +201,20 @@ export const MODULE_KEYS = [
 export type ModuleKey = (typeof MODULE_KEYS)[number];
 
 /**
+ * Is this string one of our five products?
+ *
+ * ⚠️ WRITTEN FOR THE OAUTH STATE (slice 3.1c-0), WHERE THE ALTERNATIVE IS A
+ * SILENT WRONG ANSWER. A mailbox now belongs to one product, and the product
+ * travels on the signed state through the round trip to Google or Microsoft.
+ * Narrowing it there with this guard is what lets the callback REFUSE an
+ * unreadable product instead of falling back to Invoice Chasing and filing a
+ * customer's Lead Follow-up mailbox against another product's seat.
+ */
+export function isModuleKey(value: string): value is ModuleKey {
+  return (MODULE_KEYS as readonly string[]).includes(value);
+}
+
+/**
  * Which products carry each permission.
  *
  * The `Record<PermissionKey, …>` type IS the exhaustiveness guarantee: adding a

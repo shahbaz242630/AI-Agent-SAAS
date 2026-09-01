@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { PrimaryAction } from "@/components/ui";
 
 /**
  * The address a customer puts on their website (Slice 3.1b, ruling 29).
@@ -60,13 +61,15 @@ export function EnquiryAddressPanel({
         <code className="flex-1 rounded-[var(--radius-card)] border border-hairline bg-muted px-3.5 py-2.5 font-mono text-[13.5px] break-all select-all">
           {address}
         </code>
-        <button
-          type="button"
-          onClick={copy}
-          className="rounded-[var(--radius-card)] bg-primary px-4 py-2 text-sm font-medium text-primary-foreground"
-        >
-          {copied ? "Copied" : "Copy"}
-        </button>
+        {/* ⚠️ WAS A HAND-ROLLED PRIMARY — the SEVENTH copy of the wrong shape,
+            and the one nothing was looking at. It carried the CARD radius,
+            `text-sm`, `font-medium` and no shadow or hover, exactly like the
+            five #126 fixed and the sixth #127 found. It survived because the
+            scan that catches this shape only read the settings folder, and this
+            file was never in it; slice 3.1c-0 widened the scan to
+            `capabilities/mailbox` and it went red immediately. `PrimaryAction`
+            is the kit's button for an onClick that must stay type="button". */}
+        <PrimaryAction onClick={copy}>{copied ? "Copied" : "Copy"}</PrimaryAction>
       </div>
 
       {/**

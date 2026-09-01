@@ -70,6 +70,18 @@ const CROSSINGS: { prefix: string; owner: OwnerTag }[] = [
   { prefix: "/app/clients/[customerId]/invoices", owner: INVOICE_FOLLOW_UP },
   // Reminder timing: platform settings holding one product's configuration.
   { prefix: "/app/settings/reminders", owner: INVOICE_FOLLOW_UP },
+  /**
+   * Each product's mailbox screen (slice 3.1c-0) — a PRODUCT url rendering the
+   * mailbox capability's screen, which is the mirror image of the two above.
+   *
+   * Both routes render the same `MailboxScreen`, so without these a single
+   * defect in that one component would be filed under Invoice Chasing or under
+   * Lead Follow-up depending on which door the customer walked through — the
+   * same bug, two owners, and neither search finds both. `/microsoft-approved`
+   * is already tagged this way for exactly this reason.
+   */
+  { prefix: "/app/invoice-chasing/mailbox", owner: "capability:mailbox" },
+  { prefix: "/app/lead-follow-up-email/mailbox", owner: "capability:mailbox" },
 ];
 
 /** Routes outside `/app` — sign-in, the auth callbacks, the Microsoft landing

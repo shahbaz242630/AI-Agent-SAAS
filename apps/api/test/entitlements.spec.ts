@@ -42,7 +42,12 @@ import {
 const EMAIL_MODULE_ROUTES = [
   { name: "imports", path: (org: string) => `/organisations/${org}/imports` },
   { name: "reminder sequence", path: (org: string) => `/organisations/${org}/reminder-sequence` },
-  { name: "mailbox", path: (org: string) => `/organisations/${org}/mailboxes` },
+  {
+    name: "mailbox",
+    // ⚠️ NAMES A PRODUCT SINCE SLICE 3.1c-0. The route refuses a list that
+    // does not, so without this the 402 under test would arrive as a 400.
+    path: (org: string) => `/organisations/${org}/mailboxes?module=email_credit_controller`,
+  },
 ];
 
 describe("Module entitlements (Slice 1.6a)", () => {
@@ -181,7 +186,7 @@ describe("Module entitlements (Slice 1.6a)", () => {
       await owner.organisationModule.update({ where: { id: module.id }, data: { enabled: false } });
       try {
         await request(app.getHttpServer())
-          .get(`/organisations/${entitled.id}/mailboxes`)
+          .get(`/organisations/${entitled.id}/mailboxes?module=email_credit_controller`)
           .set("Authorization", `Bearer ${tokenFor(entitled, "owner")}`)
           .expect(402);
       } finally {
@@ -202,7 +207,7 @@ describe("Module entitlements (Slice 1.6a)", () => {
       });
       try {
         await request(app.getHttpServer())
-          .get(`/organisations/${entitled.id}/mailboxes`)
+          .get(`/organisations/${entitled.id}/mailboxes?module=email_credit_controller`)
           .set("Authorization", `Bearer ${tokenFor(entitled, "owner")}`)
           .expect(402);
       } finally {
@@ -266,14 +271,14 @@ describe("Module entitlements (Slice 1.6a)", () => {
   describe("gate ordering is an information-disclosure decision", () => {
     it("404 beats 402: a non-member never learns what an org has bought", async () => {
       await request(app.getHttpServer())
-        .get(`/organisations/${bare.id}/mailboxes`)
+        .get(`/organisations/${bare.id}/mailboxes?module=email_credit_controller`)
         .set("Authorization", `Bearer ${tokenFor(stranger, "owner")}`)
         .expect(404);
     });
 
     it("404 beats 402 even when the org IS entitled", async () => {
       await request(app.getHttpServer())
-        .get(`/organisations/${entitled.id}/mailboxes`)
+        .get(`/organisations/${entitled.id}/mailboxes?module=email_credit_controller`)
         .set("Authorization", `Bearer ${tokenFor(stranger, "owner")}`)
         .expect(404);
     });
@@ -282,7 +287,7 @@ describe("Module entitlements (Slice 1.6a)", () => {
       // sales holds no mailbox:read, and this org holds no module — 403 wins,
       // so the subscription state stays invisible to a junior member.
       await request(app.getHttpServer())
-        .get(`/organisations/${bare.id}/mailboxes`)
+        .get(`/organisations/${bare.id}/mailboxes?module=email_credit_controller`)
         .set("Authorization", `Bearer ${tokenFor(bare, "sales")}`)
         .expect(403);
     });
@@ -299,6 +304,7 @@ describe("Module entitlements (Slice 1.6a)", () => {
       organisationId: bare.id,
       userId: ownerMember.id,
       nonce: randomUUID(),
+      moduleKey: "email_credit_controller",
     });
 
     const response = await request(app.getHttpServer())
@@ -538,7 +544,9 @@ describe("Module entitlements (Slice 1.6a)", () => {
       });
 
       await request(app.getHttpServer())
-        .get(`/organisations/${leadOnly.id}/mailboxes`)
+        // Their OWN product's mailboxes. Asking for Invoice Chasing's would
+        // now be a 402: they never bought it (slice 3.1c-0).
+        .get(`/organisations/${leadOnly.id}/mailboxes?module=lead_follow_up_email`)
         .set("Authorization", `Bearer ${token}`)
         .expect(200);
 
@@ -554,7 +562,7 @@ describe("Module entitlements (Slice 1.6a)", () => {
      *  ANY ONE of them is enough and naming one would misdirect the purchase. */
     it("names both products when the mailbox is refused", async () => {
       const response = await request(app.getHttpServer())
-        .get(`/organisations/${bare.id}/mailboxes`)
+        .get(`/organisations/${bare.id}/mailboxes?module=email_credit_controller`)
         .set("Authorization", `Bearer ${tokenFor(bare, "owner")}`)
         .expect(402);
 
