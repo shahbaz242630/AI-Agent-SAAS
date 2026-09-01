@@ -53,7 +53,9 @@ describe("Connecting a Gmail mailbox", () => {
     request(on.getHttpServer())
       .post(`/organisations/${org.id}/mailboxes/connect`)
       .set("Authorization", `Bearer ${token}`)
-      .send(body);
+      // The product every case here connects for, overridable per call.
+      // Required since slice 3.1c-0; these tests are about the PROVIDER.
+      .send({ moduleKey: "email_credit_controller", ...body });
 
   it("sends the customer to Google when they choose Gmail", async () => {
     const response = await connect({ provider: "google" }).expect(200);

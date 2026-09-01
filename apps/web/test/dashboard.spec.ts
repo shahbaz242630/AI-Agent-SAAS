@@ -173,7 +173,7 @@ describe("dashboard", () => {
         waitingReason: "unknown",
       });
       expect(items[0]?.kind).toBe("no_mailbox");
-      expect(items[0]?.href).toBe("/app/settings/mailbox");
+      expect(items[0]?.href).toBe("/app/invoice-chasing/mailbox");
     });
 
     /**

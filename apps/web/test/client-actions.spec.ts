@@ -253,7 +253,7 @@ describe("disconnectMailbox", () => {
         movedToEmailAddress: "default@example.com",
       }),
     );
-    const { disconnectMailbox } = await import("../src/app/app/settings/actions");
+    const { disconnectMailbox } = await import("../src/capabilities/mailbox/actions");
 
     await expect(
       disconnectMailbox(
@@ -261,12 +261,15 @@ describe("disconnectMailbox", () => {
         form([
           ["organisationId", "org-1"],
           ["mailboxId", "mailbox-1"],
+          // Which product's mailbox screen the flash has to land on. Since
+          // slice 3.1c-0 there is no organisation-wide one to fall back to.
+          ["moduleKey", "email_credit_controller"],
         ]),
       ),
     ).rejects.toThrow(/^REDIRECT:/);
 
     const target = String(redirect.mock.calls.at(-1)?.[0]);
-    expect(target).toContain("/app/settings/mailbox?");
+    expect(target).toContain("/app/invoice-chasing/mailbox?");
     const params = new URLSearchParams(target.split("?")[1]);
     expect(params.get("moved")).toBe("4");
     // The group that was nearly lost: unfiled clients follow the default.

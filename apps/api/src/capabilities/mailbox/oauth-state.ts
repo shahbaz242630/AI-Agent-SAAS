@@ -1,4 +1,5 @@
 ﻿import { jwtVerify, SignJWT } from "jose";
+import { isModuleKey, type ModuleKey } from "@eva/types";
 
 /**
  * OAuth `state` parameter (Slice 1.6, ruling 4): a stateless HS256 JWT
@@ -69,6 +70,27 @@ export interface OAuthStateClaims {
   userId: string;
   nonce: string;
   purpose: OAuthStatePurpose;
+  /**
+   * WHICH PRODUCT this mailbox is being connected for (ruling 36, slice
+   * 3.1c-0). It rides on the signed state because the browser is away at
+   * Google or Microsoft in between and nothing else survives the round trip.
+   *
+   * ⚠️ OPTIONAL ONLY BECAUSE `admin_consent` SHARES THIS TYPE. For a `connect`
+   * state it is mandatory and `verifyOAuthState` refuses without it; admin
+   * consent is one Microsoft tenant approving the Eva app and connects no
+   * mailbox, so it has no product to name. Read a connect state through
+   * `verifyConnectState`, which carries that guarantee in its return type.
+   *
+   * ⚠️ AND UNLIKE `flow` AND `replacesMailboxId` IT IS NEVER QUIETLY DROPPED.
+   * Those two degrade to a safe default when unreadable — you land on a real
+   * screen, or a replace becomes a plain connect, and nothing is lost. There is
+   * no safe default for this one: guessing files the mailbox under the wrong
+   * product, bills another product's seat, and shows green on every screen
+   * while the first reply leaves the wrong account. A connect state without it
+   * is refused, which costs a customer one "please try again" and costs a
+   * mis-filed mailbox nothing at all.
+   */
+  moduleKey?: ModuleKey;
   /** The address the user typed in Eva, so the callback can still name it
    *  after Microsoft declines â€” Microsoft tells us nothing about who tried. */
   loginHint?: string;
@@ -163,11 +185,31 @@ export async function verifyOAuthState(
      * its clients stay exactly as they were, which is the safe direction.
      */
     const replacesMailboxId = payload.replacesMailboxId;
+    /**
+     * ⚠️ THE ONE CLAIM THAT REFUSES RATHER THAN DEGRADES. See the field's note:
+     * every other optional claim has a safe fallback and this one has none.
+     * A token minted before slice 3.1c-0 carries no product, so a connection
+     * in flight across that deploy is refused and retried — deliberately
+     * chosen over completing it against a guessed product.
+     */
+    const moduleKey = payload.moduleKey;
+    const moduleKeyIsUsable = typeof moduleKey === "string" && isModuleKey(moduleKey);
+    /**
+     * ⚠️ REQUIRED FOR `connect`, ABSENT FOR `admin_consent`, AND THE ASYMMETRY
+     * IS THE MODEL RATHER THAN AN OVERSIGHT. Admin consent is one Microsoft
+     * TENANT approving the Eva app; it connects no mailbox and belongs to no
+     * product, so demanding one there would invent a fact. A connect writes a
+     * mailbox row, and that row must name its product.
+     */
+    if (expectedPurpose === "connect" && !moduleKeyIsUsable) {
+      throw new InvalidOAuthStateError();
+    }
     return {
       organisationId: readUuidClaim(payload.organisationId),
       userId: readUuidClaim(payload.userId),
       nonce,
       purpose: expectedPurpose,
+      ...(moduleKeyIsUsable ? { moduleKey: moduleKey as ModuleKey } : {}),
       ...(typeof loginHint === "string" &&
       loginHint.length > 0 &&
       loginHint.length <= MAX_LOGIN_HINT_LENGTH
@@ -181,4 +223,26 @@ export async function verifyOAuthState(
   } catch {
     throw new InvalidOAuthStateError();
   }
+}
+
+/** A connect state's claims, with the product the callback is about to write. */
+export type ConnectStateClaims = OAuthStateClaims & { moduleKey: ModuleKey };
+
+/**
+ * Verify a state that is completing a mailbox CONNECT.
+ *
+ * ⚠️ EXISTS SO THE CALLBACK NEVER WRITES `claims.moduleKey!`. `verifyOAuthState`
+ * already refuses a connect state with no usable product, but its return type
+ * cannot say so — the same function serves admin consent, where the field is
+ * legitimately absent. A non-null assertion at the call site would be correct
+ * today and silently wrong the first time somebody widens the purpose enum;
+ * this carries the guarantee in the type instead.
+ */
+export async function verifyConnectState(
+  secret: string,
+  state: string,
+): Promise<ConnectStateClaims> {
+  const claims = await verifyOAuthState(secret, state, "connect");
+  if (!claims.moduleKey) throw new InvalidOAuthStateError();
+  return { ...claims, moduleKey: claims.moduleKey };
 }

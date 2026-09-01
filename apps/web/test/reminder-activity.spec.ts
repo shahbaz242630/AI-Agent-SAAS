@@ -61,7 +61,7 @@ describe("reminder activity copy", () => {
 
       expect(explanation?.headline).toContain("3 reminders are waiting");
       expect(explanation?.headline).toContain("no mailbox is connected");
-      expect(explanation?.fixHref).toBe("/app/settings/mailbox");
+      expect(explanation?.fixHref).toBe("/app/invoice-chasing/mailbox");
       expect(explanation?.fixLabel).toBeTruthy();
     });
 

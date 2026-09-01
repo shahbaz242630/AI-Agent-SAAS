@@ -61,8 +61,19 @@ export class AllocationService {
         select: { id: true, name: true, emailAccountId: true },
         orderBy: { name: "asc" },
       });
+      /**
+       * ⚠️ INVOICE CHASING'S MAILBOXES ONLY (founder ruling 2026-09-01). This
+       * screen is the per-client filing — "chase Bob's Builders from
+       * accounts@" — and the founder ruled that filing is an Invoice Chasing
+       * feature: clients are shared across products (ruling 15), so offering
+       * another product's mailboxes here would let a customer file a client
+       * against an address that product will never use.
+       *
+       * It lives in `platform/` because CLIENTS do; the filing on top of them
+       * does not, and this line is where that distinction is kept.
+       */
       const mailboxes = await tx.emailAccount.findMany({
-        where: { deletedAt: null },
+        where: { deletedAt: null, moduleKey: "email_credit_controller" },
         select: { id: true, emailAddress: true, isPrimary: true },
       });
 

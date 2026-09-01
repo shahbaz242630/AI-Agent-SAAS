@@ -28,7 +28,7 @@ function pageFiles(dir: string): string[] {
   });
 }
 
-/** `app/app/settings/mailbox/page.tsx` → `/app/settings/mailbox` */
+/** `app/app/invoice-chasing/mailbox/page.tsx` → `/app/invoice-chasing/mailbox` */
 function routeOf(file: string): string {
   const relative = file
     .slice(APP_SCREENS.length)

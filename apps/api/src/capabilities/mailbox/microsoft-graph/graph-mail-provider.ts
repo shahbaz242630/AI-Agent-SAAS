@@ -23,8 +23,32 @@ import {
  */
 
 const GRAPH_BASE = "https://graph.microsoft.com/v1.0";
-/** Minimal delegated scopes (plan §10). `offline_access` is what yields a refresh token. */
-const SCOPES = "offline_access User.Read Mail.Read Mail.Send";
+/**
+ * Minimal delegated scopes (plan §10). `offline_access` is what yields a
+ * refresh token.
+ *
+ * ⚠️ `Mail.Read` WAS DROPPED FOR `Mail.ReadBasic` ON 2026-09-01, AND EVA LOST
+ * NOTHING. She has never read a customer's mail: the only Graph calls in this
+ * file are `/me` (profile), `/me/sendMail`, and `/me/mailFolders/inbox` to
+ * check an inbox EXISTS. `Mail.ReadBasic` covers that last one — it reads mail
+ * folders and message metadata but explicitly NOT bodies, attachments or
+ * extended properties — so the probe still works and the ability to read what
+ * anyone wrote is gone.
+ *
+ * ⚠️ WHY IT IS WORTH A CHANGE AT ALL: THE PERSON WHO READS THIS IS THE ONE WE
+ * MOST NEED TO SAY YES. Microsoft shows the requested set to whoever approves
+ * it, and for most customers that is an IT administrator deciding on behalf of
+ * a company. "Read your mail" is the scariest line we could put in front of
+ * them, and we were asking for it to make one existence check. Asking for a
+ * permission we never exercise is how an approval gets refused for nothing —
+ * and every unused permission is also a bigger loss if our tokens ever leak.
+ *
+ * ⚠️ EXISTING MAILBOXES ARE UNAFFECTED AND KEEP WORKING. A grant already issued
+ * carries the scopes it was issued with; nothing here revokes or re-prompts.
+ * Sending needs `Mail.Send`, which is unchanged, so no connected mailbox
+ * notices. New connections simply ask for less.
+ */
+const SCOPES = "offline_access User.Read Mail.ReadBasic Mail.Send";
 
 /** Graph error codes meaning "the grant is fine, this account has no mailbox"
  *  rather than "the grant is dead" (F3). Lower-cased for comparison. */
@@ -188,7 +212,9 @@ export class GraphMailProvider implements MicrosoftGraphProvider {
    * "Does this account actually have a mailbox?" — one cheap read, run at
    * connect time so a licensing problem is caught while the user is watching,
    * not at the first customer reminder in slice 1.7 (defect F3). The inbox
-   * folder is the smallest thing Mail.Read can ask for.
+   * folder is the smallest thing `Mail.ReadBasic` can ask for — and the reason
+   * that scope is enough is that this asks whether the folder EXISTS, never
+   * what is in it.
    *
    * A 401 HERE means "no mailbox", not "dead grant", and the ordering is what
    * makes that sound: connect calls getProfile FIRST, so /me has already
@@ -239,8 +265,8 @@ export class GraphMailProvider implements MicrosoftGraphProvider {
    * ⚠️ A NO-OP HERE, AND NOT BECAUSE THE QUESTION DOES NOT MATTER — BECAUSE
    * `probeMailbox` HAS ALREADY ANSWERED IT WITH A REAL REQUEST.
    *
-   * Microsoft's consent is all-or-nothing: `Mail.Read` and `Mail.Send` are
-   * asked for in one breath (see SCOPES) and the user accepts the set or
+   * Microsoft's consent is all-or-nothing: `Mail.ReadBasic` and `Mail.Send`
+   * are asked for in one breath (see SCOPES) and the user accepts the set or
    * cancels, so there is no half-granted state of the kind Google's per-scope
    * checkboxes create. The probe then reads an actual mail folder with the
    * actual token, so a grant that cannot touch mail fails there.

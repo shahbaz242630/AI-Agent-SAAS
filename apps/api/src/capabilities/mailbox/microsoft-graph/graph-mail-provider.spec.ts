@@ -56,7 +56,7 @@ describe("GraphMailProvider (Slice 1.6, ruling 3 — hand-rolled OAuth)", () => 
     expect(url.searchParams.get("response_type")).toBe("code");
     expect(url.searchParams.get("redirect_uri")).toBe(ENV.MICROSOFT_OAUTH_REDIRECT_URI);
     expect(url.searchParams.get("response_mode")).toBe("query");
-    expect(url.searchParams.get("scope")).toBe("offline_access User.Read Mail.Read Mail.Send");
+    expect(url.searchParams.get("scope")).toBe("offline_access User.Read Mail.ReadBasic Mail.Send");
     expect(url.searchParams.get("state")).toBe("state-xyz");
   });
 
@@ -77,14 +77,14 @@ describe("GraphMailProvider (Slice 1.6, ruling 3 — hand-rolled OAuth)", () => 
         access_token: "access-1",
         refresh_token: "refresh-1",
         expires_in: 3600,
-        scope: "offline_access User.Read Mail.Read Mail.Send",
+        scope: "offline_access User.Read Mail.ReadBasic Mail.Send",
       });
     });
     await expect(provider.exchangeCode("auth-code-1")).resolves.toEqual({
       accessToken: "access-1",
       refreshToken: "refresh-1",
       expiresInSeconds: 3600,
-      scopes: ["offline_access", "User.Read", "Mail.Read", "Mail.Send"],
+      scopes: ["offline_access", "User.Read", "Mail.ReadBasic", "Mail.Send"],
     });
   });
 
@@ -403,6 +403,6 @@ describe("GraphMailProvider — account targeting on the authorize URL (F5)", ()
   it("keeps the state and scopes untouched", () => {
     const url = new URL(provider.buildAuthorizeUrl("state-xyz", { loginHint: "sara@example.com" }));
     expect(url.searchParams.get("state")).toBe("state-xyz");
-    expect(url.searchParams.get("scope")).toBe("offline_access User.Read Mail.Read Mail.Send");
+    expect(url.searchParams.get("scope")).toBe("offline_access User.Read Mail.ReadBasic Mail.Send");
   });
 });

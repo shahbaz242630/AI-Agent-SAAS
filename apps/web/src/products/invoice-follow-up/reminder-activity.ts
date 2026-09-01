@@ -1,3 +1,4 @@
+import { moduleHref } from "@eva/types";
 import type { ReminderStepKey, ReminderWaitingReason, ScheduledActionStatus } from "@eva/types";
 
 /**
@@ -87,7 +88,7 @@ export function explainWaiting(
       headline: `${count} waiting because no mailbox is connected`,
       detail:
         "Eva has nowhere to send from, so nothing has gone out. Nothing is lost — connect a mailbox and these send on the next run.",
-      fixHref: "/app/settings/mailbox",
+      fixHref: moduleHref("email_credit_controller", "mailbox"),
       fixLabel: "Connect a mailbox",
     };
   }

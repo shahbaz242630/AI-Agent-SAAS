@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import { moduleHref } from "@eva/types";
 import { ApiError, apiFetch } from "@/lib/api";
 import { fetchOrganisations } from "@/lib/organisations";
 import { createClient } from "@/lib/supabase/server";
@@ -225,7 +226,7 @@ export default async function ClientsPage({
           </p>
           <div>
             <Link
-              href="/app/settings/mailbox"
+              href={moduleHref("email_credit_controller", "mailbox")}
               className="rounded-[var(--radius-control)] bg-primary px-4 py-2 text-[13px] font-semibold text-primary-foreground shadow-[var(--shadow-primary)] hover:opacity-90"
             >
               Connect a mailbox

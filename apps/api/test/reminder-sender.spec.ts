@@ -84,6 +84,9 @@ describe("Reminder sender (Slice 1.7)", () => {
     return owner.emailAccount.create({
       data: {
         organisationId: org.id,
+        // Invoice Chasing: the only product that could own a mailbox
+        // before migration 0034, so every existing fixture is one.
+        moduleKey: "email_credit_controller",
         provider: "microsoft",
         emailAddress: `sender-${randomUUID().slice(0, 8)}@example.com`,
         accessTokenEncrypted: encryptToken("fixture-access-token", TEST_TOKEN_ENCRYPTION_KEY),

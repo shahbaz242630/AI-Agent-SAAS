@@ -322,7 +322,16 @@ export class RemindersService {
        */
       const healthyMailboxes =
         waiting > 0 || scheduled > 0
-          ? await tx.emailAccount.count({ where: { deletedAt: null, healthStatus: "active" } })
+          ? await tx.emailAccount.count({
+              // Invoice Chasing's own. A mailbox connected for Lead Follow-up
+              // cannot send a chaser, so counting it would replace an honest
+              // "no working mailbox" with a silent, permanent wait.
+              where: {
+                deletedAt: null,
+                healthStatus: "active",
+                moduleKey: "email_credit_controller",
+              },
+            })
           : null;
 
       let waitingReason: ReminderWaitingReason | null = null;

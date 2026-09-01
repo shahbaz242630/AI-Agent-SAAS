@@ -1,14 +1,20 @@
 import Link from "next/link";
 
 /**
- * The frame both setup steps live in (2026-08-09 design handoff).
+ * The frame setup lives in (2026-08-09 design handoff).
  *
  * ⚠️ THE RAIL IS THE POINT, NOT THE DECORATION. The old screen was a three-bar
  * progress strip above a grey box: a customer on step one could see that a step
- * two existed but not what it would ask of them, so "connect your mailbox"
- * arrived as an unannounced request for access to their email — the single
- * moment in this product most likely to make somebody stop. Naming both steps,
- * and what each is for, is what turns the second one into something expected.
+ * two existed but not what it would ask of them, so a request for access to
+ * their email arrived unannounced — the single moment in this product most
+ * likely to make somebody stop. Naming each step, and what it is for, is what
+ * turns it into something expected.
+ *
+ * ⚠️ IT ASKED FOR A MAILBOX AS STEP TWO UNTIL 2026-09-01, AND NO LONGER DOES.
+ * A mailbox belongs to ONE product (ruling 36), and onboarding runs before a
+ * customer has chosen one — so the step had no product to connect for and could
+ * only have guessed. Founder ruling: drop it. You connect a mailbox inside the
+ * product that will use it, at the moment you turn that product on.
  *
  * ⚠️ THE STEP IS A PROP, NOT A HOOK — the `SidebarBody` move for the same
  * reason. Which disc is a green tick and which is the amber one is the thing on
@@ -28,7 +34,6 @@ import Link from "next/link";
  */
 const STEPS: readonly { label: string; caption: string | null }[] = [
   { label: "Your business", caption: "What should we call you?" },
-  { label: "Your mailbox", caption: "Where Eva sends from" },
   { label: "Done", caption: null },
 ];
 
@@ -50,8 +55,8 @@ export function OnboardingFrame({
   paneTitle,
   children,
 }: {
-  /** 1 = name the business, 2 = connect the mailbox, 3 = finished. */
-  current: 1 | 2 | 3;
+  /** 1 = name the business, 2 = finished. */
+  current: 1 | 2;
   /** Named back in the rail once it exists, so step one shows its own answer. */
   organisationName: string | null;
   /** Which account this is — the same question the sidebar's user card answers,
@@ -69,16 +74,16 @@ export function OnboardingFrame({
 }) {
   /**
    * ⚠️ "BACK" CANNOT MEAN "THE PREVIOUS STEP" HERE, AND THE DESIGN ASSUMED IT
-   * COULD. The prototype sends step two back to step one — but this flow reads
-   * its position from server state, and by step two the organisation exists.
-   * There is no endpoint that renames one and no screen that offers to, so a
-   * back link would either lie or need somewhere to undo to. It leaves setup
-   * instead, which is the only honest thing it can do.
+   * COULD. The prototype sends a later step back to step one — but this flow
+   * reads its position from server state, and once past step one the
+   * organisation exists. There is no endpoint that renames one and no screen
+   * that offers to, so a back link would either lie or need somewhere to undo
+   * to. It leaves setup instead, which is the only honest thing it can do.
    *
-   * On step three setup is over and the pane offers two real destinations, so a
-   * third one pointing outwards would just be a way to lose them.
+   * On the last step setup is over and the pane offers a real destination, so
+   * another one pointing outwards would just be a way to lose them.
    */
-  const backHref = current === 3 ? null : "/";
+  const backHref = current === 2 ? null : "/";
 
   return (
     <div className="flex flex-1 flex-col">
@@ -119,9 +124,23 @@ export function OnboardingFrame({
               <h1 className="font-display text-[26px] leading-tight font-semibold text-sidebar-foreground">
                 Set up Eva
               </h1>
+              {/**
+               * ⚠️ IT SAID "TWO THINGS AND YOU'RE DONE" UNTIL 2026-09-01, AND
+               * BY THEN THERE WAS ONE. Dropping the mailbox step left a count
+               * that no longer matched the rail beside it — the exact defect
+               * family as the "four settings screens" docblock, and found the
+               * same way: by looking at the screen, not by a test.
+               *
+               * ⚠️ AND IT NAMED ONLY INVOICE CHASING. Setup now runs BEFORE a
+               * product is chosen, so promising unpaid-invoice chasing to
+               * somebody who came to buy Lead Follow-up describes a different
+               * product than the one they are signing up for. What is true of
+               * every product is that Eva works from their own mailbox.
+               */}
               <p className="text-[13.5px] leading-[1.55] text-sidebar-muted">
-                Two things and you&apos;re done. Eva chases your unpaid invoices from your own
-                mailbox, so replies come straight back to you.
+                One question and you&apos;re in. Whatever you set Eva to do, she works from your own
+                mailbox — so everything comes from your address and replies come straight back to
+                you.
               </p>
             </div>
 
@@ -207,11 +226,11 @@ export function OnboardingFrame({
 
           {/*
            * ⚠️ NO GAP HERE, AND THE STEP BELOW OWNS ITS OWN SPACING. The line
-           * under this title is each step's QUESTION, and a question has to be
-           * the real label of the thing it asks about — a `<label for>` on step
-           * one, the group's name on step two. Those are different elements
-           * belonging to different forms, so this pane cannot render them; it
-           * would leave an input labelled by nothing but proximity.
+           * under this title is the step's QUESTION, and a question has to be
+           * the real label of the thing it asks about — a `<label for>` on the
+           * name field. That element belongs to the step's own form, so this
+           * pane cannot render it; it would leave an input labelled by nothing
+           * but proximity.
            */}
           <div className="flex min-w-0 flex-1 flex-col px-10 py-9">
             <h2 className="font-display text-[21px] font-semibold">{paneTitle}</h2>

@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { MODULE_CATALOGUE, type ModuleKey } from "@eva/types";
+import { MODULE_CATALOGUE, isModuleKey, moduleHref, type ModuleKey } from "@eva/types";
 import { ApiError, apiFetch } from "@/lib/api";
 import { fetchOrganisations } from "@/lib/organisations";
 import { createClient } from "@/lib/supabase/server";
@@ -45,10 +45,22 @@ interface ModuleStatus {
  * is absent on purpose — it is our own schema, so every organisation has it and
  * there is nothing for anyone to do about it.
  */
-const CAPABILITY_FIX: Record<string, { says: string; href?: string; action?: string }> = {
+/**
+ * ⚠️ THE HREF IS A FUNCTION OF THE PRODUCT SINCE SLICE 3.1c-0, NOT A CONSTANT.
+ * It pointed at one organisation-wide `/app/settings/mailbox` — so a customer
+ * reading "Lead Follow-up needs a mailbox" clicked through to a screen that
+ * would have connected one for INVOICE CHASING, and the readiness line they
+ * were trying to clear would still have said the same thing afterwards. A
+ * mailbox belongs to one product now (ruling 36, founder 2026-09-01), so the
+ * fix has to lead to that product's own screen.
+ */
+const CAPABILITY_FIX: Record<
+  string,
+  { says: string; href?: (moduleKey: ModuleKey) => string; action?: string }
+> = {
   mailbox: {
     says: "Eva needs a mailbox to send from.",
-    href: "/app/settings/mailbox",
+    href: (moduleKey) => moduleHref(moduleKey, "mailbox"),
     action: "Connect a mailbox",
   },
   voice: { says: "The calling side of Eva isn't built yet." },
@@ -129,7 +141,14 @@ export default async function ModulesPage() {
       ) : (
         <section className="flex flex-col gap-4">
           {modules.map((module) => {
-            const product = productOf(module.moduleKey);
+            /**
+             * Bound locally so the `isModuleKey` guard below NARROWS it. The
+             * API response is typed `string` — honestly, because it is whatever
+             * the API sent — and the mailbox links need a real `ModuleKey` to
+             * build a path from.
+             */
+            const moduleKey = module.moduleKey;
+            const product = productOf(moduleKey);
             /**
              * ⚠️ A PRODUCT THIS BUILD HAS NEVER HEARD OF IS SKIPPED, NOT
              * PRINTED RAW (found by walking, 2026-08-19).
@@ -147,7 +166,14 @@ export default async function ModulesPage() {
              * an entry there is nothing true to say. The next web deploy shows
              * it properly.
              */
-            if (!product) return null;
+            /**
+             * ⚠️ THE `isModuleKey` HALF IS THE SAME GUARD, NOT A SECOND ONE.
+             * A key the catalogue cannot name is a key this build has never
+             * heard of, so both halves are true together; asserting it satisfies
+             * the compiler without inventing a rule the code did not already
+             * follow.
+             */
+            if (!product || !isModuleKey(moduleKey)) return null;
             /**
              * ⚠️ "NOT BUILT" OUTRANKS EVERYTHING ELSE ON THE CARD. When a
              * product does not exist yet, that is the only thing worth saying
@@ -197,9 +223,9 @@ export default async function ModulesPage() {
                   {module.enabled && module.seatsUsed !== null && module.seatsUsed > 0 && (
                     <p className="text-sm text-muted-foreground">
                       {module.seatsUsed} of {module.seats} {module.seats === 1 ? "seat" : "seats"}{" "}
-                      in use ·{" "}
+                      in use · {/* This product's own mailboxes — see CAPABILITY_FIX. */}
                       <Link
-                        href="/app/settings/mailbox"
+                        href={moduleHref(moduleKey, "mailbox")}
                         className="font-medium text-link hover:underline"
                       >
                         Mailboxes
@@ -239,7 +265,7 @@ export default async function ModulesPage() {
                             <>
                               {" "}
                               <Link
-                                href={fix.href}
+                                href={fix.href(moduleKey)}
                                 className="font-medium text-link hover:underline"
                               >
                                 {fix.action}

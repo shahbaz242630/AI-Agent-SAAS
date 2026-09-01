@@ -71,7 +71,7 @@ describe("ownerForRoute", () => {
   it("keeps the hub, clients and settings on the platform", () => {
     expect(ownerForRoute("/app")).toBe("platform");
     expect(ownerForRoute("/app/clients")).toBe("platform");
-    expect(ownerForRoute("/app/settings/mailbox")).toBe("platform");
+    expect(ownerForRoute("/app/settings/invoices")).toBe("platform");
     expect(ownerForRoute("/app/onboarding")).toBe("platform");
   });
 
@@ -91,6 +91,19 @@ describe("ownerForRoute", () => {
 
   it("puts the Microsoft consent landing page on the mailbox capability", () => {
     expect(ownerForRoute("/microsoft-approved")).toBe("capability:mailbox");
+  });
+
+  /**
+   * ⚠️ ONE COMPONENT, TWO DOORS, ONE OWNER. Both products render the same
+   * `MailboxScreen`. Tagged by URL, a single defect in it would be filed under
+   * whichever product the customer happened to be in — the same bug under two
+   * owners, and neither search finding both.
+   */
+  it("files both products' mailbox screens under the mailbox capability", () => {
+    expect(ownerForRoute("/app/invoice-chasing/mailbox")).toBe("capability:mailbox");
+    expect(ownerForRoute("/app/lead-follow-up-email/mailbox")).toBe("capability:mailbox");
+    // ...and the product's own screens are still the product's.
+    expect(ownerForRoute("/app/invoice-chasing/invoices")).toBe("product:invoice-follow-up");
   });
 
   it("treats sign-in and the front door as platform", () => {

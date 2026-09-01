@@ -310,6 +310,7 @@ describe("withTenant — app-layer tenant context (BRD 15)", () => {
       async (tx) =>
         tx.emailAccount.create({
           data: {
+            moduleKey: "email_credit_controller",
             organisationId: DEMO_ORGANISATION_ID,
             provider: "microsoft",
             emailAddress: "tenant-scope-fixture@example.com",

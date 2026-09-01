@@ -46,7 +46,7 @@ const DEFAULT_TOKENS: OAuthTokens = {
   accessToken: "stub-access-token-PLAINTEXT",
   refreshToken: "stub-refresh-token-PLAINTEXT",
   expiresInSeconds: 3600,
-  scopes: ["offline_access", "User.Read", "Mail.Read", "Mail.Send"],
+  scopes: ["offline_access", "User.Read", "Mail.ReadBasic", "Mail.Send"],
 };
 
 const REFRESHED_TOKENS: OAuthTokens = {
@@ -119,6 +119,9 @@ async function insertConnectedMailbox(
   return owner.emailAccount.create({
     data: {
       organisationId,
+      // Invoice Chasing: the only product that could own a mailbox before
+      // migration 0034, so every existing fixture is one.
+      moduleKey: "email_credit_controller",
       provider: "microsoft",
       emailAddress: SANDBOX_EMAIL,
       displayName: "Sandbox Mailbox",
@@ -179,14 +182,14 @@ describe("Mailboxes (Slice 1.6)", () => {
   describe("GET .../mailboxes (list)", () => {
     it("404s for a non-member (cross-tenant is invisible, BRD 15)", async () => {
       await request(app.getHttpServer())
-        .get(`/organisations/${otherOrg.id}/mailboxes`)
+        .get(`/organisations/${otherOrg.id}/mailboxes?module=email_credit_controller`)
         .set("Authorization", `Bearer ${tokenFor("owner")}`)
         .expect(404);
     });
 
     it("403s for a member without mailbox:read (sales)", async () => {
       await request(app.getHttpServer())
-        .get(`/organisations/${org.id}/mailboxes`)
+        .get(`/organisations/${org.id}/mailboxes?module=email_credit_controller`)
         .set("Authorization", `Bearer ${tokenFor("sales")}`)
         .expect(403);
     });
@@ -197,7 +200,7 @@ describe("Mailboxes (Slice 1.6)", () => {
         data: { deletedAt: new Date() },
       });
       const response = await request(app.getHttpServer())
-        .get(`/organisations/${org.id}/mailboxes`)
+        .get(`/organisations/${org.id}/mailboxes?module=email_credit_controller`)
         .set("Authorization", `Bearer ${tokenFor("finance")}`)
         .expect(200);
       // Slice 1.6a: an empty list rather than a nullable status object. Seats
@@ -210,7 +213,7 @@ describe("Mailboxes (Slice 1.6)", () => {
     it("200s with the sanitized list when connected â€” never token material", async () => {
       const account = await insertConnectedMailbox(owner, org.id);
       const response = await request(app.getHttpServer())
-        .get(`/organisations/${org.id}/mailboxes`)
+        .get(`/organisations/${org.id}/mailboxes?module=email_credit_controller`)
         .set("Authorization", `Bearer ${tokenFor("owner")}`)
         .expect(200);
       const listed = response.body.mailboxes.find((row: { id: string }) => row.id === account.id);
@@ -245,16 +248,23 @@ describe("Mailboxes (Slice 1.6)", () => {
     // Not async: supertest's Test is thenable, and awaiting it here would
     // return a Response with no `.expect` left to chain.
     function connect(emailAddress: string): request.Test {
-      return request(app.getHttpServer())
-        .post(`/organisations/${seatOrg.id}/mailboxes/connect`)
-        .set("Authorization", `Bearer ${seatToken}`)
-        .send({ emailAddress });
+      return (
+        request(app.getHttpServer())
+          .post(`/organisations/${seatOrg.id}/mailboxes/connect`)
+          .set("Authorization", `Bearer ${seatToken}`)
+          // Which product's seat this connection would take. Required since
+          // slice 3.1c-0 — the API refuses rather than guessing.
+          .send({ emailAddress, moduleKey: "email_credit_controller" })
+      );
     }
 
     async function addMailbox(address: string, isPrimary = false) {
       return owner.emailAccount.create({
         data: {
           organisationId: seatOrg.id,
+          // Invoice Chasing: the only product that could own a mailbox
+          // before migration 0034, so every existing fixture is one.
+          moduleKey: "email_credit_controller",
           provider: "microsoft",
           emailAddress: address,
           accessTokenEncrypted: encryptToken("fixture-access-token", TEST_TOKEN_ENCRYPTION_KEY),
@@ -326,6 +336,7 @@ describe("Mailboxes (Slice 1.6)", () => {
         organisationId: seatOrg.id,
         userId: seatOrg.members[0]!.id,
         nonce: randomUUID(),
+        moduleKey: "email_credit_controller",
       });
 
       const response = await request(app.getHttpServer())
@@ -365,6 +376,7 @@ describe("Mailboxes (Slice 1.6)", () => {
           organisationId: seatOrg.id,
           userId: seatOrg.members[0]!.id,
           nonce: randomUUID(),
+          moduleKey: "email_credit_controller",
         });
 
       const [first, second] = await Promise.all([
@@ -498,6 +510,7 @@ describe("Mailboxes (Slice 1.6)", () => {
           organisationId: seatOrg.id,
           userId: seatOrg.members[0]!.id,
           nonce: randomUUID(),
+          moduleKey: "email_credit_controller",
           replacesMailboxId: old.id,
         });
 
@@ -565,6 +578,7 @@ describe("Mailboxes (Slice 1.6)", () => {
           organisationId: seatOrg.id,
           userId: seatOrg.members[0]!.id,
           nonce: randomUUID(),
+          moduleKey: "email_credit_controller",
           replacesMailboxId: only.id,
         });
 
@@ -596,7 +610,7 @@ describe("Mailboxes (Slice 1.6)", () => {
         await addClient("unfiled");
 
         const response = await request(app.getHttpServer())
-          .get(`/organisations/${seatOrg.id}/mailboxes`)
+          .get(`/organisations/${seatOrg.id}/mailboxes?module=email_credit_controller`)
           .set("Authorization", `Bearer ${seatToken}`)
           .expect(200);
 
@@ -630,7 +644,11 @@ describe("Mailboxes (Slice 1.6)", () => {
         await request(app.getHttpServer())
           .post(`/organisations/${seatOrg.id}/mailboxes/connect`)
           .set("Authorization", `Bearer ${seatToken}`)
-          .send({ emailAddress: "fresh@seats.example", replacesMailboxId: old.id })
+          .send({
+            emailAddress: "fresh@seats.example",
+            replacesMailboxId: old.id,
+            moduleKey: "email_credit_controller",
+          })
           .expect(200);
 
         graphStub.getProfile.mockResolvedValueOnce({
@@ -641,6 +659,7 @@ describe("Mailboxes (Slice 1.6)", () => {
           organisationId: seatOrg.id,
           userId: seatOrg.members[0]!.id,
           nonce: randomUUID(),
+          moduleKey: "email_credit_controller",
           replacesMailboxId: old.id,
         });
         const response = await request(app.getHttpServer())
@@ -679,6 +698,7 @@ describe("Mailboxes (Slice 1.6)", () => {
           organisationId: seatOrg.id,
           userId: seatOrg.members[0]!.id,
           nonce: randomUUID(),
+          moduleKey: "email_credit_controller",
           replacesMailboxId: goneId,
         });
 
@@ -719,6 +739,7 @@ describe("Mailboxes (Slice 1.6)", () => {
           organisationId: seatOrg.id,
           userId: seatOrg.members[0]!.id,
           nonce: randomUUID(),
+          moduleKey: "email_credit_controller",
           replacesMailboxId: old.id,
         });
 
@@ -735,6 +756,9 @@ describe("Mailboxes (Slice 1.6)", () => {
         const foreign = await owner.emailAccount.create({
           data: {
             organisationId: org.id,
+            // Invoice Chasing: the only product that could own a mailbox
+            // before migration 0034, so every existing fixture is one.
+            moduleKey: "email_credit_controller",
             provider: "microsoft",
             emailAddress: `foreign-${randomUUID().slice(0, 8)}@example.com`,
           },
@@ -742,7 +766,11 @@ describe("Mailboxes (Slice 1.6)", () => {
         await request(app.getHttpServer())
           .post(`/organisations/${seatOrg.id}/mailboxes/connect`)
           .set("Authorization", `Bearer ${seatToken}`)
-          .send({ emailAddress: "fresh3@seats.example", replacesMailboxId: foreign.id })
+          .send({
+            emailAddress: "fresh3@seats.example",
+            replacesMailboxId: foreign.id,
+            moduleKey: "email_credit_controller",
+          })
           .expect(404);
       });
     });
@@ -840,6 +868,7 @@ describe("Mailboxes (Slice 1.6)", () => {
       await request(app.getHttpServer())
         .post(`/organisations/${org.id}/mailboxes/connect`)
         .set("Authorization", `Bearer ${tokenFor("finance")}`)
+        .send({ moduleKey: "email_credit_controller" })
         .expect(403);
     });
 
@@ -847,6 +876,7 @@ describe("Mailboxes (Slice 1.6)", () => {
       await request(app.getHttpServer())
         .post(`/organisations/${otherOrg.id}/mailboxes/connect`)
         .set("Authorization", `Bearer ${tokenFor("owner")}`)
+        .send({ moduleKey: "email_credit_controller" })
         .expect(404);
     });
 
@@ -854,6 +884,7 @@ describe("Mailboxes (Slice 1.6)", () => {
       const response = await request(app.getHttpServer())
         .post(`/organisations/${org.id}/mailboxes/connect`)
         .set("Authorization", `Bearer ${tokenFor("owner")}`)
+        .send({ moduleKey: "email_credit_controller" })
         .expect(200);
       const url = new URL(response.body.authorizeUrl);
       const state = url.searchParams.get("state");
@@ -965,7 +996,7 @@ describe("Mailboxes (Slice 1.6)", () => {
       const response = await request(app.getHttpServer())
         .post(`/organisations/${org.id}/mailboxes/connect`)
         .set("Authorization", `Bearer ${tokenFor("owner")}`)
-        .send({ emailAddress: "sara@acme.example" })
+        .send({ emailAddress: "sara@acme.example", moduleKey: "email_credit_controller" })
         .expect(200);
 
       expect(graphStub.buildAuthorizeUrl).toHaveBeenCalledWith(expect.any(String), {
@@ -981,7 +1012,7 @@ describe("Mailboxes (Slice 1.6)", () => {
       await request(app.getHttpServer())
         .post(`/organisations/${org.id}/mailboxes/connect`)
         .set("Authorization", `Bearer ${tokenFor("owner")}`)
-        .send({ emailAddress: "not-an-email" })
+        .send({ emailAddress: "not-an-email", moduleKey: "email_credit_controller" })
         .expect(400);
     });
 
@@ -989,6 +1020,9 @@ describe("Mailboxes (Slice 1.6)", () => {
       await request(app.getHttpServer())
         .post(`/organisations/${org.id}/mailboxes/connect`)
         .set("Authorization", `Bearer ${tokenFor("owner")}`)
+        // Still no ADDRESS — that absence is the test. The product is a
+        // different field and is always required.
+        .send({ moduleKey: "email_credit_controller" })
         .expect(200);
     });
 
@@ -999,7 +1033,11 @@ describe("Mailboxes (Slice 1.6)", () => {
       const response = await request(app.getHttpServer())
         .post(`/organisations/${org.id}/mailboxes/connect`)
         .set("Authorization", `Bearer ${tokenFor("owner")}`)
-        .send({ emailAddress: "sara@acme.example", flow: "onboarding" })
+        .send({
+          emailAddress: "sara@acme.example",
+          flow: "onboarding",
+          moduleKey: "email_credit_controller",
+        })
         .expect(200);
 
       const state = new URL(response.body.authorizeUrl).searchParams.get("state")!;
@@ -1010,7 +1048,7 @@ describe("Mailboxes (Slice 1.6)", () => {
       await request(app.getHttpServer())
         .post(`/organisations/${org.id}/mailboxes/connect`)
         .set("Authorization", `Bearer ${tokenFor("owner")}`)
-        .send({ flow: "https://evil.example" })
+        .send({ flow: "https://evil.example", moduleKey: "email_credit_controller" })
         .expect(400);
     });
   });
@@ -1029,6 +1067,7 @@ describe("Mailboxes (Slice 1.6)", () => {
         organisationId,
         userId: ownerMember.id,
         nonce: randomUUID(),
+        moduleKey: "email_credit_controller",
         ...extra,
       });
     }
@@ -1137,7 +1176,11 @@ describe("Mailboxes (Slice 1.6)", () => {
           .expect(302);
 
         expect(response.headers.location).toBe(
-          "http://localhost:3000/app/settings/mailbox?provider=microsoft&error=invalid_state",
+          // ⚠️ THE HUB, NOT A MAILBOX SCREEN — a state that will not verify
+          // names no product (slice 3.1c-0), and guessing one would land the
+          // customer on a screen for something they were not connecting, or on
+          // a 402 for a product they do not own. `/app` renders this code.
+          "http://localhost:3000/app?provider=microsoft&error=invalid_state",
         );
         expect(graphStub.exchangeCode).not.toHaveBeenCalled();
       });
@@ -1151,7 +1194,11 @@ describe("Mailboxes (Slice 1.6)", () => {
           .expect(302);
 
         expect(response.headers.location).toBe(
-          "http://localhost:3000/app/settings/mailbox?provider=microsoft&error=invalid_state",
+          // ⚠️ THE HUB, NOT A MAILBOX SCREEN — a state that will not verify
+          // names no product (slice 3.1c-0), and guessing one would land the
+          // customer on a screen for something they were not connecting, or on
+          // a 402 for a product they do not own. `/app` renders this code.
+          "http://localhost:3000/app?provider=microsoft&error=invalid_state",
         );
       });
     });
@@ -1164,7 +1211,7 @@ describe("Mailboxes (Slice 1.6)", () => {
         .expect(302);
 
       expect(response.headers.location).toBe(
-        "http://localhost:3000/app/settings/mailbox?provider=microsoft&error=consent_denied&hint=sara%40acme.example",
+        "http://localhost:3000/app/invoice-chasing/mailbox?provider=microsoft&error=consent_denied&hint=sara%40acme.example",
       );
     });
 
@@ -1173,7 +1220,7 @@ describe("Mailboxes (Slice 1.6)", () => {
         .get(`/integrations/microsoft/callback?error=access_denied&state=${await mintState()}`)
         .expect(302);
       expect(response.headers.location).toBe(
-        "http://localhost:3000/app/settings/mailbox?provider=microsoft&error=consent_denied",
+        "http://localhost:3000/app/invoice-chasing/mailbox?provider=microsoft&error=consent_denied",
       );
     });
 
@@ -1195,7 +1242,7 @@ describe("Mailboxes (Slice 1.6)", () => {
         .get(`/integrations/microsoft/callback?${query.toString()}`)
         .expect(302);
       expect(response.headers.location).toBe(
-        "http://localhost:3000/app/settings/mailbox?provider=microsoft&error=admin_consent_required",
+        "http://localhost:3000/app/invoice-chasing/mailbox?provider=microsoft&error=admin_consent_required",
       );
     });
 
@@ -1209,7 +1256,7 @@ describe("Mailboxes (Slice 1.6)", () => {
         .get(`/integrations/microsoft/callback?${query.toString()}`)
         .expect(302);
       expect(response.headers.location).toBe(
-        "http://localhost:3000/app/settings/mailbox?provider=microsoft&error=consent_denied",
+        "http://localhost:3000/app/invoice-chasing/mailbox?provider=microsoft&error=consent_denied",
       );
     });
 
@@ -1218,7 +1265,8 @@ describe("Mailboxes (Slice 1.6)", () => {
         .get("/integrations/microsoft/callback?code=any&state=forged")
         .expect(302);
       expect(response.headers.location).toBe(
-        "http://localhost:3000/app/settings/mailbox?provider=microsoft&error=invalid_state",
+        // The hub — an unverifiable state names no product. See above.
+        "http://localhost:3000/app?provider=microsoft&error=invalid_state",
       );
     });
 
@@ -1227,7 +1275,7 @@ describe("Mailboxes (Slice 1.6)", () => {
         .get(`/integrations/microsoft/callback?state=${await mintState()}`)
         .expect(302);
       expect(response.headers.location).toBe(
-        "http://localhost:3000/app/settings/mailbox?provider=microsoft&error=missing_code",
+        "http://localhost:3000/app/invoice-chasing/mailbox?provider=microsoft&error=missing_code",
       );
     });
 
@@ -1237,7 +1285,7 @@ describe("Mailboxes (Slice 1.6)", () => {
         .get(`/integrations/microsoft/callback?code=fake&state=${await mintState()}`)
         .expect(302);
       expect(response.headers.location).toBe(
-        "http://localhost:3000/app/settings/mailbox?provider=microsoft&error=exchange_failed",
+        "http://localhost:3000/app/invoice-chasing/mailbox?provider=microsoft&error=exchange_failed",
       );
     });
 
@@ -1259,7 +1307,7 @@ describe("Mailboxes (Slice 1.6)", () => {
         .expect(302);
 
       expect(response.headers.location).toBe(
-        "http://localhost:3000/app/settings/mailbox?provider=microsoft&error=mailbox_unavailable",
+        "http://localhost:3000/app/invoice-chasing/mailbox?provider=microsoft&error=mailbox_unavailable",
       );
       const after = await owner.emailAccount.count({ where: { organisationId: org.id } });
       expect(after).toBe(before);
@@ -1296,7 +1344,7 @@ describe("Mailboxes (Slice 1.6)", () => {
         .expect(302);
 
       expect(response.headers.location).toBe(
-        "http://localhost:3000/app/settings/mailbox?provider=microsoft&error=send_permission_denied",
+        "http://localhost:3000/app/invoice-chasing/mailbox?provider=microsoft&error=send_permission_denied",
       );
       const after = await owner.emailAccount.count({ where: { organisationId: org.id } });
       expect(after).toBe(before);
@@ -1368,7 +1416,7 @@ describe("Mailboxes (Slice 1.6)", () => {
         .get(`/integrations/microsoft/callback?code=fake&state=${await mintState()}`)
         .expect(302);
       expect(response.headers.location).toBe(
-        "http://localhost:3000/app/settings/mailbox?provider=microsoft&connected=1&test_email=sent",
+        "http://localhost:3000/app/invoice-chasing/mailbox?provider=microsoft&connected=1&test_email=sent",
       );
       const account = await owner.emailAccount.findFirstOrThrow({
         where: { organisationId: org.id, deletedAt: null },
@@ -1404,12 +1452,13 @@ describe("Mailboxes (Slice 1.6)", () => {
         organisationId: org.id,
         userId: financeMember.id,
         nonce: randomUUID(),
+        moduleKey: "email_credit_controller",
       });
       const response = await request(app.getHttpServer())
         .get(`/integrations/microsoft/callback?code=fake&state=${state}`)
         .expect(302);
       expect(response.headers.location).toBe(
-        "http://localhost:3000/app/settings/mailbox?provider=microsoft&error=not_authorised",
+        "http://localhost:3000/app/invoice-chasing/mailbox?provider=microsoft&error=not_authorised",
       );
       expect(graphStub.exchangeCode).not.toHaveBeenCalled();
     });
@@ -1420,12 +1469,13 @@ describe("Mailboxes (Slice 1.6)", () => {
         organisationId: otherOrg.id,
         userId: ownerMember.id,
         nonce: randomUUID(),
+        moduleKey: "email_credit_controller",
       });
       const response = await request(app.getHttpServer())
         .get(`/integrations/microsoft/callback?code=fake&state=${state}`)
         .expect(302);
       expect(response.headers.location).toBe(
-        "http://localhost:3000/app/settings/mailbox?provider=microsoft&error=not_authorised",
+        "http://localhost:3000/app/invoice-chasing/mailbox?provider=microsoft&error=not_authorised",
       );
       expect(graphStub.exchangeCode).not.toHaveBeenCalled();
       const live = await owner.emailAccount.findMany({
@@ -1457,7 +1507,7 @@ describe("Mailboxes (Slice 1.6)", () => {
           .expect(302);
 
         expect(response.headers.location).toBe(
-          "http://localhost:3000/app/settings/mailbox?provider=microsoft&connected=1&test_email=sent",
+          "http://localhost:3000/app/invoice-chasing/mailbox?provider=microsoft&connected=1&test_email=sent",
         );
         expect(graphStub.sendMail).toHaveBeenCalledTimes(1);
         expect(graphStub.sendMail).toHaveBeenCalledWith(
@@ -1485,7 +1535,7 @@ describe("Mailboxes (Slice 1.6)", () => {
           .expect(302);
 
         expect(response.headers.location).toBe(
-          "http://localhost:3000/app/settings/mailbox?provider=microsoft&connected=1",
+          "http://localhost:3000/app/invoice-chasing/mailbox?provider=microsoft&connected=1",
         );
         expect(graphStub.sendMail).not.toHaveBeenCalled();
       });
@@ -1505,7 +1555,7 @@ describe("Mailboxes (Slice 1.6)", () => {
           .expect(302);
 
         expect(response.headers.location).toBe(
-          "http://localhost:3000/app/settings/mailbox?provider=microsoft&connected=1&test_email=failed",
+          "http://localhost:3000/app/invoice-chasing/mailbox?provider=microsoft&connected=1&test_email=failed",
         );
         const account = await owner.emailAccount.findFirstOrThrow({
           where: { organisationId: org.id, deletedAt: null },
@@ -1562,7 +1612,7 @@ describe("Mailboxes (Slice 1.6)", () => {
           .expect(302);
 
         expect(response.headers.location).toBe(
-          "http://localhost:3000/app/settings/mailbox?provider=microsoft&error=consent_denied",
+          "http://localhost:3000/app/invoice-chasing/mailbox?provider=microsoft&error=consent_denied",
         );
       });
     });
@@ -1779,7 +1829,7 @@ describe("Mailboxes (Slice 1.6)", () => {
         .set("Authorization", `Bearer ${tokenFor("owner")}`)
         .expect(400);
       const status = await request(app.getHttpServer())
-        .get(`/organisations/${org.id}/mailboxes`)
+        .get(`/organisations/${org.id}/mailboxes?module=email_credit_controller`)
         .set("Authorization", `Bearer ${tokenFor("owner")}`)
         .expect(200);
       const listed = status.body.mailboxes.find((row: { id: string }) => row.id === account.id);
@@ -1804,6 +1854,9 @@ describe("Mailboxes (Slice 1.6)", () => {
       const healthy = await owner.emailAccount.create({
         data: {
           organisationId: org.id,
+          // Invoice Chasing: the only product that could own a mailbox
+          // before migration 0034, so every existing fixture is one.
+          moduleKey: "email_credit_controller",
           provider: "microsoft",
           emailAddress: `healthy-${randomUUID().slice(0, 8)}@example.com`,
           accessTokenEncrypted: encryptToken("fixture-access-token", TEST_TOKEN_ENCRYPTION_KEY),
@@ -1817,6 +1870,9 @@ describe("Mailboxes (Slice 1.6)", () => {
       const broken = await owner.emailAccount.create({
         data: {
           organisationId: org.id,
+          // Invoice Chasing: the only product that could own a mailbox
+          // before migration 0034, so every existing fixture is one.
+          moduleKey: "email_credit_controller",
           provider: "microsoft",
           emailAddress: `broken-${randomUUID().slice(0, 8)}@example.com`,
           accessTokenEncrypted: encryptToken("fixture-access-token", TEST_TOKEN_ENCRYPTION_KEY),

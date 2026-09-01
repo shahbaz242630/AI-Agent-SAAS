@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import { moduleHref } from "@eva/types";
 import type { ReminderActivityDto } from "@eva/types";
 import {
   Card,
@@ -195,7 +196,7 @@ export default async function RemindersPage() {
                 one and these send on their day as planned.
               </p>
               <Link
-                href="/app/settings/mailbox"
+                href={moduleHref("email_credit_controller", "mailbox")}
                 className="text-[13px] font-semibold text-warning-strong hover:underline"
               >
                 Connect a mailbox →

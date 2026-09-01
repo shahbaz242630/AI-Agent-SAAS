@@ -404,7 +404,20 @@ export class ReminderSenderService {
           continue;
         }
 
-        const resolution = await this.mailboxes.resolveSendingMailbox(tx, organisationId, customer);
+        /**
+         * ⚠️ NAMES ITS OWN PRODUCT (slice 3.1c-0). A chaser goes out of a
+         * mailbox connected FOR Invoice Chasing and never out of one the
+         * customer set up for Lead Follow-up — the two products share nothing
+         * (founder ruling 2026-09-01). Hardcoded here rather than passed in
+         * because this file IS Invoice Chasing: there is no other answer it
+         * could correctly give.
+         */
+        const resolution = await this.mailboxes.resolveSendingMailbox(
+          tx,
+          organisationId,
+          "email_credit_controller",
+          customer,
+        );
         if (resolution === null) {
           hold(counts, "no_working_mailbox");
           continue;

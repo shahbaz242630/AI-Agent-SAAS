@@ -1,6 +1,7 @@
 "use client";
 
 import { useActionState, useState } from "react";
+import type { ModuleKey } from "@eva/types";
 import type { MailboxSummary } from "@/components/mailbox-card";
 import { PrimarySubmit } from "@/components/ui";
 import { replaceMessage } from "@/capabilities/mailbox/mailbox-messages";
@@ -10,7 +11,7 @@ import {
   sendTestEmail,
   setPrimaryMailbox,
   type MailboxActionState,
-} from "../actions";
+} from "./actions";
 
 const INITIAL_STATE: MailboxActionState = {};
 
@@ -27,10 +28,13 @@ const DANGER_BUTTON_CLASS =
  */
 export function MailboxActions({
   organisationId,
+  moduleKey,
   mailbox,
   canPromote,
 }: {
   organisationId: string;
+  /** Which product owns this mailbox (slice 3.1c-0). Every write carries it. */
+  moduleKey: ModuleKey;
   mailbox: MailboxSummary;
   /** Only meaningful with more than one mailbox connected. */
   canPromote: boolean;
@@ -54,6 +58,11 @@ export function MailboxActions({
   const hidden = (
     <>
       <input type="hidden" name="organisationId" value={organisationId} />
+      {/* ⚠️ THE PRODUCT TRAVELS WITH EVERY ACTION. Disconnect and Make default
+          both reach across a whole product's mailboxes — promoting a successor,
+          demoting the old default — and doing either against the wrong product
+          would move a mailbox the customer never touched. */}
+      <input type="hidden" name="moduleKey" value={moduleKey} />
       <input type="hidden" name="mailboxId" value={mailbox.id} />
     </>
   );
@@ -99,6 +108,7 @@ export function MailboxActions({
           </p>
           <ConnectMailboxForm
             organisationId={organisationId}
+            moduleKey={moduleKey}
             replacesMailboxId={mailbox.id}
             label="Sign in to the new mailbox"
           />
@@ -196,11 +206,15 @@ const CONNECT_PROVIDERS = [
 
 export function ConnectMailboxForm({
   organisationId,
+  moduleKey,
   defaultAddress,
   label,
   replacesMailboxId,
 }: {
   organisationId: string;
+  /** Which product this mailbox is being connected for. The API refuses a
+   *  connect that does not name one rather than guessing (slice 3.1c-0). */
+  moduleKey: ModuleKey;
   defaultAddress?: string | null;
   label?: string;
   /** Set by Replace this address (slice 1.6b). Rides the signed OAuth state, so
@@ -214,6 +228,9 @@ export function ConnectMailboxForm({
   return (
     <form action={connectMailbox} className="flex flex-col gap-3">
       <input type="hidden" name="organisationId" value={organisationId} />
+      {/* Rides the signed OAuth state, so the mailbox the customer is about to
+          grant us lands against the product they started from and no other. */}
+      <input type="hidden" name="moduleKey" value={moduleKey} />
       {/* Rides the signed OAuth state so the return lands back here rather than
           in the setup flow. */}
       <input type="hidden" name="flow" value="settings" />

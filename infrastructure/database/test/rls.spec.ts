@@ -48,8 +48,8 @@ beforeAll(async () => {
   await owner.$executeRaw`DELETE FROM email_accounts WHERE email_address = 'rls-fixture@example.com'`;
   // id and updated_at are NOT NULL with no database default (Prisma generates
   // both client-side), so raw SQL must supply them.
-  await owner.$executeRaw`INSERT INTO email_accounts (id, organisation_id, provider, email_address, access_token_encrypted, refresh_token_encrypted, token_expires_at, scopes, updated_at, deleted_at)
-    VALUES (${randomUUID()}::uuid, ${DEMO_ORGANISATION_ID}::uuid, 'microsoft', 'rls-fixture@example.com', 'v1.aa.bb.cc', 'v1.aa.bb.cc', now() + interval '1 hour', ARRAY['Mail.Send'], now(), now())`;
+  await owner.$executeRaw`INSERT INTO email_accounts (id, organisation_id, module_key, provider, email_address, access_token_encrypted, refresh_token_encrypted, token_expires_at, scopes, updated_at, deleted_at)
+    VALUES (${randomUUID()}::uuid, ${DEMO_ORGANISATION_ID}::uuid, 'email_credit_controller', 'microsoft', 'rls-fixture@example.com', 'v1.aa.bb.cc', 'v1.aa.bb.cc', now() + interval '1 hour', ARRAY['Mail.Send'], now(), now())`;
   // POSITIVE CONTROL for organisation_modules (Slice 1.6a), for exactly the
   // same reason. The migration backfills only organisations that existed when
   // it ran, so whether the DEMO org has a row here depends on ordering — give
@@ -264,8 +264,8 @@ describe("RLS: cross-tenant attacks are refused by Postgres itself", () => {
       asTenant(
         ORG_A,
         (tx) =>
-          tx.$executeRaw`INSERT INTO email_accounts (id, organisation_id, provider, email_address, access_token_encrypted, refresh_token_encrypted, token_expires_at, scopes, updated_at)
-        VALUES (${randomUUID()}::uuid, ${ORG_B}::uuid, 'microsoft', 'attacker@example.com', 'x', 'x', now(), ARRAY['Mail.Send'], now())`,
+          tx.$executeRaw`INSERT INTO email_accounts (id, organisation_id, module_key, provider, email_address, access_token_encrypted, refresh_token_encrypted, token_expires_at, scopes, updated_at)
+        VALUES (${randomUUID()}::uuid, ${ORG_B}::uuid, 'email_credit_controller', 'microsoft', 'attacker@example.com', 'x', 'x', now(), ARRAY['Mail.Send'], now())`,
       ),
     ).rejects.toThrow(/row-level security/i);
   });

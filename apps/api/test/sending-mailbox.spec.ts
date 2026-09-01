@@ -71,6 +71,9 @@ describe("resolveSendingMailbox (Slice 1.6b)", () => {
     return owner.emailAccount.create({
       data: {
         organisationId: org.id,
+        // Invoice Chasing: the only product that could own a mailbox
+        // before migration 0034, so every existing fixture is one.
+        moduleKey: "email_credit_controller",
         provider: "microsoft",
         emailAddress: `${label}-${randomUUID().slice(0, 8)}@example.com`,
         isPrimary: options.isPrimary ?? false,
@@ -105,7 +108,7 @@ describe("resolveSendingMailbox (Slice 1.6b)", () => {
    */
   function resolve(customer: { organisationId: string; emailAccountId: string | null }) {
     return withTenant(app.get(PrismaService).db, { organisationId: org.id, userId }, (tx) =>
-      service.resolveSendingMailbox(tx, org.id, customer),
+      service.resolveSendingMailbox(tx, org.id, "email_credit_controller", customer),
     );
   }
 

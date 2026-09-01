@@ -1,5 +1,5 @@
 import { readFileSync, readdirSync, statSync } from "node:fs";
-import { join, relative } from "node:path";
+import { join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
@@ -7,7 +7,14 @@ import { NoOrganisation, SettingsShell } from "@/app/app/settings/settings-shell
 import { SETTINGS_TABS } from "@/app/app/settings/settings-tabs";
 
 /**
- * The five settings screens, held to one frame (founder ruling 2026-08-30).
+ * The settings screens, held to one frame (founder ruling 2026-08-30).
+ *
+ * ⚠️ THERE ARE FOUR SINCE 2026-09-01 — MAILBOX LEFT. A mailbox belongs to one
+ * product (ruling 36), so its setup moved inside each product and there is no
+ * organisation-wide mailbox screen any more. Its controls moved with it, which
+ * is why the button scan below reaches into `capabilities/mailbox` too: a guard
+ * that silently stops covering the file it was written for is worse than no
+ * guard, and that exact file carried one of the five wrong buttons.
  *
  * ⚠️ THIS EXISTS BECAUSE READING ONE FILE AT A TIME CANNOT SEE THE DEFECT.
  * Every one of these screens was correct on its own. Side by side they used
@@ -30,12 +37,17 @@ import { SETTINGS_TABS } from "@/app/app/settings/settings-tabs";
 
 const SETTINGS_DIR = fileURLToPath(new URL("../src/app/app/settings", import.meta.url));
 
-const SETTINGS_PAGES = ["reminders", "mailbox", "invoices", "modules", "do-not-contact"] as const;
+const SETTINGS_PAGES = ["reminders", "invoices", "modules", "do-not-contact"] as const;
+
+/** Where the mailbox screen and its controls went (slice 3.1c-0). Scanned by
+ *  the button rules below alongside the settings folder, so the move did not
+ *  quietly shrink what they cover. */
+const MAILBOX_DIR = fileURLToPath(new URL("../src/capabilities/mailbox", import.meta.url));
 
 /**
  * ⚠️ COMMENTS ARE NOT CLASSES — the same guard `design-tokens.spec.ts` needed,
  * for the same reason. `settings-shell.tsx` explains this fix by NAMING the
- * widths it removed, and the mailbox page's note describes the wrong-shaped
+ * widths it removed, and the mailbox screen's note describes the wrong-shaped
  * button it used to carry. Flagging prose would force the next person to delete
  * the explanation to get a green suite, which is how the knowledge is lost.
  */
@@ -190,10 +202,13 @@ function settingsSources(): [string, string][] {
       if (statSync(full).isDirectory()) return walk(full);
       return entry.endsWith(".tsx") ? [full] : [];
     });
-  return walk(SETTINGS_DIR).map((full) => [
-    relative(SETTINGS_DIR, full).replace(/\\/g, "/"),
-    readFileSync(full, "utf8"),
-  ]);
+  const read = (dir: string, prefix: string): [string, string][] =>
+    walk(dir).map((full) => [
+      prefix + relative(dir, full).split(sep).join("/"),
+      readFileSync(full, "utf8"),
+    ]);
+  // The mailbox screen and its controls, which used to live under settings.
+  return [...read(SETTINGS_DIR, ""), ...read(MAILBOX_DIR, "capabilities/mailbox/")];
 }
 
 describe("no settings control is built by hand", () => {
@@ -201,7 +216,11 @@ describe("no settings control is built by hand", () => {
     // A scan that silently found nothing to read would pass everything below.
     const names = settingsSources().map(([name]) => name);
     expect(names.length).toBeGreaterThanOrEqual(12);
-    expect(names).toContain("mailbox/mailbox-controls.tsx");
+    // ⚠️ NAMED EXPLICITLY BECAUSE IT MOVED. `mailbox-controls.tsx` carried one
+    // of the five wrong buttons; when the screen moved into the products this
+    // scan would otherwise have stopped covering it and still gone green.
+    expect(names).toContain("capabilities/mailbox/mailbox-controls.tsx");
+    expect(names).toContain("capabilities/mailbox/mailbox-screen.tsx");
     expect(names).toContain("modules/module-controls.tsx");
   });
 
