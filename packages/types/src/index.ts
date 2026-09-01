@@ -90,6 +90,25 @@ export const PERMISSION_KEYS = [
    * browse it but not be trusted to fix it.
    */
   "suppression:manage",
+  /**
+   * Slice 3.1c-1. The wordings Eva replies to enquiries with.
+   *
+   * ⚠️ OWNER ONLY — founder ruling 2026-09-01, *"owner only for templates"*.
+   * Not `administrator`, which is why it is excluded from that role's filter
+   * below rather than inherited like every other new key.
+   *
+   * ⚠️ AND IT IS DELIBERATELY NOT `leads:write`. Filing a lead and recording a
+   * do-not-contact are day-to-day work that sales and reception do; changing
+   * the message that goes out UNREAD, automatically, to every stranger who
+   * enquires, in the business's own name, is not. The invoice side already
+   * draws this line — configuring the chaser is `reminders:write`, which sales
+   * does not hold — and this is the same line on the lead side.
+   *
+   * ⚠️ READING IS STILL `leads:read`. Sales and reception must be able to SEE
+   * the wordings, or the "send one by hand from an enquiry" half of the product
+   * (3.1c-4) is closed to the people whose job it is.
+   */
+  "lead_templates:manage",
 ] as const;
 
 export type PermissionKey = (typeof PERMISSION_KEYS)[number];
@@ -110,7 +129,18 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<OrganisationRole, readonly Permiss
    * so an administrator keeps inheriting every future permission by default,
    * which is the existing intent.
    */
-  administrator: PERMISSION_KEYS.filter((key) => key !== "modules:manage"),
+  /**
+   * ⚠️ TWO EXCLUSIONS NOW, AND THE SECOND ARRIVED 2026-09-01. `modules:manage`
+   * commits the business to money; `lead_templates:manage` decides what a
+   * stranger reads in the business's name without anybody checking first.
+   * Founder ruling: *"owner only for templates"*.
+   *
+   * Still written as a filter so an administrator keeps inheriting every FUTURE
+   * permission by default — the existing intent — with the exceptions named.
+   */
+  administrator: PERMISSION_KEYS.filter(
+    (key) => key !== "modules:manage" && key !== "lead_templates:manage",
+  ),
   finance: [
     "customers:read",
     "customers:write",
@@ -278,6 +308,8 @@ export const PERMISSION_MODULES: Record<
    */
   "leads:read": ["lead_follow_up_email"],
   "leads:write": ["lead_follow_up_email"],
+  /** Same product as the lead keys; a different set of PEOPLE (owner alone). */
+  "lead_templates:manage": ["lead_follow_up_email"],
   /**
    * ⚠️ `core`, AND NOT BECAUSE IT IS CONVENIENT. Do-not-contact is
    * organisation-wide and crosses every product by BRD design — an entry
@@ -1222,3 +1254,46 @@ export function isSessionIdle(lastSeenAt: Date | null | undefined, now: Date): b
   if (!lastSeenAt) return false;
   return now.getTime() - lastSeenAt.getTime() > SESSION_IDLE_TIMEOUT_MS;
 }
+
+// --- Slice 3.1c-1: the words Eva replies with ---
+
+/**
+ * One reply template as the API exposes it.
+ *
+ * ⚠️ `isAutomatic` IS THE ONLY FIELD WITH TEETH. It marks the single wording
+ * Eva sends unattended (ruling 55); the others are saved wordings a human picks
+ * from the enquiry screen. Exactly one row per organisation may carry it, and
+ * that is enforced by a partial unique index rather than by this type.
+ */
+export interface LeadReplyTemplateDto {
+  id: string;
+  name: string;
+  body: string;
+  isAutomatic: boolean;
+  /** ISO 8601. Shown as "last edited" so a customer can tell theirs from ours. */
+  updatedAt: string;
+}
+
+/**
+ * GET .../lead-reply-templates.
+ *
+ * ⚠️ `automaticTemplateId` IS DERIVED, AND IT IS NULLABLE FOR A REASON. A
+ * customer can turn the automatic reply off entirely, and the screen has to say
+ * so plainly — "Eva will not reply on her own" is a state somebody chose, not
+ * an error. The sender must be able to DETECT it rather than guess, which is
+ * why it is a field here and not something the caller works out by scanning.
+ */
+export interface LeadReplyTemplatesDto {
+  templates: LeadReplyTemplateDto[];
+  automaticTemplateId: string | null;
+}
+
+/**
+ * How many templates one organisation may keep.
+ *
+ * ⚠️ A LIMIT, NOT A TARGET. The founder's model is "2–3 the customer edits" and
+ * three ship by default; the cap exists so a list stays something a person
+ * picks from at the moment they are answering an enquiry. Ten is well past
+ * anything asked for and still short of a filing system.
+ */
+export const MAX_LEAD_REPLY_TEMPLATES = 10;

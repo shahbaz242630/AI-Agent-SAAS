@@ -146,10 +146,20 @@ describe("ownerForRoute", () => {
  * rule `ALLOWED_CROSSINGS` carries in the API, for the same reason: an
  * exception list that grows silently is how a boundary dies politely.
  */
-const ONE_SIDED: Record<string, string> = {
-  "lead-follow-up":
-    "Web screens shipped in 3.1a; the API's lead record is platform (founder ruling) until 3.1b gives this product API code of its own.",
-};
+/**
+ * ⚠️ EMPTY SINCE 3.1c-1, AND THAT IS THE GOOD STATE. It held `lead-follow-up`
+ * with the reason "the API's lead record is platform until this product has API
+ * code of its own" — which expired the moment slice 3.1c-1 gave it
+ * `products/lead-follow-up-email/`, its manifest and the templates it owns.
+ *
+ * The web folder was renamed from `lead-follow-up` to `lead-follow-up-email` to
+ * match, and it is worth saying why rather than treating it as tidying: ruling
+ * 14 makes Lead Follow-up by CALL a separate product a customer buys
+ * separately. A folder called `lead-follow-up` is ambiguous between the two the
+ * day the second one starts, and this test is the thing that would report that
+ * as "two undeclared one-sided folders" long after somebody had built in it.
+ */
+const ONE_SIDED: Record<string, string> = {};
 
 describe("The API and the web agree on what a product is called", () => {
   const folders = (root: string): string[] =>

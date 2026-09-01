@@ -89,6 +89,10 @@ const TENANT_TABLES = [
   "leads",
   "lead_evidence",
   "consent_texts",
+  // Slice 3.1c-1 — the lead product's first owned table. RLS is the model here
+  // (the service-role key is deliberately never used), so a table without a
+  // forced policy is one customer's words readable in another customer's mouth.
+  "lead_reply_templates",
 ];
 
 describe("RLS: connection role hardening", () => {
@@ -113,7 +117,8 @@ describe("RLS: connection role hardening", () => {
         'imports', 'import_rows', 'invoice_documents', 'suppression_events',
         'organisation_role_permissions', 'reminder_sequences', 'reminder_steps',
         'scheduled_actions', 'human_escalations', 'email_accounts',
-        'organisation_modules', 'leads', 'lead_evidence', 'consent_texts'
+        'organisation_modules', 'leads', 'lead_evidence', 'consent_texts',
+        'lead_reply_templates'
       )`;
     expect(rows.length).toBe(TENANT_TABLES.length);
     for (const row of rows) {
@@ -131,7 +136,8 @@ describe("RLS: connection role hardening", () => {
         'imports', 'import_rows', 'invoice_documents', 'suppression_events',
         'organisation_role_permissions', 'reminder_sequences', 'reminder_steps',
         'scheduled_actions', 'human_escalations', 'email_accounts',
-        'organisation_modules', 'leads', 'lead_evidence', 'consent_texts'
+        'organisation_modules', 'leads', 'lead_evidence', 'consent_texts',
+        'lead_reply_templates'
       )
       GROUP BY tablename`;
     expect(rows.length).toBe(TENANT_TABLES.length);

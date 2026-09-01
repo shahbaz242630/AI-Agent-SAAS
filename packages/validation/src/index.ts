@@ -1037,3 +1037,67 @@ export const correctSuppressionRequestSchema = z.object({
 });
 
 export type CorrectSuppressionRequest = z.infer<typeof correctSuppressionRequestSchema>;
+
+// --- Slice 3.1c-1: the words Eva replies with ---
+
+/**
+ * A template name, as the customer types it. Short on purpose — it is a label
+ * in their own list ("Standard reply", "Out of hours"), never sent to anybody.
+ *
+ * ⚠️ TRIMMED BEFORE LENGTH IS CHECKED, AND THE DATABASE AGREES. A name of three
+ * spaces passes `min(1)` on the raw string and then looks blank on the screen;
+ * `lead_reply_templates_name_check` refuses it at the other end, so a caller
+ * that skipped this schema would get a constraint violation rather than an
+ * invisible row.
+ */
+const templateName = z.string().trim().min(1).max(80);
+
+/**
+ * The wording itself.
+ *
+ * ⚠️ 4000 CHARACTERS IS ABOUT A PAGE AND A HALF, AND IT IS A GUARD, NOT A
+ * STYLE OPINION. The body goes out over SMTP in a reply somebody actually
+ * reads; the cap is here so an accidental paste of a whole document is refused
+ * at the edge rather than discovered by an enquirer.
+ */
+const templateBody = z.string().trim().min(1).max(4000);
+
+/**
+ * POST .../lead-reply-templates — add a wording of the customer's own.
+ *
+ * ⚠️ `isAutomatic` DEFAULTS TO FALSE, WHICH IS THE SAFE DIRECTION. Creating a
+ * template must never quietly become "and this is now what Eva sends to
+ * everybody"; promoting one is a separate, deliberate act.
+ */
+export const createLeadReplyTemplateSchema = z.object({
+  name: templateName,
+  body: templateBody,
+  isAutomatic: z.boolean().optional().default(false),
+});
+
+export type CreateLeadReplyTemplateInput = z.infer<typeof createLeadReplyTemplateSchema>;
+
+/**
+ * PATCH .../lead-reply-templates/:templateId — rewrite one.
+ *
+ * Every field optional, at least one required: the same shape as
+ * `updateReminderStepSchema`, so an empty body is a 400 rather than a silent
+ * no-op that returns 200 and changes nothing.
+ *
+ * ⚠️ SETTING `isAutomatic: true` DEMOTES WHICHEVER TEMPLATE HELD IT. That is
+ * the service's job, not this schema's — but it is worth knowing here, because
+ * "make this the automatic one" and "unset the other one" are the same request
+ * and there is no separate endpoint for the second half.
+ */
+export const updateLeadReplyTemplateSchema = z
+  .object({
+    name: templateName.optional(),
+    body: templateBody.optional(),
+    isAutomatic: z.boolean().optional(),
+  })
+  .refine(
+    (body) => body.name !== undefined || body.body !== undefined || body.isAutomatic !== undefined,
+    { message: "at least one of name, body or isAutomatic is required" },
+  );
+
+export type UpdateLeadReplyTemplateInput = z.infer<typeof updateLeadReplyTemplateSchema>;

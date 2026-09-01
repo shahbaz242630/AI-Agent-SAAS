@@ -31,13 +31,22 @@ const WEB = "^apps/web/src";
 /**
  * Each product's route folder, and the code folder it alone may import.
  *
- * ⚠️ THE TWO NAMES DIFFER, AND THAT IS WHY THIS IS A MAP RATHER THAN A REGEX
- * CAPTURE. The route segment comes from `MODULE_CATALOGUE.slug` — what a
+ * ⚠️ THE TWO NAMES CAN DIFFER, AND THAT IS WHY THIS IS A MAP RATHER THAN A
+ * REGEX CAPTURE. The route segment comes from `MODULE_CATALOGUE.slug` — what a
  * customer sees in the address bar — and the code folder is named after the
- * domain. `invoice-chasing` is served by `invoice-follow-up`;
- * `lead-follow-up-email` by `lead-follow-up`. A `$1` backreference of the kind
- * the API's config uses would silently match nothing here, which is the worst
- * possible outcome for a wall: it passes because it cannot see.
+ * domain. `invoice-chasing` is served by `invoice-follow-up`. A `$1`
+ * backreference of the kind the API's config uses would silently match nothing
+ * there, which is the worst possible outcome for a wall: it passes because it
+ * cannot see.
+ *
+ * ⚠️ THE LEAD PRODUCT'S TWO NAMES NOW MATCH, AND THIS MAP IS WHY THAT WAS NOT
+ * FREE. Its code folder was `lead-follow-up` until slice 3.1c-1 renamed it to
+ * `lead-follow-up-email`, to agree with the API folder that arrived with the
+ * product's first owned table — and `product-owner.spec.ts` is what demanded
+ * the agreement. **This line is a SECOND place the folder name lives**, so the
+ * rename made it stale and the rule immediately forbade the lead screens from
+ * importing their own code. Caught by `pnpm boundaries`, which is the wall
+ * working; worth knowing that renaming a product folder is two edits, not one.
  *
  * ⚠️ ADDING A PRODUCT IS ONE LINE HERE. That was the promise made in
  * `ARCHITECTURE-PLATFORM-AND-PRODUCTS.md` §4, and slice 3.1a is the first time
@@ -46,7 +55,7 @@ const WEB = "^apps/web/src";
  */
 const PRODUCT_FOLDERS = {
   "invoice-chasing": "invoice-follow-up",
-  "lead-follow-up-email": "lead-follow-up",
+  "lead-follow-up-email": "lead-follow-up-email",
 };
 
 const PRODUCT_ROUTES = Object.keys(PRODUCT_FOLDERS).map((slug) => `${WEB}/app/app/${slug}/`);

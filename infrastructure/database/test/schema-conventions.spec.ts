@@ -95,6 +95,7 @@ describe("Schema conventions (BRD 10)", () => {
       "invoice_documents",
       "invoices",
       "lead_evidence",
+      "lead_reply_templates",
       "leads",
       "organisation_memberships",
       "organisation_modules",
@@ -128,6 +129,21 @@ describe("Schema conventions (BRD 10)", () => {
     "scheduled_actions",
     "human_escalations",
     "email_accounts",
+    "lead_reply_templates",
+    /**
+     * ⚠️ ADDED 2026-09-01, AND THE GAP WAS THE POINT. This list was frozen at
+     * slice 1.6a: every tenant table built after it — the lead record, its
+     * evidence, the whole inbound trio, consent texts, entitlements — was
+     * subject to this rule in prose and to nothing in code. A list that names
+     * the tables is only a guard for the tables it names.
+     */
+    "consent_texts",
+    "inbound_addresses",
+    "inbound_forwarding_requests",
+    "inbound_messages",
+    "lead_evidence",
+    "leads",
+    "organisation_modules",
   ])("tenant-owned table %s has a non-nullable organisation_id", async (table) => {
     const cols = await columnsOf(table);
     const orgColumn = cols.find((c) => c.column_name === "organisation_id");
@@ -152,6 +168,18 @@ describe("Schema conventions (BRD 10)", () => {
     "scheduled_actions",
     "human_escalations",
     "email_accounts",
+    "lead_reply_templates",
+    /**
+     * ⚠️ ONLY THE TABLES THAT ACTUALLY CARRY ALL THREE. `lead_evidence`,
+     * `inbound_messages`, `inbound_forwarding_requests` and `consent_texts` are
+     * deliberately absent: they are append-only records of something that
+     * happened, so they have no `created_by` to fill in and no update to stamp.
+     * Adding them here would force a column onto a table whose whole design is
+     * that it is never edited.
+     */
+    "inbound_addresses",
+    "leads",
+    "organisation_modules",
   ])("mutable table %s carries created_at/updated_at/created_by", async (table) => {
     const names = (await columnsOf(table)).map((c) => c.column_name);
     for (const col of ["created_at", "updated_at", "created_by"]) {
@@ -167,6 +195,28 @@ describe("Schema conventions (BRD 10)", () => {
     "invoice_documents",
     "reminder_sequences",
     "reminder_steps",
+    "lead_reply_templates",
+    /**
+     * ⚠️ THE WORST OF THE THREE GAPS. `users`, `organisations`,
+     * `organisation_settings`, `organisation_memberships` and `email_accounts`
+     * have carried `deleted_at` since Phase 0 and none of them was listed —
+     * so the rule that a record is retired rather than destroyed was enforced
+     * on seven tables and merely hoped for on the five that hold the account
+     * itself and its live OAuth grants.
+     *
+     * ⚠️ AND ABSENCE IS STILL MEANINGFUL HERE. `import_rows`,
+     * `scheduled_actions` and `human_escalations` are deliberately NOT
+     * soft-deletable and have their own tests below asserting they have no
+     * `deleted_at`. Do not "complete" this list by adding them.
+     */
+    "email_accounts",
+    "inbound_addresses",
+    "leads",
+    "organisation_memberships",
+    "organisation_modules",
+    "organisation_settings",
+    "organisations",
+    "users",
   ])("soft-deletable table %s has deleted_at", async (table) => {
     const names = (await columnsOf(table)).map((c) => c.column_name);
     expect(names).toContain("deleted_at");

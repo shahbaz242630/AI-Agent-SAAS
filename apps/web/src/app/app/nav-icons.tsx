@@ -115,6 +115,32 @@ function MailboxIcon(props: IconProps) {
   );
 }
 
+/**
+ * The reply arrow — a line that turns back on itself (slice 3.1c-1).
+ *
+ * ⚠️ THE THREE ROWS IT LIVES BETWEEN ARE WHAT PICKED IT. In Lead Follow-up's
+ * sidebar this sits between Enquiries (the open envelope, mail ARRIVING) and
+ * Mailbox (the @, the ADDRESS). A third envelope would put near-identical
+ * marks on three consecutive rows.
+ *
+ * ⚠️ AND NOT THE PLANE, WHICH IS CHASING'S. The plane means "Eva sent
+ * something" on the invoice side; reusing it here would put one mark on two
+ * different products' sending screens, which is the pair a glance most needs
+ * to tell apart. A reply is not the same act as a chase — it answers something
+ * somebody else started, and the arrow turning back says exactly that.
+ *
+ * Two strokes, both smooth, which is what survives 17px at a 2px weight — the
+ * lesson the post-box mailbox icon cost.
+ */
+function RepliesIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M9.5 7.5L5 12l4.5 4.5" />
+      <path d="M5 12h7.5a6.5 6.5 0 0 1 6.5 6.5" />
+    </Icon>
+  );
+}
+
 export function SettingsIcon(props: IconProps) {
   return (
     <Icon {...props}>
@@ -242,6 +268,10 @@ export const NAV_ICONS: Readonly<Record<string, (props: IconProps) => React.JSX.
      went half-illustrated for five weeks last time an icon key was left
      behind, and it is invisible because a missing key renders nothing. */
   [moduleHref("lead_follow_up_email", "enquiries")]: EnquiriesIcon,
+  /* Slice 3.1c-1, added WITH the screen for the reason above — a missing key
+     renders nothing at all, so the row just sits unillustrated and nobody
+     notices. `navigation.spec.ts` is what catches it, and it did. */
+  [moduleHref("lead_follow_up_email", "replies")]: RepliesIcon,
   [moduleHref("lead_follow_up_email", "mailbox")]: MailboxIcon,
   "/app/clients": ClientsIcon,
   "/app/settings/reminders": SettingsIcon,

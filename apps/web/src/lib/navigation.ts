@@ -80,8 +80,9 @@ export const PRODUCT_NAV: Partial<Record<ModuleKey, readonly NavItem[]>> = {
     },
   ],
   /**
-   * Slice 3.1a, and TWO sections since 3.1c-0 — Mailbox joined Enquiries when
-   * mailbox setup moved inside each product (founder ruling 2026-09-01).
+   * Slice 3.1a, and THREE sections since 3.1c-1 — Mailbox joined Enquiries
+   * when mailbox setup moved inside each product (founder ruling 2026-09-01),
+   * and Replies arrived with the product's first owned table.
    *
    * Still no "Home" entry: the product's root only redirects to Enquiries until
    * 3.1c gives it a dashboard worth the click, and a nav item pointing at a
@@ -92,6 +93,17 @@ export const PRODUCT_NAV: Partial<Record<ModuleKey, readonly NavItem[]>> = {
       href: moduleHref("lead_follow_up_email", "enquiries"),
       label: "Enquiries",
       description: "Everyone who has got in touch",
+    },
+    /**
+     * Slice 3.1c-1 — the first section that is the PRODUCT'S own rather than a
+     * view onto a platform record or a capability. Placed between the book and
+     * the mailbox because that is the order somebody sets the product up in:
+     * see what came in, decide what goes back, check where it goes back from.
+     */
+    {
+      href: moduleHref("lead_follow_up_email", "replies"),
+      label: "Replies",
+      description: "What Eva writes back",
     },
     {
       href: moduleHref("lead_follow_up_email", "mailbox"),
