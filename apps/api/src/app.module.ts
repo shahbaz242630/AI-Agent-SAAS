@@ -14,6 +14,8 @@ import { ImportsModule } from "./products/invoice-follow-up/imports/imports.modu
 import { InvoiceDocumentsModule } from "./products/invoice-follow-up/invoice-documents/invoice-documents.module.js";
 import { InvoicesModule } from "./products/invoice-follow-up/invoices/invoices.module.js";
 import { LeadReplyTemplatesModule } from "./products/lead-follow-up-email/templates/lead-reply-templates.module.js";
+import { LeadReplyModule } from "./products/lead-follow-up-email/reply/lead-reply.module.js";
+import { NewLeadHandlersModule } from "./products/new-lead-handlers.module.js";
 import { MailboxesModule } from "./capabilities/mailbox/mailboxes.module.js";
 import { MonitoringModule } from "./platform/monitoring/monitoring.module.js";
 import { OrganisationsModule } from "./platform/organisations/organisations.module.js";
@@ -46,6 +48,14 @@ import { sentryErrorReporter } from "./common/monitoring/sentry.js";
     EntitlementsModule,
     LeadsModule,
     LeadReplyTemplatesModule,
+    LeadReplyModule,
+    /**
+     * ⚠️ WIRES THE MAILBOX CAPABILITY'S NEW-LEAD PORT TO THE PRODUCTS THAT
+     * LISTEN. Neither side may import the other; this is the composition
+     * root that knows both. See the file for why it is `@Global()` — the
+     * first version was a dynamic module and silently sent nothing.
+     */
+    NewLeadHandlersModule,
     SuppressionModule,
     LoggerModule.forRoot({
       pinoHttp: {

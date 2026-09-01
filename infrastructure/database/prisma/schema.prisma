@@ -47,6 +47,7 @@ model Organisation {
   inboundMessages  InboundMessage[]
   inboundForwardingRequests InboundForwardingRequest[]
   leadReplyTemplates LeadReplyTemplate[]
+  leadReplyDecisions LeadReplyDecision[]
 
   @@map("organisations")
 }
@@ -762,6 +763,8 @@ model Lead {
   /// because a foreign key has no cardinality of its own; in practice one, and
   /// `inbound_messages.provider_message_id` being unique is what keeps it one.
   inboundMessages InboundMessage[]
+  /// What Eva decided about this enquiry (3.1c-3). At most one live row.
+  replyDecision   LeadReplyDecision[]
 
   @@index([organisationId])
   @@index([organisationId, receivedAt(sort: Desc)])
@@ -1023,5 +1026,62 @@ model LeadReplyTemplate {
   /// ⚠️ AND `REVOKE DELETE` LIVES THERE TOO. Deletion is soft. A hard delete
   /// would take the wording Eva sent somebody out from under the evidence of
   /// having sent it.
+  decisions      LeadReplyDecision[]
+
   @@map("lead_reply_templates")
+}
+
+/// What Eva decided about one enquiry, and what she sent (slice 3.1c-3,
+/// migration 0036). The lead product's second owned table.
+///
+/// ⚠️ ONE ROW PER LEAD, AND IT EXISTS EVEN WHEN NOTHING WAS SENT. Ruling 32
+/// means Eva often decides NOT to answer, and "she stayed silent" and "she was
+/// never asked" look identical from outside. A customer opening an unanswered
+/// enquiry has to be told which, in a sentence, or the silence reads as a fault.
+///
+/// ⚠️ THE BODY IS STORED, NOT JUST THE TEMPLATE ID. Customers edit templates
+/// freely, so the template's wording today is not what was sent last month —
+/// and this is the record of what a stranger actually received in their name.
+model LeadReplyDecision {
+  id             String    @id @default(uuid()) @db.Uuid
+  organisationId String    @map("organisation_id") @db.Uuid
+  leadId         String    @map("lead_id") @db.Uuid
+  /// reply | hold | never — the provider's answer (slice 3.1c-2).
+  verdict        String
+  /// Why, in words, for the enquiry screen.
+  reason         String
+  /// The stable key behind that sentence, for logs and metrics.
+  signal         String
+  /// pending | sent | failed | deferred | not_sent.
+  /// ⚠️ `not_sent` IS A SUCCESS — the terminal state of a hold or never.
+  status         String    @default("pending")
+  failureReason  String?   @map("failure_reason")
+  /// Null unless a reply was actually composed.
+  templateId     String?   @map("template_id") @db.Uuid
+  toAddress      String?   @map("to_address")
+  subject        String?
+  body           String?
+  sentAt         DateTime? @map("sent_at") @db.Timestamptz(6)
+  /// Text, not a foreign key: the mailbox may be disconnected later and the
+  /// record of who a stranger heard from must outlive it.
+  sentFrom       String?   @map("sent_from")
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  /// ⚠️ NO `createdBy`. Eva decides unattended; there is no person to name.
+  deletedAt      DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  organisation   Organisation      @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+  lead           Lead              @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  template       LeadReplyTemplate? @relation(fields: [templateId], references: [id], onDelete: Restrict)
+
+  @@index([organisationId])
+  /// ⚠️ THREE INDEXES AND FOUR CHECKS LIVE IN MIGRATION 0036, NOT HERE.
+  /// `lead_reply_decisions_one_per_lead_key` is partial (`WHERE deleted_at IS
+  /// NULL`) and is THE IDEMPOTENCY KEY — Resend retries a webhook that does not
+  /// answer 200, and without it a retried delivery sends a stranger the same
+  /// automatic reply twice. `lead_reply_decisions_waiting_idx` is the review
+  /// queue's partial index. The CHECKs refuse a `sent` row that carries no body
+  /// and a `sent` row whose verdict never allowed a reply. Prisma can express
+  /// none of it — the 0011/0013/0017/0034/0035 precedent.
+  @@map("lead_reply_decisions")
 }

@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { INestApplication } from "@nestjs/common";
 import { Test } from "@nestjs/testing";
+import { OUTBOUND_MAIL, type OutboundMail } from "../src/capabilities/mailbox/outbound-mail.js";
 import { createLocalJWKSet, exportJWK, generateKeyPair, SignJWT, type JWTVerifyGetKey } from "jose";
 import { createPrismaClient, seed, type EvaPrismaClient } from "@eva/database";
 import { AppModule } from "../src/app.module.js";
@@ -225,6 +226,19 @@ export async function createTestApp(
      * emit one.
      */
     extractionProvider?: ExtractionProvider;
+    /**
+     * The outbound send seam (3.1c-3). Overriding `OUTBOUND_MAIL` rather than
+     * the provider underneath it lets a spec assert exactly what Eva put in a
+     * message — recipient, subject and body — without a stubbed `fetch` and
+     * without caring which provider the mailbox was connected through.
+     *
+     * ⚠️ NOT STUBBED BY DEFAULT. The real `RoutedOutboundMail` needs a mailbox
+     * with a refreshable token, so a spec that reaches it without meaning to
+     * fails on that rather than silently posting to the internet — and every
+     * existing spec that never sends keeps the real wiring, which this override
+     * would otherwise quietly weaken.
+     */
+    outboundMail?: OutboundMail;
   } = {},
 ): Promise<INestApplication> {
   const { getKey } = await testKeys();
@@ -247,6 +261,9 @@ export async function createTestApp(
   }
   if (options.extractionProvider) {
     builder = builder.overrideProvider(EXTRACTION_PROVIDER).useValue(options.extractionProvider);
+  }
+  if (options.outboundMail) {
+    builder = builder.overrideProvider(OUTBOUND_MAIL).useValue(options.outboundMail);
   }
   builder = builder.overrideProvider(FORWARDING_CONFIRMER).useValue(
     options.forwardingConfirmer ?? {

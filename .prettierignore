@@ -8,3 +8,8 @@ pnpm-lock.yaml
 # ignore), so the format gate must not fail on it either
 .claude/
 .mcp.json
+
+# browser-automation page snapshots, written by the agent's own tooling during
+# research and walks. Never committed (see .gitignore), so the format gate must
+# not fail on them either — the same rule .claude/ above follows.
+.playwright-mcp/

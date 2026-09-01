@@ -1,4 +1,4 @@
-import { Inject, Injectable } from "@nestjs/common";
+import { Inject, Injectable, Optional } from "@nestjs/common";
 // Value import is intentional: NestJS DI reads design:paramtypes metadata,
 // which requires the class reference at runtime (not a type-only import).
 // eslint-disable-next-line @typescript-eslint/consistent-type-imports
@@ -16,6 +16,7 @@ import {
 // eslint-disable-next-line @typescript-eslint/consistent-type-imports
 import { ForwardingConfirmationsService } from "./forwarding-confirmations.service.js";
 import { readInboundVerdicts, refusalReason } from "./spam-verdict.js";
+import { NEW_LEAD_HANDLERS, type NewLeadHandlers } from "./new-lead-handler.js";
 
 /**
  * What happens to a message between the door and the book (Slice 3.1b).
@@ -60,9 +61,46 @@ export class InboundIntakeService {
     private readonly prisma: PrismaService,
     @Inject(RECEIVED_MAIL) private readonly receivedMail: ReceivedMail,
     private readonly forwardingConfirmations: ForwardingConfirmationsService,
+    /**
+     * ⚠️ A PORT, NOT AN IMPORT. Whoever wants to know a lead arrived
+     * registers here at the composition root; this file must never name a
+     * product (`pnpm boundaries` fails on `capabilities/ → products/`, and
+     * rightly — shared machinery cannot depend on one of the products it
+     * serves). See `new-lead-handler.ts` for why this is not an event bus.
+     */
+    @Optional()
+    @Inject(NEW_LEAD_HANDLERS)
+    private readonly newLeadHandlers: NewLeadHandlers = [],
     private readonly logger: PinoLogger,
   ) {
     this.logger.setContext(InboundIntakeService.name);
+  }
+
+  /**
+   * Tell everyone who cares that a lead arrived.
+   *
+   * ⚠️ EVERY HANDLER IS ISOLATED, AND THE WEBHOOK NEVER FAILS FOR ONE.
+   * The enquiry is already stored and converted by the time this runs; the
+   * caller is about to answer 200. A handler that throws must not turn a
+   * successfully received enquiry into a retry storm, and one product's fault
+   * must not stop another product's handler running. So each is caught and
+   * logged, and the delivery still succeeds.
+   *
+   * ⚠️ SEQUENTIAL, NOT `Promise.all`. Today there is one handler and it
+   * sends an email. Ten parallel provider round trips inside a webhook that
+   * must answer quickly is a different failure, and nobody would see it coming.
+   */
+  private async announceNewLead(organisationId: string, leadId: string): Promise<void> {
+    for (const handler of this.newLeadHandlers) {
+      try {
+        await handler.onNewLead({ organisationId, leadId });
+      } catch (error) {
+        this.logger.error(
+          { organisationId, leadId, err: describe(error) },
+          "a new-lead handler threw; the enquiry is stored and the delivery still succeeded",
+        );
+      }
+    }
   }
 
   async receive(payload: InboundWebhookPayload): Promise<IntakeOutcome> {
@@ -249,6 +287,14 @@ export class InboundIntakeService {
         headers: message.headers,
         receivedAt,
       });
+      /**
+       * ⚠️ AFTER THE TRANSACTION COMMITS, AND THAT ORDER IS LOAD-BEARING.
+       * The reply handler opens its own transaction and reads this lead; doing
+       * it inside `convert`'s would either deadlock on the same rows or hand a
+       * handler a lead that might still roll back — and a stranger would have
+       * received a reply to an enquiry that no longer exists.
+       */
+      await this.announceNewLead(organisationId, leadId);
       return { status: "converted", leadId };
     } catch (error) {
       await this.settle(organisationId, record.id, {

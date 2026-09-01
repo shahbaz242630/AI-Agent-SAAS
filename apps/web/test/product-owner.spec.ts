@@ -1,4 +1,4 @@
-import { readdirSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { ATTRIBUTED_APP_SECTIONS, ownerForRoute, UNATTRIBUTED } from "../src/lib/product-owner.js";
@@ -177,6 +177,37 @@ describe("The API and the web agree on what a product is called", () => {
    * one that matters most, a rename on one side (`lead-followup` against
    * `lead-follow-up`), which shows up here as TWO undeclared one-sided folders.
    */
+  /**
+   * ⚠️ THE RULE ABOVE WAS STATED AND NOT CHECKED, AND IT COST A DAY.
+   *
+   * This file's own header says the two apps must call a product the same
+   * thing "or one Sentry filter finds half of it" — and then compared only the
+   * two directory listings. The API derives its tag FROM its folder
+   * (`@OwnedBy("product:lead-follow-up-email")`, enforced by
+   * `product-attribution.spec.ts`); the web hand-writes it in
+   * `product-owner.ts`. When #130 renamed the web folder, the hand-written tag
+   * stayed on the old name, the two apps filed one product under two names,
+   * and every wall stayed green.
+   *
+   * So: every `product:` tag the web uses must name a real API product folder.
+   * A rename on either side now fails here.
+   */
+  it("tags products by a name the API also uses", () => {
+    const source = readFileSync(path.join(WEB_SRC, "lib/product-owner.ts"), "utf8");
+    const tagged = [...source.matchAll(/"product:([a-z0-9-]+)"/g)].map((m) => m[1]!);
+
+    // A scan that found nothing would pass this whole test silently.
+    expect(new Set(tagged).size, "no product tags found — the scanner is broken").toBeGreaterThan(
+      0,
+    );
+
+    const unknown = [...new Set(tagged)].filter((folder) => !api.includes(folder)).sort();
+    expect(
+      unknown,
+      "these web owner tags name no API product folder — rename one side or the other",
+    ).toEqual([]);
+  });
+
   it("never has a product folder on one side that nobody has explained", () => {
     const shared = new Set(web.filter((folder) => api.includes(folder)));
     const oneSided = [...new Set([...web, ...api])].filter((f) => !shared.has(f)).sort();
