@@ -78,3 +78,9 @@ scratchpad/
 # To bring it back into the project: delete this rule AND the negation in
 # pnpm-workspace.yaml. The folder itself is untouched either way.
 apps/studio/
+
+# ⚠️ BROWSER-AUTOMATION PAGE SNAPSHOTS. Written into the repo root by the
+# agent's browser tooling during research and production walks. They are
+# accessibility dumps of whatever page was open — which, on a walk, is the app
+# while signed in. `git add -A` would have swept them in.
+.playwright-mcp/

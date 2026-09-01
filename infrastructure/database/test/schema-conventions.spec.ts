@@ -95,6 +95,7 @@ describe("Schema conventions (BRD 10)", () => {
       "invoice_documents",
       "invoices",
       "lead_evidence",
+      "lead_reply_decisions",
       "lead_reply_templates",
       "leads",
       "organisation_memberships",

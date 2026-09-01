@@ -1,0 +1,66 @@
+-- Slice 3.1c-3 follow-up — migration 0037: the audit trail becomes append-only.
+--
+-- 🚨 IT WAS NOT APPEND-ONLY, IT WAS ONLY WRITTEN THAT WAY.
+--
+-- `audit-log.ts` opens: *"Append-only audit trail writer (BRD 15). audit_logs
+-- is never updated and never soft-deleted; every tenant mutation writes an
+-- entry inside the SAME transaction as the mutation itself."* That describes
+-- the CODE, and the code has always honoured it. It never described the
+-- DATABASE, which until now granted `eva_app` full `UPDATE` and `DELETE`.
+--
+-- An audit trail the application can rewrite is not an audit trail. Its whole
+-- value is that nobody can alter it afterwards — including us, including a bug,
+-- including anybody who reaches the application role.
+--
+-- ⚠️ THIS IS THE "A GRANT ONLY EVER ADDS" LESSON, FOR THE THIRD TIME.
+-- Migration 0025 learned it on `suppression_list`; 0035 learned it again on
+-- `lead_reply_templates`; both wrote an explicit REVOKE because default
+-- privileges had already handed `eva_app` everything the moment `eva` created
+-- the table. Every table created BEFORE that lesson still carries the default,
+-- and `audit_logs` is from Phase 0.
+--
+-- ⚠️ THE OWNER ROLE (`eva`) IS UNAFFECTED AND MUST BE. Migrations, backups and
+-- a human with the connection string still need full rights. What changes is
+-- what the RUNNING APPLICATION can do — `eva_app` is the role a request
+-- executes as, and it is the only role an attacker reaches through the API.
+--
+-- ⚠️ VERIFIED SAFE BEFORE WRITING:
+-- `grep -rE "\.(delete|deleteMany)\(" apps/*/src` returns exactly ONE hit in
+-- the whole codebase, and it is not this table. Nothing has ever updated or
+-- deleted an audit row; this migration only makes that impossible rather than
+-- merely true.
+
+REVOKE UPDATE, DELETE ON "audit_logs" FROM eva_app;
+
+-- ---------------------------------------------------------------------------
+-- ⚠️ WHAT THIS MIGRATION DELIBERATELY DOES **NOT** DO, AND WHY
+-- ---------------------------------------------------------------------------
+--
+-- Auditing the grants to write this found a wider gap: `eva_app` also holds
+-- `DELETE` on **18 other tables** it never hard-deletes — `customers`,
+-- `contacts`, `leads`, `invoices`, `email_accounts` and the rest, all of which
+-- are retired with `deleted_at`. Plus `INSERT`/`UPDATE`/`DELETE` on `roles`,
+-- which is seeded reference data the application has no business changing.
+--
+-- Revoking those is correct and was written, tested, and then **deliberately
+-- removed from this migration**, because it is a bigger change than it looks:
+--
+--   * Six existing security tests probe tenant isolation by attempting a
+--     cross-tenant `DELETE` and asserting zero rows. With the privilege gone
+--     they fail on `permission denied` BEFORE RLS is consulted — so each would
+--     have to be re-pointed at a write the application still has, and a
+--     security test rewritten to accommodate a change is exactly how a guard
+--     gets weakened by accident.
+--   * Four `tenant.spec.ts` fixtures clean themselves up with `DELETE` as
+--     `eva_app`. Revoke it and cleanup silently stops working, so the next run
+--     collides on a unique constraint — which is what the failures actually
+--     looked like, and they looked nothing like a permissions problem.
+--
+-- The honest fix is for test fixtures to clean up as the OWNER (they are not
+-- application code) and for the isolation probes to use a write the app still
+-- holds. That is its own slice, with its own review. Doing it inside a
+-- migration about the audit trail would bundle a security change with a
+-- test-harness rewrite, and neither would get read properly.
+--
+-- **`grants.spec.ts` records the gap as a pending list**, so it is visible and
+-- counted rather than forgotten.

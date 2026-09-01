@@ -93,6 +93,9 @@ const TENANT_TABLES = [
   // (the service-role key is deliberately never used), so a table without a
   // forced policy is one customer's words readable in another customer's mouth.
   "lead_reply_templates",
+  // Slice 3.1c-3 — what Eva decided about an enquiry and what she sent. It
+  // holds the words a named stranger received, so it needs the boundary most.
+  "lead_reply_decisions",
 ];
 
 describe("RLS: connection role hardening", () => {
@@ -118,7 +121,7 @@ describe("RLS: connection role hardening", () => {
         'organisation_role_permissions', 'reminder_sequences', 'reminder_steps',
         'scheduled_actions', 'human_escalations', 'email_accounts',
         'organisation_modules', 'leads', 'lead_evidence', 'consent_texts',
-        'lead_reply_templates'
+        'lead_reply_templates', 'lead_reply_decisions'
       )`;
     expect(rows.length).toBe(TENANT_TABLES.length);
     for (const row of rows) {
@@ -137,7 +140,7 @@ describe("RLS: connection role hardening", () => {
         'organisation_role_permissions', 'reminder_sequences', 'reminder_steps',
         'scheduled_actions', 'human_escalations', 'email_accounts',
         'organisation_modules', 'leads', 'lead_evidence', 'consent_texts',
-        'lead_reply_templates'
+        'lead_reply_templates', 'lead_reply_decisions'
       )
       GROUP BY tablename`;
     expect(rows.length).toBe(TENANT_TABLES.length);

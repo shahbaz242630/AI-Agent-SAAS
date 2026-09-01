@@ -25,13 +25,26 @@ export const UNATTRIBUTED = "unattributed";
 const INVOICE_FOLLOW_UP: OwnerTag = "product:invoice-follow-up";
 
 /**
- * The lead product's tag (Slice 3.1a). Same rule, and here the two words are
- * further apart than ever: the URL says `lead-follow-up-email` because a
- * customer buys email and call separately, while the code folder is
- * `lead-follow-up` because both products will share it. Tagging by the slug
- * would file the two halves of one codebase under two different names.
+ * The lead product's tag. The folder name, not the URL slug.
+ *
+ * ⚠️ THIS WAS `product:lead-follow-up` AND IT WENT STALE THE MOMENT #130
+ * RENAMED THE FOLDER, on 2026-09-01. The API tags its lead controller
+ * `product:lead-follow-up-email` (derived from its folder, and enforced by
+ * `product-attribution.spec.ts`); this side is hand-written and was enforced by
+ * nothing, so for a day the two apps filed one product under two names —
+ * exactly what the note above this map says must never happen.
+ *
+ * The old comment argued the two words were "further apart than ever" because
+ * the code folder would be shared by email and call. **That is no longer the
+ * plan:** ruling 14 makes Lead Follow-up by CALL a product a customer buys
+ * separately, which is why #130 renamed the folder in the first place.
+ *
+ * ⚠️ AND THE FOLDER NAME LIVES IN THREE PLACES, NOT TWO. The handoff said
+ * two (the folder, and `PRODUCT_FOLDERS` in `.dependency-cruiser.web.cjs`).
+ * This constant is the third, and the only one no wall was watching — the test
+ * below now compares it, so the next rename cannot leave it behind.
  */
-const LEAD_FOLLOW_UP: OwnerTag = "product:lead-follow-up";
+const LEAD_FOLLOW_UP: OwnerTag = "product:lead-follow-up-email";
 
 /**
  * Route folders directly under `/app`, and who owns them.
