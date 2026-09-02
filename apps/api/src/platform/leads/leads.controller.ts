@@ -16,7 +16,7 @@ import { LeadsService, type LeadDetail, type LeadSummary } from "./leads.service
  *
  * ⚠️ `POST` HAS NO SCREEN BEHIND IT EITHER, SINCE 2026-08-21, AND THAT IS ON
  * PURPOSE. The manual "Log an enquiry" form was removed with the three
- * call-shaped sources it offered — founder ruling: Lead Follow-up by Email is
+ * call-shaped sources it offered — founder ruling: Lead Follow-up is
  * one mailbox in and a reply out, so an enquiry arrives by email or not at all.
  * The route stays because 3.1b's mailbox poller needs exactly this
  * lead-plus-evidence-plus-audit transaction, and because it is what proves that

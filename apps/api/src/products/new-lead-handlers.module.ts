@@ -1,8 +1,8 @@
 import { Global, Module } from "@nestjs/common";
 import { NEW_LEAD_HANDLERS } from "../capabilities/mailbox/inbound/new-lead-handler.js";
 import type { NewLeadHandler } from "../capabilities/mailbox/inbound/new-lead-handler.js";
-import { LeadReplyModule } from "./lead-follow-up-email/reply/lead-reply.module.js";
-import { ReplyToNewLeadHandler } from "./lead-follow-up-email/reply/reply-to-new-lead.handler.js";
+import { LeadReplyModule } from "./lead-follow-up/reply/lead-reply.module.js";
+import { ReplyToNewLeadHandler } from "./lead-follow-up/reply/reply-to-new-lead.handler.js";
 
 /**
  * Who wants to know when a lead arrives (slice 3.1c-3).

@@ -10,7 +10,7 @@ import { unwrapForwardedEmail } from "./forwarded-email.js";
  * same one — follow-up by email, follow-up by call, and the CRM. What the
  * PRODUCT will own is the machinery of ANSWERING: deciding an enquiry deserves
  * a reply (ruling 32) and sending it. Neither exists yet, which is why there is
- * no `products/lead-follow-up-email/` folder in this slice — a product folder
+ * no `products/lead-follow-up/` folder in this slice — a product folder
  * whose only content is a call into the platform is a folder pretending to be
  * a boundary.
  *

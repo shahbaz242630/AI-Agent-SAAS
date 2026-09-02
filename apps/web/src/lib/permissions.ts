@@ -42,7 +42,7 @@ export type WebPermissionKey =
   /**
    * Slice 3.1a — the enquiry book.
    *
-   * ⚠️ THESE TWO ARE CARRIED BY `lead_follow_up_email` ALONE, WHICH MAKES THE
+   * ⚠️ THESE TWO ARE CARRIED BY `lead_follow_up` ALONE, WHICH MAKES THE
    * 402 PATH REACHABLE FROM DAY ONE. Every other key on this list belongs to a
    * product our only production organisation already holds, so "you haven't
    * bought this" has been mostly theoretical. Here it is the ordinary case —
@@ -193,7 +193,7 @@ const REFUSED: Record<WriteAction, string> = {
     "Your role can't change when Eva chases. Ask an owner or administrator.",
   /**
    * ⚠️ THE ONLY WRITE LEFT ON AN ENQUIRY, SINCE 2026-08-21. `log-lead` sat
-   * beside this until the manual form was removed — Lead Follow-up by Email is
+   * beside this until the manual form was removed — Lead Follow-up is
    * one mailbox in and a reply out, so nobody types an enquiry in. Both were
    * `leads:write`, and the note here used to explain why they must not share a
    * sentence; what survives is the reason this one has its own. Somebody

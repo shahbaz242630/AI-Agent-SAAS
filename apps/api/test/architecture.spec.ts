@@ -178,7 +178,7 @@ describe("Architecture: the platform/product boundary", () => {
 function productFolderOf(key: string): string {
   const folders: Record<string, string> = {
     email_credit_controller: "invoice-follow-up",
-    lead_follow_up_email: "lead-follow-up-email",
+    lead_follow_up: "lead-follow-up",
     lead_follow_up_voice: "lead-follow-up-voice",
     voice_credit_controller: "voice-follow-up",
     ai_receptionist: "receptionist",

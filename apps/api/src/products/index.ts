@@ -1,6 +1,6 @@
 import type { ProductManifest } from "../platform/registry/product-manifest.js";
 import { INVOICE_FOLLOW_UP } from "./invoice-follow-up/product.js";
-import { LEAD_FOLLOW_UP_EMAIL } from "./lead-follow-up-email/product.js";
+import { LEAD_FOLLOW_UP } from "./lead-follow-up/product.js";
 
 /**
  * ⚠️ THE REGISTRATION LINE. This is the composition root for products, and the
@@ -23,5 +23,5 @@ export const PRODUCT_MANIFESTS: readonly ProductManifest[] = [
    * theoretical. "A product's tables are touched ONLY by that product" was
    * written when it was trivially true; it now has something to catch.
    */
-  LEAD_FOLLOW_UP_EMAIL,
+  LEAD_FOLLOW_UP,
 ];

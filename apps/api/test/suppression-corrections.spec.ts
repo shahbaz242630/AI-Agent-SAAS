@@ -41,7 +41,7 @@ describe("Do-not-contact: the correction path", () => {
       "suppression",
       ["owner", "administrator", "sales", "reception", "finance", "read_only"],
       undefined,
-      [{ moduleKey: "email_credit_controller" }, { moduleKey: "lead_follow_up_email" }],
+      [{ moduleKey: "email_credit_controller" }, { moduleKey: "lead_follow_up" }],
     );
     for (const member of org.members) {
       tokens.set(member.roleKey, await signToken({ sub: member.authUserId, email: member.email }));

@@ -50,7 +50,7 @@ export class InboundAddressesService {
    *
    * ⚠️ `leads:read` ALREADY CARRIES THE ENTITLEMENT. `requirePermission` answers
    * 402 when the organisation does not hold the product that owns the
-   * permission, and `leads:read` is carried by `lead_follow_up_email` alone. So
+   * permission, and `leads:read` is carried by `lead_follow_up` alone. So
    * an organisation with only invoice chasing never reaches the allocation at
    * all — no address is issued for a product nobody bought.
    */

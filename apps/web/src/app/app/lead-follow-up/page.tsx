@@ -18,5 +18,5 @@ import { moduleHref } from "@eva/types";
  * 2026-08-19 — so the book goes to its permanent address first time.
  */
 export default function LeadFollowUpHomePage() {
-  redirect(moduleHref("lead_follow_up_email", "enquiries"));
+  redirect(moduleHref("lead_follow_up", "enquiries"));
 }

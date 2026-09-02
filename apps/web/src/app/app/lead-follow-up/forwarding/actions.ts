@@ -17,7 +17,7 @@ import { createClient } from "@/lib/supabase/server";
  */
 
 /** Built from the catalogue, never written out — see `app-links.spec.ts`. */
-const FORWARDING = moduleHref("lead_follow_up_email", "forwarding");
+const FORWARDING = moduleHref("lead_follow_up", "forwarding");
 
 export interface ForwardingActionState {
   error?: string;

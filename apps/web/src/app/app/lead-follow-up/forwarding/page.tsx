@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { FORWARDING_ARMED_WINDOW_MINUTES, moduleHref } from "@eva/types";
+import { FORWARDING_ARMED_WINDOW_MINUTES, moduleHref, moduleName } from "@eva/types";
 import { ApiError, apiFetch } from "@/lib/api";
 import { fetchOrganisations } from "@/lib/organisations";
 import { createClient } from "@/lib/supabase/server";
@@ -30,7 +30,7 @@ import {
  * than answered quietly.
  */
 
-const BOOK = moduleHref("lead_follow_up_email", "enquiries");
+const BOOK = moduleHref("lead_follow_up", "enquiries");
 
 interface OrganisationSummary {
   id: string;
@@ -104,7 +104,7 @@ export default async function ForwardingSetupPage() {
       <Shell>
         <section className="flex w-full flex-col gap-3 rounded-[var(--radius-card)] border border-border bg-surface px-6 py-4">
           <p className="text-sm">
-            {`${organisation.name} doesn't have Lead Follow-up by Email, so there is nothing to forward yet.`}
+            {`${organisation.name} doesn't have ${moduleName("lead_follow_up")}, so there is nothing to forward yet.`}
           </p>
           <div>
             <Link

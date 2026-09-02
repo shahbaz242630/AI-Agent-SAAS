@@ -73,7 +73,7 @@ describe("Two products, two mailboxes, no crossing", () => {
     // below is about two products that legitimately coexist.
     org = await createOrgWithMembers(owner, "isolation", ["owner"], "Isolation Ltd", [
       { moduleKey: "email_credit_controller" },
-      { moduleKey: "lead_follow_up_email" },
+      { moduleKey: "lead_follow_up" },
     ]);
     const member = org.members[0]!;
     token = await signToken({ sub: member.authUserId, email: member.email });
@@ -95,25 +95,25 @@ describe("Two products, two mailboxes, no crossing", () => {
     const byKey = await modules();
     expect(byKey.get("email_credit_controller")!.missingCapabilities).not.toContain("mailbox");
     // The claim the old code got wrong: Lead Follow-up has been given nothing.
-    expect(byKey.get("lead_follow_up_email")!.missingCapabilities).toContain("mailbox");
+    expect(byKey.get("lead_follow_up")!.missingCapabilities).toContain("mailbox");
   });
 
   it("counts each product's seats separately", async () => {
     const byKey = await modules();
     expect(byKey.get("email_credit_controller")!.seatsUsed).toBe(1);
     // Not null and not 1 — this product reports its OWN count, and it is zero.
-    expect(byKey.get("lead_follow_up_email")!.seatsUsed).toBe(0);
+    expect(byKey.get("lead_follow_up")!.seatsUsed).toBe(0);
   });
 
   it("lists only the mailboxes belonging to the product asked for", async () => {
-    await connect("lead_follow_up_email", "leads@isolation.invalid");
+    await connect("lead_follow_up", "leads@isolation.invalid");
 
     const chasing = await request(app.getHttpServer())
       .get(`/organisations/${org.id}/mailboxes?module=email_credit_controller`)
       .set("Authorization", `Bearer ${token}`)
       .expect(200);
     const leads = await request(app.getHttpServer())
-      .get(`/organisations/${org.id}/mailboxes?module=lead_follow_up_email`)
+      .get(`/organisations/${org.id}/mailboxes?module=lead_follow_up`)
       .set("Authorization", `Bearer ${token}`)
       .expect(200);
 
@@ -154,7 +154,7 @@ describe("Two products, two mailboxes, no crossing", () => {
 
     // The other product's mailbox is still there, still live, still healthy.
     const leads = await request(app.getHttpServer())
-      .get(`/organisations/${org.id}/mailboxes?module=lead_follow_up_email`)
+      .get(`/organisations/${org.id}/mailboxes?module=lead_follow_up`)
       .set("Authorization", `Bearer ${token}`)
       .expect(200);
     expect(leads.body.mailboxes).toHaveLength(1);
@@ -162,7 +162,7 @@ describe("Two products, two mailboxes, no crossing", () => {
 
     // And it still reports itself ready — the switch-off did not reach across.
     const byKey = await modules();
-    expect(byKey.get("lead_follow_up_email")!.missingCapabilities).not.toContain("mailbox");
+    expect(byKey.get("lead_follow_up")!.missingCapabilities).not.toContain("mailbox");
 
     /**
      * ⚠️ AND THE SWITCHED-OFF PRODUCT KEEPS ITS OWN MAILBOX TOO. Turning a

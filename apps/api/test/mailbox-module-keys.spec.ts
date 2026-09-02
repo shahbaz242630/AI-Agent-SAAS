@@ -96,7 +96,7 @@ describe("A mailbox belongs to one product", () => {
       data: mailbox("mike", "email_credit_controller"),
     });
     const leads = await owner.emailAccount.create({
-      data: mailbox("mike", "lead_follow_up_email"),
+      data: mailbox("mike", "lead_follow_up"),
     });
 
     // Two rows, two grants, two seats — the founder's ruling of 2026-09-01.
@@ -118,7 +118,7 @@ describe("A mailbox belongs to one product", () => {
     // Before 0034 this second insert violated `email_accounts_single_primary_key`,
     // so the second product could never have a default at all.
     const leadPrimary = await owner.emailAccount.create({
-      data: mailbox("primary-leads", "lead_follow_up_email", true),
+      data: mailbox("primary-leads", "lead_follow_up", true),
     });
     expect(leadPrimary.isPrimary).toBe(true);
   });

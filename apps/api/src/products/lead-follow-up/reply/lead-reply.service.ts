@@ -187,7 +187,7 @@ export class LeadReplyService {
       const resolution = await this.mailboxes.resolveSendingMailbox(
         tx,
         organisationId,
-        "lead_follow_up_email",
+        "lead_follow_up",
         { organisationId, emailAccountId: null },
       );
       if (!resolution) {

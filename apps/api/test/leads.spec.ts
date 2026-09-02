@@ -13,7 +13,7 @@ import {
 } from "./support.js";
 
 /**
- * The lead record (Slice 3.1a) — the foundation of Lead Follow-up by Email.
+ * The lead record (Slice 3.1a) — the foundation of Lead Follow-up.
  *
  * ⚠️ THE COMPLIANCE RULES ARE THE POINT OF THIS FILE, not the CRUD. Lead
  * follow-up is marketing-adjacent under PECR, and BRD 4.3 turns that into three
@@ -45,7 +45,7 @@ describe("Leads: the record, the evidence and the refusal", () => {
       undefined,
       // The lead product, plus invoice chasing so the fixture looks like a real
       // customer rather than one built to make this test pass.
-      [{ moduleKey: "email_credit_controller" }, { moduleKey: "lead_follow_up_email" }],
+      [{ moduleKey: "email_credit_controller" }, { moduleKey: "lead_follow_up" }],
     );
     for (const member of org.members) {
       tokens.set(member.roleKey, await signToken({ sub: member.authUserId, email: member.email }));
@@ -220,7 +220,7 @@ describe("Leads: the record, the evidence and the refusal", () => {
   /**
    * ⚠️ THE SCOPE LEAK THIS PINS SHIPPED, AND THE FOUNDER FOUND IT BY ASKING WHY
    * THEY WERE TYPING ENQUIRIES IN BY HAND (2026-08-21). All three of these were
-   * offered on a form inside Lead Follow-up by Email — a product whose blurb is
+   * offered on a form inside Lead Follow-up — a product whose blurb is
    * "Answers new enquiries from your mailbox" — and all three are call-shaped.
    * They belong to Lead Follow-up by Call (`lead_follow_up_voice`).
    *

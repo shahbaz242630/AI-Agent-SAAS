@@ -50,8 +50,20 @@ describe("Every route under /app is attributed to something", () => {
     ).toEqual([]);
   });
 
+  /**
+   * ⚠️ THE EXAMPLE HERE MUST BE A ROUTE THAT CAN NEVER BECOME REAL, AND THE
+   * ORIGINAL WAS NOT. It used `/app/lead-follow-up` — an invented route at the
+   * time, because the lead product's screens lived at `/app/lead-follow-up-email`.
+   * Slice 3.2a renamed the product and that URL became one of ours, which
+   * turned this test's NEGATIVE case into a positive one. It went red, which is
+   * the guard working; had it been asserting the other direction it would have
+   * gone quietly green and stopped testing anything.
+   *
+   * `internal-diagnostics` is not a product, not a slug in `MODULE_CATALOGUE`,
+   * and not a word this business would ship to a customer.
+   */
   it("attributes nothing it was not told about", () => {
-    expect(ownerForRoute("/app/lead-follow-up")).toBe(UNATTRIBUTED);
+    expect(ownerForRoute("/app/internal-diagnostics")).toBe(UNATTRIBUTED);
   });
 });
 
@@ -101,7 +113,7 @@ describe("ownerForRoute", () => {
    */
   it("files both products' mailbox screens under the mailbox capability", () => {
     expect(ownerForRoute("/app/invoice-chasing/mailbox")).toBe("capability:mailbox");
-    expect(ownerForRoute("/app/lead-follow-up-email/mailbox")).toBe("capability:mailbox");
+    expect(ownerForRoute("/app/lead-follow-up/mailbox")).toBe("capability:mailbox");
     // ...and the product's own screens are still the product's.
     expect(ownerForRoute("/app/invoice-chasing/invoices")).toBe("product:invoice-follow-up");
   });
@@ -150,14 +162,19 @@ describe("ownerForRoute", () => {
  * ⚠️ EMPTY SINCE 3.1c-1, AND THAT IS THE GOOD STATE. It held `lead-follow-up`
  * with the reason "the API's lead record is platform until this product has API
  * code of its own" — which expired the moment slice 3.1c-1 gave it
- * `products/lead-follow-up-email/`, its manifest and the templates it owns.
+ * `products/lead-follow-up/`, its manifest and the templates it owns.
  *
- * The web folder was renamed from `lead-follow-up` to `lead-follow-up-email` to
- * match, and it is worth saying why rather than treating it as tidying: ruling
- * 14 makes Lead Follow-up by CALL a separate product a customer buys
- * separately. A folder called `lead-follow-up` is ambiguous between the two the
- * day the second one starts, and this test is the thing that would report that
- * as "two undeclared one-sided folders" long after somebody had built in it.
+ * ⚠️ AND THE FOLDER HAS NOW BEEN NAMED BOTH THINGS, WHICH IS WORTH READING
+ * BEFORE RENAMING IT A THIRD TIME. Slice 3.1c-1 renamed it `lead-follow-up` →
+ * `lead-follow-up-email`, on the reasoning that ruling 14 makes Lead Follow-up
+ * by CALL a separate product, so the bare name was ambiguous. Slice 3.2a
+ * renamed it back, because founder ruling 62 folded WhatsApp, Messenger and
+ * Instagram into the same product — so the thing that distinguishes it from the
+ * call product is no longer email, and naming it after one of its four channels
+ * was the more misleading of the two options.
+ *
+ * Both renames were right on the day. This test is what caught the first one
+ * being done on one side only.
  */
 const ONE_SIDED: Record<string, string> = {};
 
@@ -183,7 +200,7 @@ describe("The API and the web agree on what a product is called", () => {
    * This file's own header says the two apps must call a product the same
    * thing "or one Sentry filter finds half of it" — and then compared only the
    * two directory listings. The API derives its tag FROM its folder
-   * (`@OwnedBy("product:lead-follow-up-email")`, enforced by
+   * (`@OwnedBy("product:lead-follow-up")`, enforced by
    * `product-attribution.spec.ts`); the web hand-writes it in
    * `product-owner.ts`. When #130 renamed the web folder, the hand-written tag
    * stayed on the old name, the two apps filed one product under two names,

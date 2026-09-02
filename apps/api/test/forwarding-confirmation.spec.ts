@@ -111,7 +111,7 @@ describe("Guided forwarding: who may forward mail into a customer's book", () =>
       "forwarding",
       ["owner", "read_only"],
       "Halloway Roofing",
-      [{ moduleKey: "lead_follow_up_email" }],
+      [{ moduleKey: "lead_follow_up" }],
     );
     for (const member of org.members) {
       tokens.set(member.roleKey, await signToken({ sub: member.authUserId, email: member.email }));
@@ -119,7 +119,7 @@ describe("Guided forwarding: who may forward mail into a customer's book", () =>
     address = await issueAddress(org, tokens.get("owner")!);
 
     otherOrg = await createOrgWithMembers(owner, "forwarding-other", ["owner"], "Other Co", [
-      { moduleKey: "lead_follow_up_email" },
+      { moduleKey: "lead_follow_up" },
     ]);
     otherToken = await signToken({
       sub: otherOrg.members[0]!.authUserId,
