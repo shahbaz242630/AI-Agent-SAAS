@@ -545,6 +545,49 @@ export function isModuleLive(moduleKey: ModuleKey): boolean {
   return MODULE_CATALOGUE[moduleKey].live;
 }
 
+/**
+ * The mediums Eva can reply on (slice 3.2b, founder ruling 63).
+ *
+ * ⚠️ THIS IS NOT `LEAD_SOURCES`, AND THE DIFFERENCE IS DIRECTION. `leads.source`
+ * says `email_enquiry` and records how an enquiry ARRIVED; this records the
+ * medium Eva REPLIES on. The same wire, opposite ways down it — and once
+ * WhatsApp lands they stop even looking similar, because an enquiry can arrive
+ * on one channel and (ruling 62's "one feature") be answered on the same one
+ * while the customer holds three others.
+ *
+ * ⚠️ ONE VALUE, AND ADDING ONE IS A MIGRATION. The database CHECK
+ * (`lead_reply_templates_channel_check`) lists exactly this set. Listing
+ * `whatsapp` here before the channel exists would let a customer save a wording
+ * nothing can ever send — ruling 57's objection to shipping templates early,
+ * one level down.
+ */
+export const REPLY_CHANNELS = ["email"] as const;
+
+export type ReplyChannel = (typeof REPLY_CHANNELS)[number];
+
+/** What a customer sees this channel called. */
+export const REPLY_CHANNEL_LABELS: Record<ReplyChannel, string> = {
+  email: "Email",
+};
+
+export function isReplyChannel(value: string): value is ReplyChannel {
+  return (REPLY_CHANNELS as readonly string[]).includes(value);
+}
+
+/**
+ * Which channel an enquiry from this source should be answered on.
+ *
+ * 🚨 RETURNS `null` RATHER THAN GUESSING, AND THAT IS THE WHOLE POINT. An
+ * unmapped source means a lead arrived by a route this code does not understand.
+ * Falling back to `email` there would have Eva reply by email to somebody who
+ * messaged on WhatsApp — to an address the lead may not even carry — in the
+ * customer's name. A null is a recorded "not sent" with a reason, which is the
+ * outcome ruling 32 asks for when Eva is unsure.
+ */
+export function replyChannelForLeadSource(source: string): ReplyChannel | null {
+  return source === "email_enquiry" ? "email" : null;
+}
+
 /** How a module came to be enabled. `subscription` is written by Paddle
  *  webhooks later; the table stays authoritative for ENFORCEMENT and Paddle
  *  for BILLING, because deriving entitlement live from Paddle would let a
@@ -1285,6 +1328,13 @@ export function isSessionIdle(lastSeenAt: Date | null | undefined, now: Date): b
  */
 export interface LeadReplyTemplateDto {
   id: string;
+  /**
+   * Which medium this wording is for (slice 3.2b). ⚠️ **Set once, at creation,
+   * and never changeable** — a wording is written FOR a medium, so moving one
+   * would make it wrong rather than merely misfiled. `UpdateLeadReplyTemplateInput`
+   * omits the field entirely for that reason.
+   */
+  channel: ReplyChannel;
   name: string;
   body: string;
   isAutomatic: boolean;
@@ -1295,23 +1345,37 @@ export interface LeadReplyTemplateDto {
 /**
  * GET .../lead-reply-templates.
  *
- * ⚠️ `automaticTemplateId` IS DERIVED, AND IT IS NULLABLE FOR A REASON. A
+ * ⚠️ `automaticTemplateIds` IS DERIVED, AND ITS NULLS ARE LOAD-BEARING. A
  * customer can turn the automatic reply off entirely, and the screen has to say
  * so plainly — "Eva will not reply on her own" is a state somebody chose, not
  * an error. The sender must be able to DETECT it rather than guess, which is
  * why it is a field here and not something the caller works out by scanning.
+ *
+ * ⚠️ IT BECAME A MAP IN SLICE 3.2b, AND A SINGLE ID WOULD NOW BE A BUG. Ruling
+ * 63 makes the automatic reply per CHANNEL. One id could only ever describe one
+ * of them, so a customer with email answering and WhatsApp silent would look
+ * identical to one with both answering — on the screen whose whole job is
+ * saying which.
+ *
+ * Every channel in `REPLY_CHANNELS` is always present, so "no automatic reply"
+ * and "no such channel" stay different shapes.
  */
 export interface LeadReplyTemplatesDto {
   templates: LeadReplyTemplateDto[];
-  automaticTemplateId: string | null;
+  automaticTemplateIds: Record<ReplyChannel, string | null>;
 }
 
 /**
- * How many templates one organisation may keep.
+ * How many templates one organisation may keep **per channel**.
  *
  * ⚠️ A LIMIT, NOT A TARGET. The founder's model is "2–3 the customer edits" and
  * three ship by default; the cap exists so a list stays something a person
  * picks from at the moment they are answering an enquiry. Ten is well past
  * anything asked for and still short of a filing system.
+ *
+ * ⚠️ PER CHANNEL SINCE SLICE 3.2b. Counted across channels, a customer's email
+ * wordings would eat the budget for their WhatsApp ones — so connecting a
+ * second channel could refuse the first wording written for it, citing a limit
+ * the customer would have to visit another screen to understand.
  */
 export const MAX_LEAD_REPLY_TEMPLATES = 10;

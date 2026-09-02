@@ -999,15 +999,23 @@ model InboundMessage {
 model LeadReplyTemplate {
   id             String       @id @default(uuid()) @db.Uuid
   organisationId String       @map("organisation_id") @db.Uuid
+  /// Which medium this wording is for (slice 3.2b, migration 0039). `email` is
+  /// the only value the CHECK permits today; adding a channel is a migration.
+  ///
+  /// ⚠️ NOT THE SAME VOCABULARY AS `leads.source`, ON PURPOSE. That says
+  /// `email_enquiry` and describes how an enquiry ARRIVED; this describes the
+  /// medium Eva REPLIES on. Same wire, opposite directions.
+  channel        String
   /// What the customer calls it in their own list. Never sent to anybody.
   name           String
   /// What Eva actually writes. Plain text: the mailbox adapters send text
   /// (`bodyText`), so offering rich text would promise formatting the send
   /// path does not carry.
   body           String
-  /// ⚠️ EXACTLY ONE AUTOMATIC TEMPLATE PER ORGANISATION (ruling 55) — the only
-  /// thing Eva ever sends on her own. The rest are saved wordings a human
-  /// picks from the enquiry screen.
+  /// ⚠️ EXACTLY ONE AUTOMATIC TEMPLATE PER ORGANISATION **PER CHANNEL**
+  /// (ruling 55, widened by ruling 63) — the only thing Eva ever sends on her
+  /// own on that medium. The rest are saved wordings a human picks from the
+  /// enquiry screen.
   isAutomatic    Boolean      @default(false) @map("is_automatic")
   createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt      DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
@@ -1016,12 +1024,14 @@ model LeadReplyTemplate {
   organisation   Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
 
   @@index([organisationId])
-  /// ⚠️ TWO PARTIAL UNIQUE INDEXES LIVE IN MIGRATION 0035 AND NOT HERE, because
+  /// ⚠️ TWO PARTIAL UNIQUE INDEXES LIVE IN THE MIGRATIONS AND NOT HERE, because
   /// Prisma cannot express `WHERE` on an index — the 0011/0013/0017/0034
-  /// precedent. `lead_reply_templates_single_automatic_key` is one automatic
-  /// reply per organisation among the live rows;
-  /// `lead_reply_templates_live_name_key` is one name per organisation, and it
-  /// is what makes the lazy seeding idempotent without a bookkeeping column.
+  /// precedent. Both were created by 0035 and **widened to include `channel` by
+  /// 0039**: `lead_reply_templates_single_automatic_key` is one automatic reply
+  /// per organisation PER CHANNEL among the live rows;
+  /// `lead_reply_templates_live_name_key` is one name per organisation per
+  /// channel, and it is what makes the lazy seeding idempotent without a
+  /// bookkeeping column.
   ///
   /// ⚠️ AND `REVOKE DELETE` LIVES THERE TOO. Deletion is soft. A hard delete
   /// would take the wording Eva sent somebody out from under the evidence of
@@ -1046,6 +1056,17 @@ model LeadReplyDecision {
   id             String    @id @default(uuid()) @db.Uuid
   organisationId String    @map("organisation_id") @db.Uuid
   leadId         String    @map("lead_id") @db.Uuid
+  /// Which medium Eva answered on, or would have (slice 3.2b, migration 0039).
+  /// Stored for the same reason the body is: this is the record of what a
+  /// stranger actually received, and "by which means" is part of that.
+  ///
+  /// ⚠️ NULLABLE, UNLIKE `LeadReplyTemplate.channel`. A template always has a
+  /// channel; a decision may not. `leads.source` still legally holds the three
+  /// retired call-shaped values, and there is no channel Eva can answer those
+  /// on — so NULL means "no channel could be determined, and nothing was sent".
+  /// Writing `email` there would falsify the record. A CHECK in 0039 stops a
+  /// null-channel row ever claiming it sent something.
+  channel        String?
   /// reply | hold | never — the provider's answer (slice 3.1c-2).
   verdict        String
   /// Why, in words, for the enquiry screen.
@@ -1058,7 +1079,14 @@ model LeadReplyDecision {
   failureReason  String?   @map("failure_reason")
   /// Null unless a reply was actually composed.
   templateId     String?   @map("template_id") @db.Uuid
+  /// Where the reply went. ⚠️ EMAIL-NAMED, NOT EMAIL-ONLY: once WhatsApp lands
+  /// this holds an E.164 phone number. Renaming it was considered and rejected
+  /// in 0039 — it would touch every read and write of this table for a channel
+  /// that did not exist yet. Read it as "recipient".
   toAddress      String?   @map("to_address")
+  /// ⚠️ EMAIL ONLY, AND THE DATABASE ENFORCES IT. WhatsApp has no subject, so
+  /// `lead_reply_decisions_subject_is_email_only_check` (0039) refuses a
+  /// non-email row that carries one.
   subject        String?
   body           String?
   sentAt         DateTime? @map("sent_at") @db.Timestamptz(6)

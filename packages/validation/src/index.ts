@@ -4,6 +4,7 @@ import {
   MODULE_KEYS,
   ORGANISATION_ROLES,
   PERMISSION_KEYS,
+  REPLY_CHANNELS,
   type HealthResponse,
   type ReadinessResponse,
 } from "@eva/types";
@@ -1070,6 +1071,15 @@ const templateBody = z.string().trim().min(1).max(4000);
  * everybody"; promoting one is a separate, deliberate act.
  */
 export const createLeadReplyTemplateSchema = z.object({
+  /**
+   * ⚠️ REQUIRED, WITH NO DEFAULT, AND THAT IS DELIBERATE (slice 3.2b). Defaulting
+   * to `email` would mean a caller that forgot the field silently files a
+   * WhatsApp wording under email — where it would then be a candidate for Eva
+   * to send to an email enquirer, telling them to "reply to this email" about a
+   * conversation that happened on WhatsApp. A 400 is the cheap version of that
+   * mistake.
+   */
+  channel: z.enum(REPLY_CHANNELS),
   name: templateName,
   body: templateBody,
   isAutomatic: z.boolean().optional().default(false),
@@ -1084,10 +1094,18 @@ export type CreateLeadReplyTemplateInput = z.infer<typeof createLeadReplyTemplat
  * `updateReminderStepSchema`, so an empty body is a 400 rather than a silent
  * no-op that returns 200 and changes nothing.
  *
- * ⚠️ SETTING `isAutomatic: true` DEMOTES WHICHEVER TEMPLATE HELD IT. That is
- * the service's job, not this schema's — but it is worth knowing here, because
- * "make this the automatic one" and "unset the other one" are the same request
- * and there is no separate endpoint for the second half.
+ * ⚠️ SETTING `isAutomatic: true` DEMOTES WHICHEVER TEMPLATE HELD IT — **on that
+ * template's own channel only** (slice 3.2b). That is the service's job, not
+ * this schema's, but it is worth knowing here, because "make this the automatic
+ * one" and "unset the other one" are the same request and there is no separate
+ * endpoint for the second half.
+ *
+ * 🔑 AND THERE IS NO `channel` FIELD, ON PURPOSE. A wording is written FOR a
+ * medium — the email default's "replying to this email is the quickest way to
+ * reach us" is nonsense on WhatsApp — so moving one between channels would make
+ * it silently wrong rather than merely misfiled. Delete and rewrite is the
+ * honest path. Omitting the field here is what makes that unavailable rather
+ * than merely discouraged.
  */
 export const updateLeadReplyTemplateSchema = z
   .object({

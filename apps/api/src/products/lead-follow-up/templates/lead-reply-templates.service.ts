@@ -5,8 +5,13 @@ import {
   NotFoundException,
 } from "@nestjs/common";
 import { withTenant } from "@eva/database";
-import { MAX_LEAD_REPLY_TEMPLATES } from "@eva/types";
-import type { LeadReplyTemplateDto, LeadReplyTemplatesDto } from "@eva/types";
+import {
+  isReplyChannel,
+  MAX_LEAD_REPLY_TEMPLATES,
+  REPLY_CHANNEL_LABELS,
+  REPLY_CHANNELS,
+} from "@eva/types";
+import type { LeadReplyTemplateDto, LeadReplyTemplatesDto, ReplyChannel } from "@eva/types";
 import type { CreateLeadReplyTemplateInput, UpdateLeadReplyTemplateInput } from "@eva/validation";
 // Value import is intentional: NestJS DI reads design:paramtypes metadata,
 // which requires the class reference at runtime (not a type-only import).
@@ -75,13 +80,22 @@ export class LeadReplyTemplatesService {
        */
       await ensureDefaultTemplates(tx, organisationId, user.id);
 
-      const liveCount = await tx.leadReplyTemplate.count({ where: { deletedAt: null } });
+      /**
+       * ⚠️ THE CAP IS PER CHANNEL (slice 3.2b), NOT PER ORGANISATION. Counting
+       * across channels would let a customer's email wordings use up the budget
+       * for their WhatsApp ones — so connecting a second channel could refuse
+       * the very first wording written for it, with a message about deleting
+       * something the customer would find on a different screen.
+       */
+      const liveCount = await tx.leadReplyTemplate.count({
+        where: { channel: input.channel, deletedAt: null },
+      });
       if (liveCount >= MAX_LEAD_REPLY_TEMPLATES) {
         throw new ConflictException(
-          `You can keep up to ${MAX_LEAD_REPLY_TEMPLATES} reply templates. Delete one you no longer use to add another.`,
+          `You can keep up to ${MAX_LEAD_REPLY_TEMPLATES} ${REPLY_CHANNEL_LABELS[input.channel]} reply templates. Delete one you no longer use to add another.`,
         );
       }
-      await this.refuseDuplicateName(tx, input.name, null);
+      await this.refuseDuplicateName(tx, input.channel, input.name, null);
 
       /**
        * ⚠️ THE DEMOTION HAS TO HAPPEN BEFORE THE INSERT, NOT AFTER IT.
@@ -89,11 +103,12 @@ export class LeadReplyTemplatesService {
        * inserting a second automatic row and tidying up afterwards fails on the
        * insert, inside the transaction, with a constraint name for an error.
        */
-      if (input.isAutomatic) await demoteAutomatic(tx);
+      if (input.isAutomatic) await demoteAutomatic(tx, input.channel);
 
       const created = await tx.leadReplyTemplate.create({
         data: {
           organisationId,
+          channel: input.channel,
           name: input.name,
           body: input.body,
           isAutomatic: input.isAutomatic,
@@ -108,7 +123,11 @@ export class LeadReplyTemplatesService {
         entityId: created.id,
         // The NAME, never the body: an audit row is not the place to keep a
         // second copy of every wording a customer has ever typed.
-        metadata: { name: created.name, isAutomatic: created.isAutomatic },
+        metadata: {
+          channel: created.channel,
+          name: created.name,
+          isAutomatic: created.isAutomatic,
+        },
       });
       return toDto(created);
     });
@@ -129,7 +148,20 @@ export class LeadReplyTemplatesService {
       });
       if (!template) throw new NotFoundException("Reply template not found");
 
-      if (input.name !== undefined) await this.refuseDuplicateName(tx, input.name, template.id);
+      /**
+       * ⚠️ THE CHANNEL COMES FROM THE STORED ROW, NEVER FROM THE REQUEST, AND
+       * THERE IS NO WAY TO CHANGE IT. A wording is written FOR a medium — the
+       * email default's "replying to this email is the quickest way to reach
+       * us" is nonsense on WhatsApp — so moving one between channels would
+       * silently make it wrong rather than merely misfiled. Delete and rewrite
+       * is the honest path, and it is what `UpdateLeadReplyTemplateInput`
+       * allows by omitting the field entirely.
+       */
+      const channel = asReplyChannel(template.channel);
+
+      if (input.name !== undefined) {
+        await this.refuseDuplicateName(tx, channel, input.name, template.id);
+      }
 
       /**
        * ⚠️ PROMOTING ONE DEMOTES THE OTHER, AND THAT IS THE WHOLE OF RULING 55.
@@ -137,8 +169,10 @@ export class LeadReplyTemplatesService {
        * pressing "Eva sends this one" means exactly that, and making them
        * unset the old one first would leave a window where Eva replies with
        * nothing.
+       *
+       * ⚠️ AND IT DEMOTES ONLY THIS CHANNEL'S. See `demoteAutomatic`.
        */
-      if (input.isAutomatic === true && !template.isAutomatic) await demoteAutomatic(tx);
+      if (input.isAutomatic === true && !template.isAutomatic) await demoteAutomatic(tx, channel);
 
       const updated = await tx.leadReplyTemplate.update({
         where: { id: template.id },
@@ -191,7 +225,7 @@ export class LeadReplyTemplatesService {
        * refusal makes that a decision somebody takes on purpose: turn the
        * automatic reply off (or promote another wording), and then delete.
        *
-       * The alternative — allow it, and let `automaticTemplateId` go null —
+       * The alternative — allow it, and let `automaticTemplateIds[channel]` go null —
        * was rejected because the two states are indistinguishable afterwards
        * and only one of them was intended.
        */
@@ -224,11 +258,19 @@ export class LeadReplyTemplatesService {
    */
   private async refuseDuplicateName(
     tx: TenantTx,
+    channel: ReplyChannel,
     name: string,
     exceptId: string | null,
   ): Promise<void> {
     const clash = await tx.leadReplyTemplate.findFirst({
       where: {
+        /**
+         * ⚠️ SCOPED TO THE CHANNEL, MATCHING THE INDEX IT MIRRORS. Without this
+         * a customer could not call their WhatsApp wording "Standard reply"
+         * because their EMAIL one already is — and the refusal would name a
+         * template they cannot see from the screen they are on.
+         */
+        channel,
         deletedAt: null,
         name: { equals: name, mode: "insensitive" },
         ...(exceptId ? { id: { not: exceptId } } : {}),
@@ -236,7 +278,9 @@ export class LeadReplyTemplatesService {
       select: { id: true },
     });
     if (clash) {
-      throw new ConflictException(`You already have a reply template called “${name}”.`);
+      throw new ConflictException(
+        `You already have a ${REPLY_CHANNEL_LABELS[channel]} reply template called “${name}”.`,
+      );
     }
   }
 }
@@ -266,31 +310,53 @@ export async function ensureDefaultTemplates(
   organisationId: string,
   actorUserId: string,
 ): Promise<void> {
-  const everHadOne = await tx.leadReplyTemplate.count();
-  if (everHadOne > 0) return;
+  /**
+   * ⚠️ PER CHANNEL, AND THE LOOP IS WHY A NEW CHANNEL NEEDS NO CODE HERE
+   * (slice 3.2b). An organisation that has used email for a year has never seen
+   * WhatsApp, so its WhatsApp count is zero and its wordings seed on first
+   * sight — exactly as email's did. A single organisation-wide check would have
+   * left every existing customer with no WhatsApp wordings at all, permanently,
+   * because they had "already been seeded".
+   */
+  for (const channel of REPLY_CHANNELS) {
+    /**
+     * ⚠️ "NEVER HAD ONE", NOT "HAS NONE RIGHT NOW" — no `deletedAt` filter, on
+     * purpose. Counting live rows only would re-create the defaults every time
+     * a customer emptied a channel's list, so deleting the last wording would
+     * be an action the product silently undid. This is the rule an earlier
+     * version of this file got wrong while 22 tests stayed green: they deleted
+     * one of three, so the count never reached zero and the two rules are
+     * indistinguishable until a list is actually emptied.
+     */
+    const everHadOne = await tx.leadReplyTemplate.count({ where: { channel } });
+    if (everHadOne > 0) continue;
 
-  await tx.leadReplyTemplate.createMany({
-    data: DEFAULT_LEAD_REPLY_TEMPLATES.map((template) => ({
+    const defaults = DEFAULT_LEAD_REPLY_TEMPLATES[channel];
+    await tx.leadReplyTemplate.createMany({
+      data: defaults.map((template) => ({
+        organisationId,
+        channel,
+        name: template.name,
+        body: template.body,
+        isAutomatic: template.isAutomatic,
+        /**
+         * ⚠️ THE PERSON WHO OPENED THE SCREEN DID NOT WRITE THESE. `created_by`
+         * is who to ask about a wording, and answering "you did" about text we
+         * shipped would be wrong the first time somebody uses the audit trail to
+         * find out where a sentence came from.
+         */
+        createdBy: null,
+      })),
+    });
+    await writeAuditLog(tx, {
       organisationId,
-      name: template.name,
-      body: template.body,
-      isAutomatic: template.isAutomatic,
-      /**
-       * ⚠️ THE PERSON WHO OPENED THE SCREEN DID NOT WRITE THESE. `created_by`
-       * is who to ask about a wording, and answering "you did" about text we
-       * shipped would be wrong the first time somebody uses the audit trail to
-       * find out where a sentence came from.
-       */
-      createdBy: null,
-    })),
-  });
-  await writeAuditLog(tx, {
-    organisationId,
-    actorUserId,
-    action: "lead_reply_template.defaults_seeded",
-    entityType: "lead_reply_template",
-    metadata: { count: DEFAULT_LEAD_REPLY_TEMPLATES.length },
-  });
+      actorUserId,
+      action: "lead_reply_template.defaults_seeded",
+      entityType: "lead_reply_template",
+      // The channel, so the trail says WHICH set of wordings appeared and when.
+      metadata: { channel, count: defaults.length },
+    });
+  }
 }
 
 /**
@@ -301,9 +367,22 @@ export async function ensureDefaultTemplates(
  * set is both one round trip and correct if the invariant is ever violated by
  * something that did not come through here.
  */
-async function demoteAutomatic(tx: TenantTx): Promise<void> {
+/**
+ * 🚨 THE `channel` FILTER IS LOAD-BEARING, NOT TIDINESS (slice 3.2b).
+ *
+ * Without it, promoting a WhatsApp wording would silently switch OFF the
+ * customer's email automatic reply — and nothing would look wrong: no error, no
+ * constraint violation, one screen showing exactly what was asked for. Email
+ * enquiries would simply stop being answered, and the first anyone would know is
+ * a customer asking why a stranger never heard back.
+ *
+ * The database cannot catch this one. `lead_reply_templates_single_automatic_key`
+ * refuses a SECOND automatic reply on a channel; it has nothing to say about
+ * clearing one that should have been left alone.
+ */
+async function demoteAutomatic(tx: TenantTx, channel: ReplyChannel): Promise<void> {
   await tx.leadReplyTemplate.updateMany({
-    where: { isAutomatic: true, deletedAt: null },
+    where: { channel, isAutomatic: true, deletedAt: null },
     data: { isAutomatic: false },
   });
 }
@@ -312,11 +391,12 @@ async function liveTemplates(tx: TenantTx) {
   return await tx.leadReplyTemplate.findMany({
     where: { deletedAt: null },
     /**
-     * The automatic one first — it is the one that matters and the one a
-     * customer came to check — then alphabetically, so the list does not
+     * Channel first, so a customer's wordings arrive grouped rather than
+     * interleaved; then the automatic one — it is the one that matters and the
+     * one a customer came to check — then alphabetically, so the list does not
      * reshuffle itself every time somebody edits a wording.
      */
-    orderBy: [{ isAutomatic: "desc" }, { name: "asc" }],
+    orderBy: [{ channel: "asc" }, { isAutomatic: "desc" }, { name: "asc" }],
   });
 }
 
@@ -325,6 +405,7 @@ type TemplateRow = Awaited<ReturnType<typeof liveTemplates>>[number];
 function toDto(row: TemplateRow): LeadReplyTemplateDto {
   return {
     id: row.id,
+    channel: asReplyChannel(row.channel),
     name: row.name,
     body: row.body,
     isAutomatic: row.isAutomatic,
@@ -332,9 +413,35 @@ function toDto(row: TemplateRow): LeadReplyTemplateDto {
   };
 }
 
+/**
+ * ⚠️ THE COLUMN IS A `TEXT`, SO SOMETHING HAS TO NARROW IT, AND A CAST WOULD
+ * LIE. The database CHECK and `REPLY_CHANNELS` are two halves of one list, and
+ * the day they disagree is the day a row arrives that no screen can render. A
+ * throw here turns that into a loud failure on the read, rather than a
+ * `channel` the web silently drops out of its grouping.
+ */
+function asReplyChannel(value: string): ReplyChannel {
+  if (!isReplyChannel(value)) {
+    throw new Error(
+      `lead_reply_templates.channel holds ${value}, which is not a known reply channel — the database CHECK and REPLY_CHANNELS have diverged`,
+    );
+  }
+  return value;
+}
+
 function toListDto(rows: TemplateRow[]): LeadReplyTemplatesDto {
-  return {
-    templates: rows.map(toDto),
-    automaticTemplateId: rows.find((row) => row.isAutomatic)?.id ?? null,
-  };
+  /**
+   * ⚠️ ONE ENTRY PER CHANNEL, ALWAYS, INCLUDING THE NULLS. A channel with no
+   * automatic reply is a real and important state — it is what the screen's red
+   * warning is for — and leaving the key out would make "no automatic reply"
+   * and "no such channel" the same shape to every caller.
+   */
+  const automaticTemplateIds = Object.fromEntries(
+    REPLY_CHANNELS.map((channel) => [
+      channel,
+      rows.find((row) => row.channel === channel && row.isAutomatic)?.id ?? null,
+    ]),
+  ) as Record<ReplyChannel, string | null>;
+
+  return { templates: rows.map(toDto), automaticTemplateIds };
 }

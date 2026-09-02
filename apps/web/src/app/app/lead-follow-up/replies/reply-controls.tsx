@@ -1,7 +1,13 @@
 "use client";
 
 import { useActionState, useState } from "react";
-import { MAX_LEAD_REPLY_TEMPLATES, type LeadReplyTemplateDto } from "@eva/types";
+import {
+  MAX_LEAD_REPLY_TEMPLATES,
+  REPLY_CHANNEL_LABELS,
+  REPLY_CHANNELS,
+  type LeadReplyTemplateDto,
+  type ReplyChannel,
+} from "@eva/types";
 import { GhostButton, PrimarySubmit, StatusPill, TextArea, TextField } from "@/components/ui";
 import {
   addReplyTemplate,
@@ -37,34 +43,66 @@ const MAX_BODY = 4000;
 export function ReplyTemplateList({
   organisationId,
   templates,
-  automaticTemplateId,
+  automaticTemplateIds,
   canEdit,
 }: {
   organisationId: string;
   templates: LeadReplyTemplateDto[];
-  automaticTemplateId: string | null;
+  automaticTemplateIds: Record<ReplyChannel, string | null>;
   canEdit: boolean;
 }) {
-  const automaticName = templates.find((template) => template.id === automaticTemplateId)?.name;
+  /**
+   * ⚠️ GROUPED BY CHANNEL BECAUSE THE ADD BUTTON HAS TO KNOW ITS OWN CHANNEL
+   * (slice 3.2b), not for decoration. A single flat list would leave "Add
+   * another reply" unable to say what it is adding — and the cap is per channel
+   * too, so a flat count would refuse a customer's first WhatsApp wording
+   * because they had ten for email.
+   */
+  const groups = REPLY_CHANNELS.map((channel) => ({
+    channel,
+    rows: templates.filter((template) => template.channel === channel),
+  })).filter((group) => group.rows.length > 0);
+
+  /**
+   * ⚠️ NO HEADINGS WHILE THERE IS ONLY ONE CHANNEL. Labelling a single group
+   * "Email" is noise a customer has to read past to reach the thing they came
+   * for. The moment a second channel exists the headings appear on their own.
+   */
+  const showChannelHeadings = groups.length > 1;
 
   return (
-    <div className="flex flex-col gap-4">
-      {templates.map((template) => (
-        <ReplyTemplateCard
-          key={template.id}
-          organisationId={organisationId}
-          template={template}
-          previousAutomaticName={
-            /* Only meaningful when promoting a DIFFERENT one — the message that
-               names what stepped down would otherwise name this template. */
-            template.isAutomatic ? undefined : automaticName
-          }
-          canEdit={canEdit}
-        />
-      ))}
-      {canEdit && templates.length < MAX_LEAD_REPLY_TEMPLATES && (
-        <AddReplyTemplate organisationId={organisationId} />
-      )}
+    <div className="flex flex-col gap-8">
+      {groups.map(({ channel, rows }) => {
+        const automaticName = rows.find(
+          (template) => template.id === automaticTemplateIds[channel],
+        )?.name;
+
+        return (
+          <section key={channel} className="flex flex-col gap-4">
+            {showChannelHeadings && (
+              <h2 className="text-[13.5px] font-semibold">{REPLY_CHANNEL_LABELS[channel]}</h2>
+            )}
+            {rows.map((template) => (
+              <ReplyTemplateCard
+                key={template.id}
+                organisationId={organisationId}
+                template={template}
+                previousAutomaticName={
+                  /* Only meaningful when promoting a DIFFERENT one — the message
+                     that names what stepped down would otherwise name this
+                     template. Scoped to the channel, because promoting a
+                     WhatsApp wording steps down a WhatsApp one. */
+                  template.isAutomatic ? undefined : automaticName
+                }
+                canEdit={canEdit}
+              />
+            ))}
+            {canEdit && rows.length < MAX_LEAD_REPLY_TEMPLATES && (
+              <AddReplyTemplate organisationId={organisationId} channel={channel} />
+            )}
+          </section>
+        );
+      })}
     </div>
   );
 }
@@ -357,7 +395,13 @@ function ConfirmRow({
  * forgot to write, and it is the one thing on this screen a customer does
  * rarely.
  */
-function AddReplyTemplate({ organisationId }: { organisationId: string }) {
+function AddReplyTemplate({
+  organisationId,
+  channel,
+}: {
+  organisationId: string;
+  channel: ReplyChannel;
+}) {
   const [open, setOpen] = useState(false);
   const [state, formAction, pending] = useActionState<ReplyTemplateActionState, FormData>(
     addReplyTemplate,
@@ -380,6 +424,14 @@ function AddReplyTemplate({ organisationId }: { organisationId: string }) {
       <h2 className="text-[13.5px] font-semibold">A new reply</h2>
       <form action={formAction} className="flex flex-col gap-4">
         <input type="hidden" name="organisationId" value={organisationId} />
+        {/**
+         * ⚠️ THE CHANNEL TRAVELS WITH THE FORM, AND THE SERVER DOES NOT
+         * DEFAULT IT. A wording saved against the wrong medium is not a
+         * filing error — it becomes a candidate for Eva to send, so an
+         * email wording could go out over WhatsApp telling the reader to
+         * "reply to this email".
+         */}
+        <input type="hidden" name="channel" value={channel} />
         <TextField
           name="name"
           label="Name"
