@@ -85,6 +85,25 @@ export const apiEnvSchema = z.object({
   GOOGLE_OAUTH_REDIRECT_URI: z
     .string()
     .default("http://localhost:3001/integrations/google/callback"),
+  /**
+   * Slice 3.2c — receiving WhatsApp. Optional at boot, refused at use: the same
+   * shape as `RESEND_WEBHOOK_SECRET` and Google's pair above, and for the same
+   * reason. Required would stop the API starting on every environment that has
+   * no WhatsApp app, which today is all of them but one developer's laptop.
+   *
+   * `META_APP_SECRET` signs every webhook Meta sends us; the guard refuses
+   * everything while it is empty, and a test proves it. `WHATSAPP_VERIFY_TOKEN`
+   * is a string WE invent and Meta echoes back during the subscription
+   * handshake — it proves the GET came from a configuration we made rather than
+   * from anyone who guessed the URL.
+   *
+   * ⚠️ THE APP ID IS NOT A SECRET AND THE OTHER TWO ARE. The id appears in
+   * public consent screens; the secret and any access token do not, and
+   * `.env` is where they live — never a commit, never a message.
+   */
+  META_APP_ID: z.string().default(""),
+  META_APP_SECRET: z.string().default(""),
+  WHATSAPP_VERIFY_TOKEN: z.string().default(""),
 });
 
 export type ApiEnv = z.infer<typeof apiEnvSchema>;
