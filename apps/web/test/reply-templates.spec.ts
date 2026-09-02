@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
-import { MODULE_CATALOGUE, moduleHref } from "@eva/types";
+import { MODULE_CATALOGUE, moduleHref, REPLY_CHANNELS } from "@eva/types";
 import { PRODUCT_NAV } from "@/lib/navigation";
 
 /**
@@ -380,8 +380,45 @@ describe("the screen says what Eva can and cannot do, and both halves are checke
 
   it("warns when no automatic reply is switched on", () => {
     const source = stripComments(readFileSync(PAGE, "utf8"));
-    expect(source).toContain("automaticTemplateId === null");
+    expect(source).toContain("automaticTemplateIds[channel] === null");
     expect(source).toContain("nobody hears back");
+  });
+});
+
+/**
+ * 🚨 THE TRIPWIRE FOR THE NEXT CHANNEL (slice 3.2b).
+ *
+ * Everything on this screen is written for one channel today, and reads
+ * correctly BECAUSE there is one: the list shows no channel headings, and the
+ * warning names a medium the customer only has one of. The moment
+ * `REPLY_CHANNELS` gains a second value that stops being true, and none of it
+ * fails on its own — a flat list of eight wordings from two mediums looks
+ * exactly like a working screen.
+ *
+ * ⚠️ THIS TEST EXISTS TO FAIL, AND WHEN IT DOES THE FIX IS NOT TO CHANGE THE
+ * NUMBER. Walk the screen with two channels connected, check the grouping and
+ * the per-channel warnings actually read correctly, THEN update this. The
+ * alternative — building the two-channel UI now — is machinery for a state that
+ * cannot occur, which is ruling 57's objection one level down.
+ */
+describe("adding a channel is a deliberate act, not a silent one", () => {
+  it("fails when REPLY_CHANNELS grows, so the screen is re-walked", () => {
+    expect(
+      REPLY_CHANNELS,
+      "a channel was added — walk the Replies screen with both connected before updating this",
+    ).toEqual(["email"]);
+  });
+
+  /**
+   * ⚠️ AND THE SCREEN MUST ALREADY BE ABLE TO TELL THEM APART. The grouping code
+   * is written and unexercised; this is what stops somebody deleting it as dead
+   * while it is the only thing standing between the second channel and one
+   * undifferentiated list.
+   */
+  it("groups by channel and labels the groups once there is more than one", () => {
+    const source = stripComments(readFileSync(CONTROLS, "utf8"));
+    expect(source).toContain("REPLY_CHANNEL_LABELS[channel]");
+    expect(source).toContain("groups.length > 1");
   });
 });
 

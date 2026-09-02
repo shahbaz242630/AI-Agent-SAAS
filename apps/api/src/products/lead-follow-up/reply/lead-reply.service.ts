@@ -1,4 +1,5 @@
 import { Inject, Injectable } from "@nestjs/common";
+import { replyChannelForLeadSource, type ReplyChannel } from "@eva/types";
 // eslint-disable-next-line @typescript-eslint/consistent-type-imports
 import { PinoLogger } from "nestjs-pino";
 // eslint-disable-next-line @typescript-eslint/consistent-type-imports
@@ -122,6 +123,43 @@ export class LeadReplyService {
         return { kind: "done", outcome: { status: "skipped", reason: "already decided" } };
       }
 
+      /**
+       * 🚨 WHICH MEDIUM TO ANSWER ON, DECIDED BEFORE ANYTHING ELSE (slice 3.2b).
+       *
+       * ⚠️ A NULL IS NOT A FAULT AND MUST NOT FALL BACK TO EMAIL. It means the
+       * lead arrived by a route this code does not understand — and guessing
+       * email there would have Eva reply by email to somebody who messaged on
+       * another channel, at an address the lead may not even carry, in the
+       * customer's name. Recorded and left alone is the ruling 32 answer.
+       *
+       * Today `replyChannelForLeadSource` maps the one source that exists, so
+       * this branch is unreachable in practice. It is written now because the
+       * slice that adds a second source is the slice where an unmapped value
+       * becomes possible, and by then this code will not be under review.
+       */
+      const channel = replyChannelForLeadSource(lead.source);
+      if (!channel) {
+        await tx.leadReplyDecision.create({
+          data: {
+            organisationId,
+            leadId,
+            /**
+             * ⚠️ NULL, NOT `"email"`. Writing a channel we did not determine
+             * would falsify the one record of what a stranger did or did not
+             * receive. Migration 0039 makes this column nullable for exactly
+             * this row, and refuses to let a null-channel row claim it sent
+             * anything.
+             */
+            channel: null,
+            verdict: "hold",
+            reason: "this enquiry arrived by a route Eva cannot reply on yet",
+            signal: "unmapped_lead_source",
+            status: "not_sent",
+          },
+        });
+        return { kind: "done", outcome: { status: "not_sent", verdict: "hold" } };
+      }
+
       const message = lead.inboundMessages[0];
       const decision = this.decisions.decide({
         headers: (message?.headers as Record<string, string> | null) ?? {},
@@ -136,6 +174,7 @@ export class LeadReplyService {
           data: {
             organisationId,
             leadId,
+            channel,
             verdict: decision.verdict,
             reason: decision.reason,
             signal: decision.signal,
@@ -156,12 +195,19 @@ export class LeadReplyService {
        * So no automatic template means no reply, said plainly. The screen
        * already warns about exactly this state in red.
        */
+      /**
+       * ⚠️ SCOPED TO THE CHANNEL (slice 3.2b). Unscoped, an enquiry on one
+       * medium would be answered with the wording written for another — the
+       * email default tells the reader to "reply to this email", which is
+       * nonsense sent over WhatsApp, and it would go out unread in the
+       * customer's name.
+       */
       const template = await tx.leadReplyTemplate.findFirst({
-        where: { isAutomatic: true, deletedAt: null },
+        where: { channel, isAutomatic: true, deletedAt: null },
         select: { id: true, body: true },
       });
       if (!template) {
-        return await this.recordUnsendable(tx, organisationId, leadId, decision, {
+        return await this.recordUnsendable(tx, organisationId, leadId, channel, decision, {
           reason: "no automatic reply is switched on, so nothing was sent",
         });
       }
@@ -171,7 +217,7 @@ export class LeadReplyService {
         template.body,
       );
       if (!composed.composed) {
-        return await this.recordUnsendable(tx, organisationId, leadId, decision, {
+        return await this.recordUnsendable(tx, organisationId, leadId, channel, decision, {
           reason: composed.reason,
           templateId: template.id,
         });
@@ -191,7 +237,7 @@ export class LeadReplyService {
         { organisationId, emailAccountId: null },
       );
       if (!resolution) {
-        return await this.recordUnsendable(tx, organisationId, leadId, decision, {
+        return await this.recordUnsendable(tx, organisationId, leadId, channel, decision, {
           reason: "no mailbox is connected for Lead Follow-up, so nothing was sent",
           templateId: template.id,
         });
@@ -201,6 +247,7 @@ export class LeadReplyService {
         data: {
           organisationId,
           leadId,
+          channel,
           verdict: decision.verdict,
           reason: decision.reason,
           signal: decision.signal,
@@ -230,6 +277,7 @@ export class LeadReplyService {
     tx: TenantTx,
     organisationId: string,
     leadId: string,
+    channel: ReplyChannel,
     decision: { verdict: string; reason: string; signal: string },
     unsendable: { reason: string; templateId?: string },
   ): Promise<Claim> {
@@ -237,6 +285,7 @@ export class LeadReplyService {
       data: {
         organisationId,
         leadId,
+        channel,
         verdict: decision.verdict,
         reason: decision.reason,
         signal: decision.signal,

@@ -192,6 +192,14 @@ describe("Eva answers an enquiry", () => {
       expect(decision).toBeTruthy();
       expect(decision!.verdict).toBe("reply");
       expect(decision!.status).toBe("sent");
+      /**
+       * ⚠️ THE CHANNEL IS PART OF THE RECORD (slice 3.2b). "What a stranger
+       * received in the customer's name" is not complete without by which
+       * means, and a sent row must never carry a null channel — migration
+       * 0039's `lead_reply_decisions_null_channel_sent_nothing_check` refuses
+       * that combination outright.
+       */
+      expect(decision!.channel).toBe("email");
       expect(decision!.toAddress).toBe("dave.nolan@example.com");
       expect(decision!.sentFrom).toBe("office@hallowayroofing.co.uk");
       expect(decision!.sentAt).toBeTruthy();

@@ -1,6 +1,12 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { moduleHref, moduleName, type LeadReplyTemplatesDto } from "@eva/types";
+import {
+  moduleHref,
+  moduleName,
+  REPLY_CHANNEL_LABELS,
+  REPLY_CHANNELS,
+  type LeadReplyTemplatesDto,
+} from "@eva/types";
 import { ApiError, apiFetch } from "@/lib/api";
 import { fetchOrganisations } from "@/lib/organisations";
 import { createClient } from "@/lib/supabase/server";
@@ -145,12 +151,26 @@ export default async function ReplyTemplatesPage() {
         are saved for you — the screen for sending one by hand is the next thing being built.
       </Notice>
 
-      {data.automaticTemplateId === null && (
-        <Notice tone="danger">
-          No automatic reply is switched on, so nobody hears back on their own. Choose “Eva sends
-          this one” on whichever wording should go out.
+      {/**
+       * ⚠️ ONE WARNING PER CHANNEL, AND ONLY FOR CHANNELS THE CUSTOMER ACTUALLY
+       * HAS (slice 3.2b). A single warning could only ever describe one channel,
+       * so a customer answering on email but silent on WhatsApp would see either
+       * nothing wrong or a warning that looked already-fixed. Both are worse
+       * than saying which.
+       *
+       * `templates.some(...)` is what keeps it honest: a channel nobody has
+       * connected has no wordings, and warning about silence on a medium the
+       * customer does not use would be noise they cannot act on.
+       */}
+      {REPLY_CHANNELS.filter(
+        (channel) =>
+          data.automaticTemplateIds[channel] === null &&
+          data.templates.some((template) => template.channel === channel),
+      ).map((channel) => (
+        <Notice key={channel} tone="danger">
+          {`No automatic ${REPLY_CHANNEL_LABELS[channel]} reply is switched on, so nobody hears back on their own. Choose “Eva sends this one” on whichever wording should go out.`}
         </Notice>
-      )}
+      ))}
 
       {data.templates.length === 0 ? (
         <EmptyState
@@ -161,7 +181,7 @@ export default async function ReplyTemplatesPage() {
         <ReplyTemplateList
           organisationId={organisation.id}
           templates={data.templates}
-          automaticTemplateId={data.automaticTemplateId}
+          automaticTemplateIds={data.automaticTemplateIds}
           canEdit={canEdit}
         />
       )}

@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { moduleHref } from "@eva/types";
+import { isReplyChannel, moduleHref } from "@eva/types";
 import { ApiError, apiFetch } from "@/lib/api";
 import { humanRefusal } from "@/lib/permissions";
 import { createClient } from "@/lib/supabase/server";
@@ -96,9 +96,20 @@ export async function addReplyTemplate(
   const organisationId = String(formData.get("organisationId") ?? "");
   const name = String(formData.get("name") ?? "").trim();
   const body = String(formData.get("body") ?? "").trim();
+  const channel = String(formData.get("channel") ?? "");
 
   if (!name) return { error: "Give this reply a name so you can find it in the list." };
   if (!body) return { error: "A reply needs something to say." };
+  /**
+   * ⚠️ REFUSED HERE RATHER THAN DEFAULTED (slice 3.2b). A missing channel means
+   * the form and this action have drifted apart, and picking one for the
+   * customer would file their wording against a medium they never chose — where
+   * Eva may then send it. The API refuses it too; this is so the refusal is a
+   * sentence rather than a 400 nobody sees.
+   */
+  if (!isReplyChannel(channel)) {
+    return { error: "Something went wrong saving this reply. Refresh the page and try again." };
+  }
 
   const accessToken = await getAccessToken();
   if (!accessToken) redirect("/sign-in");
@@ -113,7 +124,7 @@ export async function addReplyTemplate(
        * making it automatic is a separate press with its own confirmation
        * sentence.
        */
-      body: JSON.stringify({ name, body }),
+      body: JSON.stringify({ channel, name, body }),
     });
   } catch (error) {
     return refusalFor(error);
