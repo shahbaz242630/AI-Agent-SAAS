@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { RuleBasedReplyDecisionProvider } from "../src/products/lead-follow-up-email/decision/rule-based-reply-decision.provider.js";
-import type { ReplyDecisionInput } from "../src/products/lead-follow-up-email/decision/reply-decision.js";
+import { RuleBasedReplyDecisionProvider } from "../src/products/lead-follow-up/decision/rule-based-reply-decision.provider.js";
+import type { ReplyDecisionInput } from "../src/products/lead-follow-up/decision/reply-decision.js";
 
 /**
  * Which enquiries Eva answers on her own (slice 3.1c-2, founder rulings 32 and 54).

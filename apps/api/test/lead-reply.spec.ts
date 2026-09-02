@@ -27,7 +27,7 @@ import {
  * Resend webhook to a message handed to the mail provider.
  *
  * 🚨 THIS IS THE FILE THAT PROVES THE PRODUCT DOES WHAT ITS BLURB SAYS. Lead
- * Follow-up by Email has promised "answers new enquiries from your mailbox"
+ * Follow-up has promised "answers new enquiries from your mailbox"
  * since 3.1a and has been unable to answer anything. Everything below the
  * webhook — intake, the lead, the decision, the template, the mailbox
  * resolution, the send, the record — runs for real here; only the two edges of
@@ -75,7 +75,7 @@ describe("Eva answers an enquiry", () => {
     await seedTestDatabase(owner);
     app = await createTestApp({ receivedMail, outboundMail });
     org = await createOrgWithMembers(owner, "reply", ["owner"], "Halloway Roofing", [
-      { moduleKey: "lead_follow_up_email" },
+      { moduleKey: "lead_follow_up" },
     ]);
 
     const token = await signToken({
@@ -105,7 +105,7 @@ describe("Eva answers an enquiry", () => {
     await owner.emailAccount.create({
       data: {
         organisationId: org.id,
-        moduleKey: "lead_follow_up_email",
+        moduleKey: "lead_follow_up",
         provider: "google",
         emailAddress: "office@hallowayroofing.co.uk",
         isPrimary: true,
@@ -326,7 +326,7 @@ describe("Eva answers an enquiry", () => {
 
     beforeAll(async () => {
       unequipped = await createOrgWithMembers(owner, "reply-nomailbox", ["owner"], undefined, [
-        { moduleKey: "lead_follow_up_email" },
+        { moduleKey: "lead_follow_up" },
       ]);
       const token = await signToken({
         sub: unequipped.members[0]!.authUserId,

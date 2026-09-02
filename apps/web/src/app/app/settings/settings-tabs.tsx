@@ -11,7 +11,7 @@ import Link from "next/link";
  * belongs to ONE product now (ruling 36), so a single organisation-wide mailbox
  * screen could only ever show one product's mailboxes as though they were
  * everybody's. Setup moved inside each product — `/app/invoice-chasing/mailbox`
- * and `/app/lead-follow-up-email/mailbox` — on the founder's ruling of
+ * and `/app/lead-follow-up/mailbox` — on the founder's ruling of
  * 2026-09-01: *"they should have full complete seperate setups"*.
  *
  * ⚠️ IT SAID "FOUR" IN BOTH PLACES UNTIL 2026-08-30, NINE DAYS AFTER DO NOT

@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { moduleHref, type LeadReplyTemplatesDto } from "@eva/types";
+import { moduleHref, moduleName, type LeadReplyTemplatesDto } from "@eva/types";
 import { ApiError, apiFetch } from "@/lib/api";
 import { fetchOrganisations } from "@/lib/organisations";
 import { createClient } from "@/lib/supabase/server";
@@ -14,21 +14,23 @@ import { ReplyTemplateList } from "./reply-controls";
  * ⚠️ THIS IS THE FIRST SCREEN THE LEAD PRODUCT OWNS. Everything before it —
  * the enquiry book, the forwarding guide, the mailbox — reads platform records
  * or capability machinery. This one edits the product's own table, which is
- * what finally makes `products/lead-follow-up-email/` a folder rather than a
+ * what finally makes `products/lead-follow-up/` a folder rather than a
  * gesture.
  *
- * ⚠️ IT CANNOT SEND ANYTHING YET, AND THE SCREEN SAYS SO. Slice 3.1c-3 composes
- * and sends the reply; until then these are words in a box. Letting the page
- * imply otherwise would be the same defect as Voice Credit Control's blurb —
- * copy describing a product we have not built, on the screen that shows it off.
+ * ⚠️ THE AUTOMATIC REPLY NOW SENDS (3.1c-3); SENDING ONE BY HAND DOES NOT
+ * (3.1c-4). This comment said "it cannot send anything yet" for one slice too
+ * long — see the note on the `Notice` below, which is where that cost something.
+ * Letting the page imply more than is built would be the same defect as Voice
+ * Credit Control's blurb: copy describing a product we have not built, on the
+ * screen that shows it off.
  *
  * ⚠️ ON THE KIT, NOT HAND-ROLLED. `PageShell`, `PageHeader` and `Card` exist
  * and fourteen screens still retype them; a NEW screen adding a fifteenth copy
  * is how that count went up in the first place.
  */
 
-const BOOK = moduleHref("lead_follow_up_email", "enquiries");
-const MAILBOX = moduleHref("lead_follow_up_email", "mailbox");
+const BOOK = moduleHref("lead_follow_up", "enquiries");
+const MAILBOX = moduleHref("lead_follow_up", "mailbox");
 
 interface OrganisationSummary {
   id: string;
@@ -85,7 +87,7 @@ export default async function ReplyTemplatesPage() {
       <Shell>
         <Card className="flex w-full flex-col gap-3 px-6 py-4">
           <p className="text-sm">
-            {`${organisation.name} doesn't have Lead Follow-up by Email, so there are no replies to set up yet.`}
+            {`${organisation.name} doesn't have ${moduleName("lead_follow_up")}, so there are no replies to set up yet.`}
           </p>
           <div>
             <PrimaryLink href="/app/settings/modules">See your products</PrimaryLink>
@@ -122,14 +124,25 @@ export default async function ReplyTemplatesPage() {
       />
 
       {/**
-       * ⚠️ THE HONEST STATE, AT THE TOP, IN BOTH DIRECTIONS. Until 3.1c-3 ships
-       * nothing is sent at all, and a screen full of Save buttons implies
-       * otherwise. When it does ship, this line is the thing to change — and it
-       * is one line, in one file, on purpose.
+       * ⚠️ THE HONEST STATE, AT THE TOP, IN BOTH DIRECTIONS — AND IT WENT STALE
+       * ONCE ALREADY. This said "sending these replies is the next thing being
+       * built" from 3.1c-1. Slice 3.1c-3 built it and deployed it, and this
+       * sentence stayed, so the screen spent its first hours live telling
+       * customers Eva could not do the thing she had just started doing.
+       *
+       * 🚨 THE GUARD THAT WAS SUPPOSED TO CATCH THAT POINTED THE WRONG WAY.
+       * `reply-templates.spec.ts` asserted the words "being built" were
+       * PRESENT, so it fired when somebody deleted the sentence — never when
+       * the sentence became false. A tripwire on removal is not a tripwire on
+       * staleness. It now names what is true and what is not, so each half
+       * fails when its own half changes.
+       *
+       * The by-hand half (3.1c-4) genuinely is unbuilt, which is why the second
+       * sentence stays.
        */}
       <Notice tone="muted">
-        Eva files every enquiry today, and sending these replies is the next thing being built.
-        Anything you write here is saved and will be used the moment it is switched on.
+        Eva sends the automatic reply on her own, as soon as an enquiry arrives. The other wordings
+        are saved for you — the screen for sending one by hand is the next thing being built.
       </Notice>
 
       {data.automaticTemplateId === null && (

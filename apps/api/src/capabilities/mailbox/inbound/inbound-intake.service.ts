@@ -53,7 +53,7 @@ export type IntakeOutcome =
   | { status: "not-applicable" };
 
 /** The product an inbound enquiry belongs to. */
-const LEAD_EMAIL_MODULE = "lead_follow_up_email";
+const LEAD_EMAIL_MODULE = "lead_follow_up";
 
 @Injectable()
 export class InboundIntakeService {
@@ -148,13 +148,13 @@ export class InboundIntakeService {
     if (!record.entitled) {
       /**
        * The address outlives the entitlement: a customer can stop paying for
-       * Lead Follow-up by Email while their address is still printed on their
+       * Lead Follow-up while their address is still printed on their
        * website. The mail is kept — it is theirs — but no lead is made for a
        * product nobody holds.
        */
       await this.settle(organisationId, record.id, {
         status: "ignored",
-        failureReason: "organisation does not hold lead_follow_up_email",
+        failureReason: "organisation does not hold lead_follow_up",
       });
       return { status: "ignored", reason: "not-entitled" };
     }

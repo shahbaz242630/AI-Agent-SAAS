@@ -88,9 +88,9 @@ export const PRODUCT_NAV: Partial<Record<ModuleKey, readonly NavItem[]>> = {
    * 3.1c gives it a dashboard worth the click, and a nav item pointing at a
    * redirect is a menu entry that lies about where it goes.
    */
-  lead_follow_up_email: [
+  lead_follow_up: [
     {
-      href: moduleHref("lead_follow_up_email", "enquiries"),
+      href: moduleHref("lead_follow_up", "enquiries"),
       label: "Enquiries",
       description: "Everyone who has got in touch",
     },
@@ -101,12 +101,12 @@ export const PRODUCT_NAV: Partial<Record<ModuleKey, readonly NavItem[]>> = {
      * see what came in, decide what goes back, check where it goes back from.
      */
     {
-      href: moduleHref("lead_follow_up_email", "replies"),
+      href: moduleHref("lead_follow_up", "replies"),
       label: "Replies",
       description: "What Eva writes back",
     },
     {
-      href: moduleHref("lead_follow_up_email", "mailbox"),
+      href: moduleHref("lead_follow_up", "mailbox"),
       label: "Mailbox",
       description: "The address Eva replies from",
     },

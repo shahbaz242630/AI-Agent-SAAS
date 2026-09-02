@@ -223,7 +223,7 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<OrganisationRole, readonly Permiss
 export const MODULE_KEYS = [
   "email_credit_controller",
   "voice_credit_controller",
-  "lead_follow_up_email",
+  "lead_follow_up",
   "lead_follow_up_voice",
   "ai_receptionist",
 ] as const;
@@ -296,8 +296,8 @@ export const PERMISSION_MODULES: Record<
    * capability is `mailbox` (see `MODULE_CAPABILITIES`); these are the products
    * that carry it.
    */
-  "mailbox:read": ["email_credit_controller", "lead_follow_up_email"],
-  "mailbox:manage": ["email_credit_controller", "lead_follow_up_email"],
+  "mailbox:read": ["email_credit_controller", "lead_follow_up"],
+  "mailbox:manage": ["email_credit_controller", "lead_follow_up"],
   /**
    * ⚠️ EMAIL ONLY, NOT BOTH LEAD PRODUCTS. Founder ruling 14 makes lead
    * follow-up by email and by call two separate purchases with different
@@ -306,10 +306,10 @@ export const PERMISSION_MODULES: Record<
    * access to a lead book on the strength of buying a phone product that
    * cannot yet write to it.
    */
-  "leads:read": ["lead_follow_up_email"],
-  "leads:write": ["lead_follow_up_email"],
+  "leads:read": ["lead_follow_up"],
+  "leads:write": ["lead_follow_up"],
   /** Same product as the lead keys; a different set of PEOPLE (owner alone). */
-  "lead_templates:manage": ["lead_follow_up_email"],
+  "lead_templates:manage": ["lead_follow_up"],
   /**
    * ⚠️ `core`, AND NOT BECAUSE IT IS CONVENIENT. Do-not-contact is
    * organisation-wide and crosses every product by BRD design — an entry
@@ -344,7 +344,7 @@ export const PERMISSION_MODULES: Record<
 export const MODULE_DEPENDENCIES: Record<ModuleKey, readonly ModuleKey[]> = {
   email_credit_controller: [],
   voice_credit_controller: [],
-  lead_follow_up_email: [],
+  lead_follow_up: [],
   lead_follow_up_voice: [],
   ai_receptionist: [],
 };
@@ -387,7 +387,7 @@ export const MODULE_CAPABILITIES: Record<ModuleKey, readonly Capability[]> = {
    * and "not ready" at the same time, and no honest answer existed for the
    * readiness line on its card.
    */
-  lead_follow_up_email: ["mailbox"],
+  lead_follow_up: ["mailbox"],
   lead_follow_up_voice: ["voice"],
   /**
    * ⚠️ `mailbox` IS HERE BECAUSE OF RULING 42, AND SINCE SLICE 3.1c-0 IT ALSO
@@ -467,10 +467,28 @@ export const MODULE_CATALOGUE: Record<ModuleKey, ModuleDescriptor> = {
    * "Lead Follow-up" named two products a customer buys separately. A blurb
    * promising a phone call on the screen that SELLS it is the money-bug family:
    * the screen claiming an outcome that does not happen.
+   *
+   * ⚠️ AND THE NAME WENT BACK (founder ruling 62, 2026-09-02) — WITHOUT
+   * UNDOING THAT. "by Email" was the right name while email was the only way in;
+   * the product now grows WhatsApp, Messenger and Instagram as ONE feature, so
+   * the line between this product and `lead_follow_up_voice` is no longer
+   * "email versus phone" but "typed channels versus a phone call". Ruling 14
+   * still holds: a call is a separate purchase.
    */
-  lead_follow_up_email: {
-    name: "Lead Follow-up by Email",
-    slug: "lead-follow-up-email",
+  lead_follow_up: {
+    name: "Lead Follow-up",
+    slug: "lead-follow-up",
+    /**
+     * 🚨 THE BLURB STILL SAYS MAILBOX, AND THAT IS DELIBERATE. Renaming the
+     * product is structural — a key, a folder, a URL — and costs nothing to do
+     * before the channels exist. Changing this sentence is a PROMISE, on the
+     * screen that sells it, and today the only channel Eva can answer on is
+     * email. This is the exact family of defect this file already carries two
+     * warnings about: the blurb describing a product we have not built.
+     *
+     * **Widen it in the slice that makes it true**, not in the slice that
+     * renames the folder.
+     */
     blurb: "Answers new enquiries from your mailbox, usually within minutes.",
     live: false,
   },

@@ -29,7 +29,7 @@ export class InboundAddressesController {
   /**
    * The address enquiries should be sent to, issued on first sight.
    *
-   * 402 when the organisation does not hold Lead Follow-up by Email, 403 when
+   * 402 when the organisation does not hold Lead Follow-up, 403 when
    * the caller's role does not carry `leads:read`, and 503 when this
    * environment has no inbound domain configured — three different problems
    * that need three different answers on a screen.

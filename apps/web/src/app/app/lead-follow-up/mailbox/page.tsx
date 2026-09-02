@@ -1,7 +1,7 @@
 import { MailboxScreen } from "@/capabilities/mailbox/mailbox-screen";
 
 /**
- * Lead Follow-up by Email's own mailbox (slice 3.1c-0).
+ * Lead Follow-up's own mailbox (slice 3.1c-0).
  *
  * ⚠️ A DOOR, NOT A SCREEN. The whole page is `MailboxScreen`, shared with the
  * other product and parameterised by which product is asking — ruling 44's
@@ -17,5 +17,5 @@ export default async function LeadFollowUpEmailMailboxPage({
 }: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
-  return <MailboxScreen moduleKey="lead_follow_up_email" searchParams={searchParams} />;
+  return <MailboxScreen moduleKey="lead_follow_up" searchParams={searchParams} />;
 }

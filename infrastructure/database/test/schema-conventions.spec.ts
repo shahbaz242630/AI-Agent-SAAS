@@ -970,7 +970,7 @@ describe("Schema conventions (BRD 10)", () => {
     });
 
     it("one live row per (organisation, module), and a soft-deleted one does not block re-enabling", async () => {
-      const data = { organisationId: DEMO_ORGANISATION_ID, moduleKey: "lead_follow_up_email" };
+      const data = { organisationId: DEMO_ORGANISATION_ID, moduleKey: "lead_follow_up" };
       await prisma.organisationModule.deleteMany({ where: data });
       const first = await prisma.organisationModule.create({ data });
       await expect(prisma.organisationModule.create({ data })).rejects.toThrow();
@@ -1047,7 +1047,7 @@ describe("Schema conventions (BRD 10)", () => {
       ).rejects.toThrow();
       // The OTHER product gets its own default, and that is the change.
       const other = await prisma.emailAccount.create({
-        data: mailbox(c, { isPrimary: true, moduleKey: "lead_follow_up_email" }),
+        data: mailbox(c, { isPrimary: true, moduleKey: "lead_follow_up" }),
       });
       expect(other.isPrimary).toBe(true);
       // Non-primary siblings are fine — that is the whole point of seats.

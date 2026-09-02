@@ -62,7 +62,7 @@ describe("Inbound webhook: an email becomes an enquiry", () => {
     app = await createTestApp({ receivedMail });
 
     org = await createOrgWithMembers(owner, "inbound", ["owner"], "Halloway Roofing", [
-      { moduleKey: "lead_follow_up_email" },
+      { moduleKey: "lead_follow_up" },
     ]);
     address = await issueAddress(org);
 
@@ -71,7 +71,7 @@ describe("Inbound webhook: an email becomes an enquiry", () => {
       "inbound-lapsed",
       ["owner"],
       "Lapsed Trading",
-      [{ moduleKey: "lead_follow_up_email" }],
+      [{ moduleKey: "lead_follow_up" }],
     );
     unentitledAddress = await issueAddress(unentitledOrg);
     /**
@@ -562,7 +562,7 @@ describe("Inbound webhook: an email becomes an enquiry", () => {
 
     /**
      * ⚠️ THE ADDRESS OUTLIVES THE ENTITLEMENT. A customer can stop paying for
-     * Lead Follow-up by Email while the address is still on their website. The
+     * Lead Follow-up while the address is still on their website. The
      * mail is theirs and is kept — but no lead is made for a product nobody
      * holds, and the fetch is never even attempted.
      */
@@ -575,7 +575,7 @@ describe("Inbound webhook: an email becomes an enquiry", () => {
         where: { providerMessageId: payload.data.email_id },
       });
       expect(message!.status).toBe("ignored");
-      expect(message!.failureReason).toContain("lead_follow_up_email");
+      expect(message!.failureReason).toContain("lead_follow_up");
       expect(message!.leadId).toBeNull();
       expect(await owner.lead.count({ where: { organisationId: unentitledOrg.id } })).toBe(0);
       expect(fetched, "an unentitled delivery must not cost a fetch").toHaveLength(0);

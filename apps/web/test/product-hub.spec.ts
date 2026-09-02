@@ -156,7 +156,7 @@ describe("canStartProduct", () => {
    * control has never been enforcement in this codebase.
    */
   it("refuses a real product we have not built yet", () => {
-    expect(canStartProduct("lead_follow_up_email")).toBe(false);
+    expect(canStartProduct("lead_follow_up")).toBe(false);
   });
 
   it("refuses a key that is not a product at all", () => {

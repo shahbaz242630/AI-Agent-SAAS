@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { moduleHref } from "@eva/types";
+import { moduleHref, moduleName } from "@eva/types";
 import { ApiError, apiFetch } from "@/lib/api";
 import { fetchOrganisations } from "@/lib/organisations";
 import { createClient } from "@/lib/supabase/server";
@@ -12,7 +12,7 @@ import {
   leadSourceLabel,
   leadStatusLabel,
   leadStatusTone,
-} from "@/products/lead-follow-up-email/lead-book";
+} from "@/products/lead-follow-up/lead-book";
 import { describeMoment } from "@/lib/today";
 import { EnquiryAddressPanel } from "@/capabilities/mailbox/enquiry-address-panel";
 
@@ -26,7 +26,7 @@ import { EnquiryAddressPanel } from "@/capabilities/mailbox/enquiry-address-pane
  * with whatever Eva actually does.
  *
  * ⚠️ THE 402 IS THE ORDINARY CASE HERE, NOT AN EDGE. `leads:read` is carried by
- * `lead_follow_up_email` alone, so every organisation that has not bought this
+ * `lead_follow_up` alone, so every organisation that has not bought this
  * product gets one — including, today, ours. "You haven't got this product" and
  * "your role can't" are different problems with different fixes and must never
  * share a sentence (standing rule §0d).
@@ -34,7 +34,7 @@ import { EnquiryAddressPanel } from "@/capabilities/mailbox/enquiry-address-pane
 
 /** Built from the catalogue. A literal path here is what `app-links.spec.ts`
  *  now fails on, after 29 of them went stale in a single slice. */
-const BOOK = moduleHref("lead_follow_up_email", "enquiries");
+const BOOK = moduleHref("lead_follow_up", "enquiries");
 
 interface OrganisationSummary {
   id: string;
@@ -104,7 +104,7 @@ export default async function EnquiryBookPage() {
       <Shell>
         <section className="flex w-full flex-col gap-3 rounded-[var(--radius-card)] border border-border bg-surface px-6 py-4">
           <p className="text-sm">
-            {`${organisation.name} doesn't have Lead Follow-up by Email, so there are no enquiries to show yet.`}
+            {`${organisation.name} doesn't have ${moduleName("lead_follow_up")}, so there are no enquiries to show yet.`}
           </p>
           <div>
             <Link
@@ -177,7 +177,7 @@ export default async function EnquiryBookPage() {
       {inboundAddress && (
         <EnquiryAddressPanel
           address={inboundAddress}
-          forwardingHref={moduleHref("lead_follow_up_email", "forwarding")}
+          forwardingHref={moduleHref("lead_follow_up", "forwarding")}
         />
       )}
 

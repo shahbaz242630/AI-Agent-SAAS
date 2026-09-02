@@ -11,7 +11,7 @@ import { createClient } from "@/lib/supabase/server";
  * Recording a request never to be contacted again (Slice 3.1a).
  *
  * ⚠️ `logEnquiry` USED TO LIVE HERE AND WAS REMOVED ON 2026-08-21 with the
- * manual entry form it served. Founder ruling: Lead Follow-up by Email is one
+ * manual entry form it served. Founder ruling: Lead Follow-up is one
  * mailbox in and a reply out, so an enquiry either arrives in that mailbox or
  * it does not — there is nothing for a person to type in. The three sources
  * the form offered were all call-shaped and belong to a different product.
@@ -22,7 +22,7 @@ import { createClient } from "@/lib/supabase/server";
  */
 
 /** Built from the catalogue, never written out — see `app-links.spec.ts`. */
-const BOOK = moduleHref("lead_follow_up_email", "enquiries");
+const BOOK = moduleHref("lead_follow_up", "enquiries");
 
 export interface LeadActionState {
   error?: string;

@@ -267,12 +267,12 @@ export const NAV_ICONS: Readonly<Record<string, (props: IconProps) => React.JSX.
   /* Slice 3.1a. Added WITH the screens rather than after them: the sidebar
      went half-illustrated for five weeks last time an icon key was left
      behind, and it is invisible because a missing key renders nothing. */
-  [moduleHref("lead_follow_up_email", "enquiries")]: EnquiriesIcon,
+  [moduleHref("lead_follow_up", "enquiries")]: EnquiriesIcon,
   /* Slice 3.1c-1, added WITH the screen for the reason above — a missing key
      renders nothing at all, so the row just sits unillustrated and nobody
      notices. `navigation.spec.ts` is what catches it, and it did. */
-  [moduleHref("lead_follow_up_email", "replies")]: RepliesIcon,
-  [moduleHref("lead_follow_up_email", "mailbox")]: MailboxIcon,
+  [moduleHref("lead_follow_up", "replies")]: RepliesIcon,
+  [moduleHref("lead_follow_up", "mailbox")]: MailboxIcon,
   "/app/clients": ClientsIcon,
   "/app/settings/reminders": SettingsIcon,
 };

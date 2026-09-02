@@ -29,7 +29,7 @@ const INVOICE_FOLLOW_UP: OwnerTag = "product:invoice-follow-up";
  *
  * ⚠️ THIS WAS `product:lead-follow-up` AND IT WENT STALE THE MOMENT #130
  * RENAMED THE FOLDER, on 2026-09-01. The API tags its lead controller
- * `product:lead-follow-up-email` (derived from its folder, and enforced by
+ * `product:lead-follow-up` (derived from its folder, and enforced by
  * `product-attribution.spec.ts`); this side is hand-written and was enforced by
  * nothing, so for a day the two apps filed one product under two names —
  * exactly what the note above this map says must never happen.
@@ -44,7 +44,7 @@ const INVOICE_FOLLOW_UP: OwnerTag = "product:invoice-follow-up";
  * This constant is the third, and the only one no wall was watching — the test
  * below now compares it, so the next rename cannot leave it behind.
  */
-const LEAD_FOLLOW_UP: OwnerTag = "product:lead-follow-up-email";
+const LEAD_FOLLOW_UP: OwnerTag = "product:lead-follow-up";
 
 /**
  * Route folders directly under `/app`, and who owns them.
@@ -55,7 +55,7 @@ const LEAD_FOLLOW_UP: OwnerTag = "product:lead-follow-up-email";
  */
 const APP_SECTIONS: Record<string, OwnerTag> = {
   "invoice-chasing": INVOICE_FOLLOW_UP,
-  "lead-follow-up-email": LEAD_FOLLOW_UP,
+  "lead-follow-up": LEAD_FOLLOW_UP,
   clients: "platform",
   settings: "platform",
   organisations: "platform",
@@ -94,7 +94,7 @@ const CROSSINGS: { prefix: string; owner: OwnerTag }[] = [
    * is already tagged this way for exactly this reason.
    */
   { prefix: "/app/invoice-chasing/mailbox", owner: "capability:mailbox" },
-  { prefix: "/app/lead-follow-up-email/mailbox", owner: "capability:mailbox" },
+  { prefix: "/app/lead-follow-up/mailbox", owner: "capability:mailbox" },
 ];
 
 /** Routes outside `/app` — sign-in, the auth callbacks, the Microsoft landing

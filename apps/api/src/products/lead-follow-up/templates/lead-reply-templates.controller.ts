@@ -30,7 +30,7 @@ import { OwnedBy } from "../../../common/monitoring/owner.js";
  * Cross-tenant access is always 404, never 403 (BRD 15).
  */
 @Controller("organisations/:organisationId/lead-reply-templates")
-@OwnedBy("product:lead-follow-up-email")
+@OwnedBy("product:lead-follow-up")
 export class LeadReplyTemplatesController {
   constructor(private readonly templatesService: LeadReplyTemplatesService) {}
 

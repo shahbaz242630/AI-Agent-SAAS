@@ -29,13 +29,13 @@ import { PRODUCT_NAV } from "@/lib/navigation";
  */
 
 const CONTROLS = fileURLToPath(
-  new URL("../src/app/app/lead-follow-up-email/replies/reply-controls.tsx", import.meta.url),
+  new URL("../src/app/app/lead-follow-up/replies/reply-controls.tsx", import.meta.url),
 );
 const ACTIONS = fileURLToPath(
-  new URL("../src/app/app/lead-follow-up-email/replies/actions.ts", import.meta.url),
+  new URL("../src/app/app/lead-follow-up/replies/actions.ts", import.meta.url),
 );
 const PAGE = fileURLToPath(
-  new URL("../src/app/app/lead-follow-up-email/replies/page.tsx", import.meta.url),
+  new URL("../src/app/app/lead-follow-up/replies/page.tsx", import.meta.url),
 );
 
 interface ComponentFacts {
@@ -313,12 +313,12 @@ describe("no action promises a message the screen cannot show", () => {
 
 describe("the replies screen is reachable and on the kit", () => {
   it("is in the lead product's navigation", () => {
-    const items = PRODUCT_NAV.lead_follow_up_email ?? [];
+    const items = PRODUCT_NAV.lead_follow_up ?? [];
     const replies = items.find((item) => item.label === "Replies");
     expect(replies).toBeDefined();
-    expect(replies!.href).toBe(moduleHref("lead_follow_up_email", "replies"));
+    expect(replies!.href).toBe(moduleHref("lead_follow_up", "replies"));
     // Built from the catalogue, so renaming the product cannot strand the link.
-    expect(replies!.href).toContain(MODULE_CATALOGUE.lead_follow_up_email.slug);
+    expect(replies!.href).toContain(MODULE_CATALOGUE.lead_follow_up.slug);
   });
 
   /**
@@ -340,22 +340,42 @@ describe("the replies screen is reachable and on the kit", () => {
 
   it("builds its links rather than writing them out", () => {
     const source = stripComments(readFileSync(PAGE, "utf8"));
-    expect(source).not.toContain('"/app/lead-follow-up-email');
+    expect(source).not.toContain('"/app/lead-follow-up');
   });
 });
 
-describe("the screen does not claim to send anything yet", () => {
+describe("the screen says what Eva can and cannot do, and both halves are checked", () => {
   /**
-   * ⚠️ COPY HAS NO ASSERTIONS UNLESS SOMEBODY WRITES THEM, and this project has
-   * shipped seven false sentences in one slice. Eva cannot send these replies
-   * until 3.1c-3; a screen full of Save buttons implies she can, so the page
-   * says so out loud. **When the reply ships, this test is what will fail** —
-   * which is the point: it makes changing the sentence a deliberate act rather
-   * than something nobody remembers.
+   * 🚨 THIS GUARD USED TO POINT THE WRONG WAY, AND THE SCREEN WENT FALSE ON
+   * PRODUCTION BECAUSE OF IT.
+   *
+   * It asserted that the words "being built" were PRESENT, reasoning that "when
+   * the reply ships, this test is what will fail". It does not: asserting a
+   * sentence exists fires when somebody DELETES it, never when the sentence
+   * stops being true. Slice 3.1c-3 shipped the automatic reply, nobody touched
+   * this screen, all 2,090 tests stayed green, and the page told customers Eva
+   * could not send while she was sending.
+   *
+   * ⚠️ THE FIX IS TO ASSERT THE CLAIM, NOT THE WORDS. Each half of the sentence
+   * is now checked against what is actually built, so the test fails when
+   * reality moves rather than when the prose does.
    */
-  it("says the sending half is still being built", () => {
+  it("says the automatic reply sends, because it does", () => {
     const source = stripComments(readFileSync(PAGE, "utf8"));
-    expect(source).toContain("being built");
+    expect(source).toMatch(/Eva sends the automatic reply/);
+    // The old claim, which is now false. Its return is a regression.
+    expect(source).not.toMatch(/sending these replies is the next thing being built/);
+  });
+
+  /**
+   * ⚠️ AND THIS ONE IS STILL TRUE, SO IT IS STILL ASSERTED. Sending a saved
+   * wording BY HAND is slice 3.1c-4 and does not exist. **When that ships, this
+   * is the test that fails** — and unlike its predecessor it fails for the
+   * right reason, because it is pinned to the half that is genuinely unbuilt.
+   */
+  it("still admits the by-hand half is unbuilt", () => {
+    const source = stripComments(readFileSync(PAGE, "utf8"));
+    expect(source).toMatch(/sending one by hand is the next thing being built/);
   });
 
   it("warns when no automatic reply is switched on", () => {

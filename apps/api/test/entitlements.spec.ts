@@ -388,9 +388,7 @@ describe("Module entitlements (Slice 1.6a)", () => {
      * not finished it" is a wait, "buy two other products first" is a wall.
      */
     it("refuses lead follow-up for being unbuilt, NOT for a prerequisite", async () => {
-      const response = await put(entitled, "lead_follow_up_email")
-        .send({ enabled: true })
-        .expect(400);
+      const response = await put(entitled, "lead_follow_up").send({ enabled: true }).expect(400);
       expect(response.body.message).toContain("isn't built yet");
       expect(response.body.message).not.toContain("voice_credit_controller");
       expect(response.body.message).not.toContain("Voice Credit Control");
@@ -507,7 +505,7 @@ describe("Module entitlements (Slice 1.6a)", () => {
        * never a reason to refuse the sale.
        */
       const leadAgent = response.body.find(
-        (row: { moduleKey: string }) => row.moduleKey === "lead_follow_up_email",
+        (row: { moduleKey: string }) => row.moduleKey === "lead_follow_up",
       );
       expect(leadAgent.missingDependencies).toEqual([]);
       expect(leadAgent.missingCapabilities).toContain("mailbox");
@@ -536,7 +534,7 @@ describe("Module entitlements (Slice 1.6a)", () => {
       await owner.organisationModule.create({
         data: {
           organisationId: leadOnly.id,
-          moduleKey: "lead_follow_up_email",
+          moduleKey: "lead_follow_up",
           enabled: true,
           seats: 1,
           source: "manual",
@@ -546,7 +544,7 @@ describe("Module entitlements (Slice 1.6a)", () => {
       await request(app.getHttpServer())
         // Their OWN product's mailboxes. Asking for Invoice Chasing's would
         // now be a 402: they never bought it (slice 3.1c-0).
-        .get(`/organisations/${leadOnly.id}/mailboxes?module=lead_follow_up_email`)
+        .get(`/organisations/${leadOnly.id}/mailboxes?module=lead_follow_up`)
         .set("Authorization", `Bearer ${token}`)
         .expect(200);
 
@@ -566,7 +564,7 @@ describe("Module entitlements (Slice 1.6a)", () => {
         .set("Authorization", `Bearer ${tokenFor(bare, "owner")}`)
         .expect(402);
 
-      expect(response.body.modules).toEqual(["email_credit_controller", "lead_follow_up_email"]);
+      expect(response.body.modules).toEqual(["email_credit_controller", "lead_follow_up"]);
       expect(response.body.message).toContain(" or ");
     });
 

@@ -121,7 +121,7 @@ describe("the chooser has its own chrome (founder, 2026-08-20)", () => {
       "/app/invoice-chasing",
       "/app/invoice-chasing/invoices/import",
       "/app/invoice-chasing/mailbox",
-      "/app/lead-follow-up-email/mailbox",
+      "/app/lead-follow-up/mailbox",
       "/app/settings/reminders",
       ...NAV_ITEMS.map((item) => item.href),
     ];

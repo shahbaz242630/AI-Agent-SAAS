@@ -11,7 +11,7 @@ import {
   signToken,
   type FixtureOrg,
 } from "./support.js";
-import { DEFAULT_LEAD_REPLY_TEMPLATES } from "../src/products/lead-follow-up-email/templates/default-templates.js";
+import { DEFAULT_LEAD_REPLY_TEMPLATES } from "../src/products/lead-follow-up/templates/default-templates.js";
 
 /**
  * The words Eva replies with (slice 3.1c-1) — the lead product's first owned
@@ -48,7 +48,7 @@ describe("Lead reply templates: what Eva writes back", () => {
       "reply-templates",
       ["owner", "administrator", "sales", "reception", "finance", "read_only"],
       undefined,
-      [{ moduleKey: "email_credit_controller" }, { moduleKey: "lead_follow_up_email" }],
+      [{ moduleKey: "email_credit_controller" }, { moduleKey: "lead_follow_up" }],
     );
     for (const member of org.members) {
       tokens.set(member.roleKey, await signToken({ sub: member.authUserId, email: member.email }));
@@ -168,7 +168,7 @@ describe("Lead reply templates: what Eva writes back", () => {
         "reply-templates-emptied",
         ["owner"],
         undefined,
-        [{ moduleKey: "lead_follow_up_email" }],
+        [{ moduleKey: "lead_follow_up" }],
       );
       const token = await signToken({
         sub: emptied.members[0]!.authUserId,

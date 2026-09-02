@@ -929,7 +929,7 @@ export type SetModuleInput = z.infer<typeof setModuleSchema>;
 // --- Slice 3.1a: the lead record ---
 
 /**
- * Where a lead in **Lead Follow-up by Email** can come from.
+ * Where a lead in **Lead Follow-up** can come from.
  *
  * ⚠️ ONE SOURCE, AND IT IS AN EMAIL — founder ruling 2026-08-21. This product
  * is one mailbox in and a reply out. A business puts a single address on its

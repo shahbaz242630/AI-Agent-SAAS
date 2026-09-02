@@ -54,14 +54,14 @@ describe("The inbound front door", () => {
       "front-door",
       ["owner", "sales", "finance", "read_only"],
       "Smith & Sons Plumbing Ltd",
-      [{ moduleKey: "email_credit_controller" }, { moduleKey: "lead_follow_up_email" }],
+      [{ moduleKey: "email_credit_controller" }, { moduleKey: "lead_follow_up" }],
     );
     for (const member of org.members) {
       tokens.set(member.roleKey, await signToken({ sub: member.authUserId, email: member.email }));
     }
 
     otherOrg = await createOrgWithMembers(owner, "front-door-other", ["owner"], "Other Co", [
-      { moduleKey: "lead_follow_up_email" },
+      { moduleKey: "lead_follow_up" },
     ]);
     otherToken = await signToken({
       sub: otherOrg.members[0]!.authUserId,
@@ -188,7 +188,7 @@ describe("The inbound front door", () => {
           "front-door-unconfigured",
           ["owner"],
           "Unconfigured Ltd",
-          [{ moduleKey: "lead_follow_up_email" }],
+          [{ moduleKey: "lead_follow_up" }],
         );
         const token = await signToken({
           sub: freshOrg.members[0]!.authUserId,
@@ -265,7 +265,7 @@ describe("The inbound front door", () => {
         "front-door-revoked",
         ["owner"],
         "Revoked Ltd",
-        [{ moduleKey: "lead_follow_up_email" }],
+        [{ moduleKey: "lead_follow_up" }],
       );
       const token = await signToken({
         sub: revokedOrg.members[0]!.authUserId,

@@ -1,8 +1,19 @@
 import type { ProductManifest } from "../../platform/registry/product-manifest.js";
 
 /**
- * Lead Follow-up by Email — an enquiry arrives at an address we own, Eva reads
- * it, files it, and answers it from the customer's own mailbox.
+ * Lead Follow-up — an enquiry arrives, Eva reads it, files it, and answers it
+ * as the customer, from the customer's own account.
+ *
+ * ⚠️ THE NAME LOST "BY EMAIL" ON 2026-09-02 (founder ruling 62), AND THE CODE
+ * HAS NOT CAUGHT UP YET — ON PURPOSE. Email is still the only channel Eva can
+ * receive or answer on; WhatsApp, Messenger and Instagram are the next slices.
+ * The rename came first because a product key is structural (a database CHECK,
+ * a folder, a URL) and costs one migration today against one row, versus a
+ * migration against live customer rows later.
+ *
+ * **So every "mailbox" in this folder is still literally a mailbox.** When the
+ * second channel lands, the thing to generalise is the PORT — the way this
+ * product asks for somewhere to send from — not the word.
  *
  * ⚠️ THIS FOLDER DID NOT EXIST UNTIL SLICE 3.1c-1, AND ITS ABSENCE WAS CORRECT.
  * Everything the product did up to 3.1b was either the LEAD RECORD (platform —
@@ -21,8 +32,8 @@ import type { ProductManifest } from "../../platform/registry/product-manifest.j
  * enquiry book for good. That trap was proposed once and caught; the reasoning
  * is in `table-ownership.ts` beside `lead`.
  */
-export const LEAD_FOLLOW_UP_EMAIL: ProductManifest = {
-  key: "lead_follow_up_email",
+export const LEAD_FOLLOW_UP: ProductManifest = {
+  key: "lead_follow_up",
   /**
    * ⚠️ BOTH ARE ABOUT THE REPLY, WHICH IS THE WHOLE OF WHAT THIS PRODUCT
    * OWNS. `leadReplyTemplate` is the words a customer may send;

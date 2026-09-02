@@ -44,7 +44,7 @@ export const PLATFORM_TABLES = [
    * one enquiry is the failure that ruling avoided for clients.
    *
    * The RECORD is platform; ACCESS is product-gated. `leads:read` and
-   * `leads:write` are carried by `lead_follow_up_email` alone today
+   * `leads:write` are carried by `lead_follow_up` alone today
    * (`PERMISSION_MODULES`), so a customer holding only invoice chasing gets
    * nothing — the table being shared is not the same as the data being open.
    *

@@ -76,7 +76,7 @@ function hourIn(timezone: string, now: Date): number | null {
  *
  * ⚠️ LIVES HERE, NOT IN A PRODUCT, SINCE 2026-08-21. It was written for the
  * enquiry book and the do-not-contact screen needs the same sentence — and that
- * screen is platform, so importing it from `products/lead-follow-up-email` would be a
+ * screen is platform, so importing it from `products/lead-follow-up` would be a
  * boundary violation and, worse, would make a platform screen depend on a
  * product a customer might not own. Same rule as the rest of this file: the
  * organisation's clock, never the server's.

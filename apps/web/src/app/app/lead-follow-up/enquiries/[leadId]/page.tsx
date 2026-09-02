@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
-import { moduleHref } from "@eva/types";
+import { moduleHref, moduleName } from "@eva/types";
 import { ApiError, apiFetch } from "@/lib/api";
 import { fetchOrganisations } from "@/lib/organisations";
 import { can } from "@/lib/permissions";
@@ -14,7 +14,7 @@ import {
   leadStatusLabel,
   leadStatusTone,
   type AlsoAffected,
-} from "@/products/lead-follow-up-email/lead-book";
+} from "@/products/lead-follow-up/lead-book";
 import { describeMoment } from "@/lib/today";
 import { StopContactingControl } from "./stop-contacting-control";
 
@@ -35,7 +35,7 @@ import { StopContactingControl } from "./stop-contacting-control";
  * property of the database rather than an omission from the UI.
  */
 
-const BOOK = moduleHref("lead_follow_up_email", "enquiries");
+const BOOK = moduleHref("lead_follow_up", "enquiries");
 
 interface OrganisationSummary {
   id: string;
@@ -124,7 +124,7 @@ export default async function EnquiryDetailPage({
     return (
       <Shell>
         <p className="w-full text-sm text-muted-foreground">
-          {`${organisation.name} doesn't have Lead Follow-up by Email, so there are no enquiries to show.`}
+          {`${organisation.name} doesn't have ${moduleName("lead_follow_up")}, so there are no enquiries to show.`}
         </p>
       </Shell>
     );

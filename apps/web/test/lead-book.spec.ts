@@ -9,7 +9,7 @@ import {
   leadStatusLabel,
   leadStatusTone,
   type AlsoAffected,
-} from "@/products/lead-follow-up-email/lead-book";
+} from "@/products/lead-follow-up/lead-book";
 import { describeMoment } from "@/lib/today";
 
 describe("lead vocabulary", () => {
@@ -19,7 +19,7 @@ describe("lead vocabulary", () => {
 
   /**
    * ⚠️ THESE THREE ARE RETIRED, NOT GONE, AND ONE IS SITTING IN PRODUCTION.
-   * They were removed from Lead Follow-up by Email on 2026-08-21 — all three
+   * They were removed from Lead Follow-up on 2026-08-21 — all three
    * are call-shaped and belong to Lead Follow-up by Call — but migration 0027
    * widened the CHECK rather than narrowing it, because lead `cc1c3243` is a
    * `callback_request` and evidence must never be rewritten. So the book still

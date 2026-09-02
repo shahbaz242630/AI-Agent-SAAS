@@ -18,7 +18,7 @@ import { createClient } from "@/lib/supabase/server";
  */
 
 /** Built from the catalogue, never written out — see `app-links.spec.ts`. */
-const REPLIES = moduleHref("lead_follow_up_email", "replies");
+const REPLIES = moduleHref("lead_follow_up", "replies");
 
 export interface ReplyTemplateActionState {
   error?: string;

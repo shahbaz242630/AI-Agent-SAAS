@@ -1,8 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  composeReply,
-  replySubject,
-} from "../src/products/lead-follow-up-email/reply/compose-reply.js";
+import { composeReply, replySubject } from "../src/products/lead-follow-up/reply/compose-reply.js";
 
 /**
  * The message Eva actually sends back (slice 3.1c-3).
