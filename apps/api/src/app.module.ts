@@ -17,6 +17,7 @@ import { LeadReplyTemplatesModule } from "./products/lead-follow-up/templates/le
 import { LeadReplyModule } from "./products/lead-follow-up/reply/lead-reply.module.js";
 import { NewLeadHandlersModule } from "./products/new-lead-handlers.module.js";
 import { MailboxesModule } from "./capabilities/mailbox/mailboxes.module.js";
+import { MessagingModule } from "./capabilities/messaging/messaging.module.js";
 import { MonitoringModule } from "./platform/monitoring/monitoring.module.js";
 import { OrganisationsModule } from "./platform/organisations/organisations.module.js";
 import { RemindersModule } from "./products/invoice-follow-up/reminders/reminders.module.js";
@@ -45,6 +46,7 @@ import { sentryErrorReporter } from "./common/monitoring/sentry.js";
     InvoiceDocumentsModule,
     RemindersModule,
     MailboxesModule,
+    MessagingModule,
     EntitlementsModule,
     LeadsModule,
     LeadReplyTemplatesModule,

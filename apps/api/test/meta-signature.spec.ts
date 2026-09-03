@@ -37,7 +37,9 @@ describe("verifying a Meta webhook signature", () => {
 
   it("refuses a payload whose body was altered after signing", () => {
     const signature = sign(SECRET, body);
-    const tampered = Buffer.from(JSON.stringify({ object: "whatsapp_business_account", entry: [1] }));
+    const tampered = Buffer.from(
+      JSON.stringify({ object: "whatsapp_business_account", entry: [1] }),
+    );
     expect(verifyMetaSignature(SECRET, signature, tampered).ok).toBe(false);
   });
 

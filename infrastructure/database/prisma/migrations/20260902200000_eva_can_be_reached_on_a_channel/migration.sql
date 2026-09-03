@@ -169,6 +169,32 @@ CREATE POLICY tenant_isolation ON "channel_connections"
   USING ("organisation_id" = NULLIF(current_setting('app.current_org', true), '')::uuid)
   WITH CHECK ("organisation_id" = NULLIF(current_setting('app.current_org', true), '')::uuid);
 
+-- ---------------------------------------------------------------------------
+-- Routing: how a webhook with no tenant finds its organisation.
+-- ---------------------------------------------------------------------------
+--
+-- ⚠️ ADDED 2026-09-03, BEFORE THIS MIGRATION WAS APPLIED ANYWHERE. The first
+-- draft had only `tenant_isolation`, which would have made the routing lookup
+-- return nothing: a Meta webhook arrives naming a WhatsApp Business Account and
+-- a phone number id, and no organisation — so `app.current_org` is unset at
+-- the moment we most need to read this table. Migration 0029 solved the same
+-- problem for inbound mail with `inbound_address_routing`, and this is that
+-- policy for channels.
+--
+-- ⚠️ NOTE WHAT IT CANNOT DO. It matches one live row by the EXACT asset key
+-- (`channel:account:asset`), so a caller must already know the key to read
+-- anything at all — it cannot list connections, cannot walk from one
+-- organisation to another, and returns nothing when the GUC is unset. The
+-- webhook knows the key because Meta put it in the payload; nobody else has a
+-- reason to. SELECT only: routing never writes.
+CREATE POLICY channel_asset_routing ON "channel_connections"
+  FOR SELECT
+  USING (
+    "deleted_at" IS NULL
+    AND ("channel" || ':' || "external_account_id" || ':' || COALESCE("external_asset_id", ''))
+        = NULLIF(current_setting('app.current_channel_asset', true), '')
+  );
+
 ALTER TABLE "inbound_channel_messages" ENABLE ROW LEVEL SECURITY;
 ALTER TABLE "inbound_channel_messages" FORCE ROW LEVEL SECURITY;
 CREATE POLICY tenant_isolation ON "inbound_channel_messages"

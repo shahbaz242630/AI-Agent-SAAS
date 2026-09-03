@@ -6,5 +6,6 @@ export {
   withUser,
   withAuthIdentity,
   withInboundAddress,
+  withChannelAsset,
   type TenantContext,
 } from "./tenant.js";

@@ -107,9 +107,7 @@ export interface VerificationQuery {
   challenge: string | null;
 }
 
-export type VerificationResult =
-  | { ok: true; challenge: string }
-  | { ok: false; reason: string };
+export type VerificationResult = { ok: true; challenge: string } | { ok: false; reason: string };
 
 export function verifySubscriptionHandshake(
   configuredToken: string,
