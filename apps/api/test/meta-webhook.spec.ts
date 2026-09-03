@@ -190,6 +190,30 @@ describe("Meta webhook: a WhatsApp message is written down", () => {
         .expect(403);
     });
 
+    /**
+     * 🚨 THE REFLECTED VALUE. CodeQL flagged the echo (`js/reflected-xss`) on
+     * PR #136. A correct token with a challenge carrying markup is refused —
+     * not escaped, refused — and the successful echo carries `nosniff` so a
+     * browser cannot second-guess the plain-text content type.
+     */
+    it("refuses a challenge carrying markup even with the right token, and marks the echo nosniff", async () => {
+      const response = await request(app.getHttpServer())
+        .get("/integrations/meta/webhook")
+        .query({
+          "hub.mode": "subscribe",
+          "hub.verify_token": VERIFY_TOKEN,
+          "hub.challenge": "<script>alert(1)</script>",
+        })
+        .expect(403);
+      expect(response.text).not.toContain("<script>");
+
+      const ok = await request(app.getHttpServer())
+        .get("/integrations/meta/webhook")
+        .query({ "hub.mode": "subscribe", "hub.verify_token": VERIFY_TOKEN, "hub.challenge": "42" })
+        .expect(200);
+      expect(ok.headers["x-content-type-options"]).toBe("nosniff");
+    });
+
     it("refuses everything when no verify token is configured — even the empty token", async () => {
       await request(unconfigured.getHttpServer())
         .get("/integrations/meta/webhook")

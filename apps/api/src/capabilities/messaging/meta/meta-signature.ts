@@ -109,6 +109,19 @@ export interface VerificationQuery {
 
 export type VerificationResult = { ok: true; challenge: string } | { ok: false; reason: string };
 
+/**
+ * What a challenge is allowed to look like before we will echo it.
+ *
+ * ⚠️ THE ECHO IS A REFLECTED VALUE ON A PUBLIC ROUTE, AND CODEQL SAID SO
+ * (PR #136, `js/reflected-xss`, high). The body is served as `text/plain`
+ * with `nosniff`, so a browser would not run it — but "the browser would not"
+ * is a weaker guarantee than "there is nothing to run". Meta's challenge is a
+ * random integer, so a plain token is all we ever need to echo: digits,
+ * letters and the four unreserved URL characters, up to 256 of them. Anything
+ * else is not a handshake and is refused before it reaches the response.
+ */
+const PLAIN_CHALLENGE = /^[0-9A-Za-z._~-]{1,256}$/;
+
 export function verifySubscriptionHandshake(
   configuredToken: string,
   query: VerificationQuery,
@@ -116,6 +129,9 @@ export function verifySubscriptionHandshake(
   if (!configuredToken) return { ok: false, reason: "no verify token is configured" };
   if (query.mode !== "subscribe") return { ok: false, reason: "hub.mode is not subscribe" };
   if (query.challenge === null) return { ok: false, reason: "hub.challenge is missing" };
+  if (!PLAIN_CHALLENGE.test(query.challenge)) {
+    return { ok: false, reason: "hub.challenge is not a plain token" };
+  }
   /**
    * Constant-time again. This one is lower stakes than the payload signature —
    * the token guards which endpoint Meta talks to, not what it is allowed to

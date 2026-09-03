@@ -178,4 +178,41 @@ describe("the subscription handshake Meta performs before delivering anything", 
     });
     expect(result.ok).toBe(false);
   });
+
+  /**
+   * 🚨 THE CHALLENGE IS REFLECTED INTO THE RESPONSE OF A PUBLIC ROUTE. CodeQL
+   * flagged the echo as reflected XSS on PR #136. Meta's challenge is a random
+   * integer, so only a plain token is ever echoed; anything carrying markup,
+   * whitespace or an unbounded length is refused before it can reach a body.
+   * ⚠️ MUST-FAIL CASES: a verifier that echoed everything passes the test above
+   * and every one of these.
+   */
+  it("refuses a challenge that is not a plain token, so nothing unsafe is ever echoed", () => {
+    for (const challenge of [
+      "<script>alert(1)</script>",
+      '"><img src=x onerror=alert(1)>',
+      "1158201444 ",
+      "1158201444\n",
+      "",
+      "a".repeat(257),
+    ]) {
+      const result = verifySubscriptionHandshake(TOKEN, {
+        mode: "subscribe",
+        token: TOKEN,
+        challenge,
+      });
+      expect(result.ok, `should refuse ${JSON.stringify(challenge)}`).toBe(false);
+    }
+  });
+
+  it("accepts the shapes Meta actually sends: digits, and the unreserved URL characters", () => {
+    for (const challenge of ["1158201444", "abc-DEF_123.~", "a".repeat(256)]) {
+      const result = verifySubscriptionHandshake(TOKEN, {
+        mode: "subscribe",
+        token: TOKEN,
+        challenge,
+      });
+      expect(result).toEqual({ ok: true, challenge });
+    }
+  });
 });

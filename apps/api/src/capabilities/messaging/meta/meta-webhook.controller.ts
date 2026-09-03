@@ -63,10 +63,18 @@ export class MetaWebhookController {
    * Meta compares the response body byte for byte to the string it sent, so
    * `{"challenge":"…"}` fails verification while looking entirely reasonable.
    * Hence `text/plain` and a bare string.
+   *
+   * ⚠️ AND IT IS A REFLECTED VALUE ON A PUBLIC ROUTE. Two defences, because
+   * CodeQL flagged exactly this line (`js/reflected-xss`): the challenge is
+   * only echoed if `verifySubscriptionHandshake` found it to be a plain token
+   * (Meta's is a random integer), and `nosniff` stops a browser second-guessing
+   * the plain-text content type. A challenge carrying markup is refused, not
+   * escaped — Meta never sends one, so there is nothing legitimate to lose.
    */
   @Get("webhook")
   @Public()
   @Header("Content-Type", "text/plain; charset=utf-8")
+  @Header("X-Content-Type-Options", "nosniff")
   handshake(@Query() query: Record<string, string | string[] | undefined>): string {
     const result = verifySubscriptionHandshake(this.env.WHATSAPP_VERIFY_TOKEN, {
       mode: single(query["hub.mode"]),
