@@ -90,6 +90,31 @@ export async function withInboundAddress<T>(
 }
 
 /**
+ * Inbound-channel variant: declares only the asset a message arrived at, for
+ * the one read that resolves a channel account -> its organisation (slice 3.2c).
+ *
+ * The same problem as `withInboundAddress`, one channel over: a Meta webhook
+ * names a WhatsApp Business Account and a phone number id and nothing of ours.
+ * Backed by the SELECT-only `channel_asset_routing` policy (migration 0040),
+ * keyed by `channel:account:asset`, failing closed when unset.
+ *
+ * ⚠️ THE CALLER MUST ALREADY KNOW THE KEY. The policy matches one live row by
+ * exact key, so this cannot enumerate connections or cross from one
+ * organisation to another. Do not widen it.
+ */
+export async function withChannelAsset<T>(
+  prisma: EvaPrismaClient,
+  asset: { channel: string; externalAccountId: string; externalAssetId: string | null },
+  fn: (tx: EvaPrismaClient) => Promise<T>,
+): Promise<T> {
+  const key = `${asset.channel}:${asset.externalAccountId}:${asset.externalAssetId ?? ""}`;
+  return prisma.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT set_config('app.current_channel_asset', ${key}, true)`;
+    return fn(tx as unknown as EvaPrismaClient);
+  });
+}
+
+/**
  * Login-path variant: declares only the user, for resolving "which
  * organisations am I a member of" before a tenant is chosen.
  */

@@ -83,6 +83,14 @@ export const PLATFORM_TABLES = [
  */
 export const CAPABILITY_TABLES = {
   mailbox: ["emailAccount", "inboundAddress", "inboundMessage", "inboundForwardingRequest"],
+  /**
+   * The Meta channels — WhatsApp today, Messenger and Instagram on the same
+   * app later (slice 3.2c, migration 0040, founder ruling 65). The same split
+   * as the mailbox pair: `channelConnection` is a door somebody connected,
+   * `inboundChannelMessage` is what came through it. Neither knows what a lead
+   * is; the product decides what a delivery MEANS.
+   */
+  messaging: ["channelConnection", "inboundChannelMessage"],
 } as const;
 
 /**

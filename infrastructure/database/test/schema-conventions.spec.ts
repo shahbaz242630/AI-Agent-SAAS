@@ -82,6 +82,7 @@ describe("Schema conventions (BRD 10)", () => {
     expect(rows.map((r) => r.table_name).sort()).toEqual([
       "_prisma_migrations",
       "audit_logs",
+      "channel_connections",
       "consent_texts",
       "contacts",
       "customers",
@@ -90,6 +91,7 @@ describe("Schema conventions (BRD 10)", () => {
       "import_rows",
       "imports",
       "inbound_addresses",
+      "inbound_channel_messages",
       "inbound_forwarding_requests",
       "inbound_messages",
       "invoice_documents",
@@ -145,6 +147,9 @@ describe("Schema conventions (BRD 10)", () => {
     "lead_evidence",
     "leads",
     "organisation_modules",
+    // Slice 3.2c (migration 0040): the Meta channel pair.
+    "channel_connections",
+    "inbound_channel_messages",
   ])("tenant-owned table %s has a non-nullable organisation_id", async (table) => {
     const cols = await columnsOf(table);
     const orgColumn = cols.find((c) => c.column_name === "organisation_id");
@@ -218,6 +223,8 @@ describe("Schema conventions (BRD 10)", () => {
     "organisation_settings",
     "organisations",
     "users",
+    // A connection is retired, never destroyed — the mailbox rule, one channel over.
+    "channel_connections",
   ])("soft-deletable table %s has deleted_at", async (table) => {
     const names = (await columnsOf(table)).map((c) => c.column_name);
     expect(names).toContain("deleted_at");

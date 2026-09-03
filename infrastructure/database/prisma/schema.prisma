@@ -48,6 +48,8 @@ model Organisation {
   inboundForwardingRequests InboundForwardingRequest[]
   leadReplyTemplates LeadReplyTemplate[]
   leadReplyDecisions LeadReplyDecision[]
+  channelConnections ChannelConnection[]
+  inboundChannelMessages InboundChannelMessage[]
 
   @@map("organisations")
 }
@@ -763,6 +765,9 @@ model Lead {
   /// because a foreign key has no cardinality of its own; in practice one, and
   /// `inbound_messages.provider_message_id` being unique is what keeps it one.
   inboundMessages InboundMessage[]
+  /// The channel delivery this lead was derived from (3.2c → 3.3). Same
+  /// cardinality argument as `inboundMessages`; the provider id is unique.
+  inboundChannelMessages InboundChannelMessage[]
   /// What Eva decided about this enquiry (3.1c-3). At most one live row.
   replyDecision   LeadReplyDecision[]
 
@@ -983,6 +988,110 @@ model InboundMessage {
   @@index([organisationId])
   @@index([organisationId, status, receivedAt(sort: Desc)])
   @@map("inbound_messages")
+}
+
+/// A channel account that belongs to an organisation (slice 3.2c, migration 0040).
+///
+/// 🚨 THIS TABLE IS HOW AN INBOUND MESSAGE FINDS ITS ORGANISATION, AND IT IS
+/// THE ONLY WAY. Meta's webhook carries no tenant of ours — it names its own
+/// asset ids. Every downstream act (a lead in a named organisation, and later a
+/// reply sent as that customer) rests on this lookup, which is why the asset
+/// index below is unique ACROSS THE WHOLE TABLE and deliberately not
+/// organisation-scoped: two organisations claiming one phone number id would
+/// file a stranger's enquiry in the wrong book.
+///
+/// Shared across the three Meta channels (founder ruling 65, 2026-09-03):
+/// WhatsApp today, Messenger and Instagram on the same app, signature and
+/// envelope later. The CHECK still permits only `whatsapp`; adding a channel
+/// is a migration.
+///
+/// ⚠️ ONE INDEX CANNOT BE EXPRESSED HERE — the 0017/0034 precedent. Migration
+/// 0040 creates `channel_connections_asset_key` as a PARTIAL unique index on
+/// `(channel, external_account_id, COALESCE(external_asset_id, ''))
+/// WHERE deleted_at IS NULL`. Prisma has no syntax for the COALESCE or the
+/// WHERE, so the migration is the only record of it.
+model ChannelConnection {
+  id                String    @id @default(uuid()) @db.Uuid
+  organisationId    String    @map("organisation_id") @db.Uuid
+  /// Which product this connection serves. A mailbox belongs to ONE product
+  /// (rulings 36/49) and a channel is the same kind of thing.
+  moduleKey         String    @map("module_key")
+  channel           String
+  /// The account the asset hangs off: a WhatsApp Business Account id today, a
+  /// Page id for Messenger, an Instagram account id later.
+  externalAccountId String    @map("external_account_id")
+  /// The thing messages actually arrive at: WhatsApp's phone number id. Null
+  /// for channels where the account IS the endpoint.
+  externalAssetId   String?   @map("external_asset_id")
+  /// What a human would recognise it by — the display phone number. Never
+  /// used for routing.
+  displayName       String?   @map("display_name")
+  /// connected | needs_reconnect | disconnected
+  status            String    @default("connected")
+  connectedBy       String?   @map("connected_by") @db.Uuid
+  createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt         DateTime? @map("deleted_at") @db.Timestamptz(6)
+  organisation      Organisation            @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+  messages          InboundChannelMessage[]
+
+  @@index([organisationId])
+  @@map("channel_connections")
+}
+
+/// What arrived on a channel (slice 3.2c, migration 0040).
+///
+/// ⚠️ A SEPARATE TABLE FROM `InboundMessage`, ON PURPOSE. That one is email to
+/// its bones — a NOT NULL address FK, a `delivered_to`, a `subject`, an
+/// `html_body`. A WhatsApp delivery has a phone number, a message type and
+/// text. Widening the email table would be four nullable columns and a FK that
+/// stops meaning anything.
+///
+/// ⚠️ AND META KEEPS NO HISTORY. There is no API for fetching past webhooks;
+/// what is not stored here is gone. `payload` is the message as it arrived.
+///
+/// ⚠️ ONE INDEX CANNOT BE EXPRESSED HERE. Migration 0040 creates
+/// `inbound_channel_messages_waiting_idx` on `(organisation_id, received_at
+/// DESC) WHERE status = 'received'`. Prisma has no partial-index syntax, so
+/// the migration is the only record of it.
+model InboundChannelMessage {
+  id                String    @id @default(uuid()) @db.Uuid
+  organisationId    String    @map("organisation_id") @db.Uuid
+  connectionId      String    @map("connection_id") @db.Uuid
+  channel           String
+  /// ⚠️ THE IDEMPOTENCY KEY. Meta retries anything that does not answer 200 —
+  /// for up to 7 days, to every app subscribed to the account. Unique per
+  /// channel, so the second delivery is a no-op instead of a second enquiry.
+  providerMessageId String    @map("provider_message_id")
+  /// Who sent it, in the channel's own form: WhatsApp's `wa_id`, E.164 digits
+  /// without the plus.
+  fromIdentifier    String    @map("from_identifier")
+  /// Their profile name, as WhatsApp reported it. Theirs, not ours.
+  fromDisplayName   String?   @map("from_display_name")
+  /// text | image | audio | video | document | sticker | location | contacts …
+  /// Stored rather than filtered: a photo of the leaking roof may BE the enquiry.
+  messageType       String    @map("message_type")
+  /// Null for a message with no text at all (a bare image, a sticker).
+  textBody          String?   @map("text_body")
+  /// The message object verbatim, plus the sender's contact entry and the
+  /// receiving number's metadata from the same webhook.
+  payload           Json
+  /// received | converted | ignored | failed
+  status            String    @default("received")
+  failureReason     String?   @map("failure_reason")
+  /// Set when a message becomes a lead (3.3). Null until then.
+  leadId            String?   @map("lead_id") @db.Uuid
+  /// ⚠️ THEIR CLOCK, NOT OURS — the same rule as `Lead.receivedAt`.
+  receivedAt        DateTime  @map("received_at") @db.Timestamptz(6)
+  createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  organisation      Organisation      @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+  connection        ChannelConnection @relation(fields: [connectionId], references: [id], onDelete: Restrict)
+  lead              Lead?             @relation(fields: [leadId], references: [id], onDelete: SetNull)
+
+  @@unique([channel, providerMessageId], map: "inbound_channel_messages_provider_message_key")
+  @@index([organisationId])
+  @@map("inbound_channel_messages")
 }
 
 /// The wording Eva replies to an enquiry with (slice 3.1c-1, migration 0035).

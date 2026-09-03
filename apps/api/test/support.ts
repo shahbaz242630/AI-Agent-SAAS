@@ -84,6 +84,11 @@ const testEnv: ApiEnv = {
   GOOGLE_CLIENT_ID: "test-google-client-id.apps.googleusercontent.com",
   GOOGLE_CLIENT_SECRET: "test-google-client-secret", // gitleaks:allow — fake test fixture
   GOOGLE_OAUTH_REDIRECT_URI: "http://localhost:3001/integrations/google/callback",
+  // Slice 3.2c. Empty on purpose: the WhatsApp guard must refuse everything
+  // when unconfigured, and these fixtures are where that state is exercised.
+  META_APP_ID: "",
+  META_APP_SECRET: "",
+  WHATSAPP_VERIFY_TOKEN: "",
 };
 
 interface TestKeys {

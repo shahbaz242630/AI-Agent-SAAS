@@ -156,6 +156,9 @@ describe("What the application may destroy", () => {
     "lead_reply_templates",
     "lead_reply_decisions",
     "inbound_messages",
+    // Slice 3.2c (migration 0040): a connection is retired, a delivery is evidence.
+    "channel_connections",
+    "inbound_channel_messages",
   ] as const;
 
   it.each(NEVER_HARD_DELETED)("%s cannot be hard-deleted by the application", async (table) => {
