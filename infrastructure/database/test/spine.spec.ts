@@ -454,7 +454,7 @@ describe("The backfill: every row that already exists finds its place (migration
     await lead({
       key: "founder",
       contactName: "Shahbaz",
-      contactPhone: "+971 55 941 5544",
+      contactPhone: "+971 50 000 0001",
       receivedAt: t.first,
     });
     await lead({
@@ -521,7 +521,7 @@ describe("The backfill: every row that already exists finds its place (migration
         connectionId,
         channel: "whatsapp",
         providerMessageId: `wamid.${suffix}`,
-        fromIdentifier: "971559415544",
+        fromIdentifier: "971500000001",
         fromDisplayName: "Shahbaz Malik",
         messageType: "text",
         textBody: "Hey partner how we doing",
@@ -638,8 +638,8 @@ describe("The backfill: every row that already exists finds its place (migration
     expect(founder.person).not.toBeNull();
     expect(founder.person!.displayName).toBe("Shahbaz");
     expect(founder.person!.identities.map((i) => [i.kind, i.value, i.verification])).toEqual([
-      ["phone", "+971559415544", "inbound"],
-      ["wa_id", "971559415544", "inbound"],
+      ["phone", "+971500000001", "inbound"],
+      ["wa_id", "971500000001", "inbound"],
     ]);
     // Hand-logged: no delivery, so no thread of its own.
     expect(founder.originConversationId).toBeNull();
