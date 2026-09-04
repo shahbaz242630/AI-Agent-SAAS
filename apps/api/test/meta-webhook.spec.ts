@@ -269,10 +269,11 @@ describe("Meta webhook: a WhatsApp message is written down", () => {
         fromDisplayName: "Jane Smith",
         messageType: "text",
         textBody: "Hi, my roof is leaking above the kitchen.",
-        status: "received",
+        // Since 3.3b a stored delivery IS an enquiry (or a message on one).
+        status: "converted",
         failureReason: null,
-        leadId: null,
       });
+      expect(row.leadId).not.toBeNull();
       expect(row.receivedAt.toISOString()).toBe("2024-09-03T13:40:00.000Z");
       expect((row.payload as { message: unknown }).message).toEqual(message);
     });
@@ -404,6 +405,239 @@ describe("Meta webhook: a WhatsApp message is written down", () => {
       const fresh = textMessage("new");
       const response = await post(app, webhook([old, fresh])).expect(200);
       expect(response.body).toMatchObject({ status: "received", stored: 1, duplicates: 1 });
+    });
+  });
+
+  /**
+   * A WhatsApp becomes an enquiry (slice 3.3b, rulings 62, 75–77). The
+   * delivery is written down as before; in the same transaction it now gains
+   * a person, a thread with its 24-hour window, a canonical message and a
+   * lead with its evidence — and the products are told, through the same port
+   * the mail door uses, after the transaction commits.
+   */
+  describe("an enquiry, on the spine (3.3b)", () => {
+    /** A fresh number per case: ruling 76 files a second message on the first enquiry. */
+    const freshNumber = () => `4479${String(Math.floor(Math.random() * 1e8)).padStart(8, "0")}`;
+    const leadFor = (providerMessageId: string) =>
+      owner.lead.findFirst({
+        where: { evidence: { externalId: providerMessageId } },
+        include: { evidence: true },
+      });
+
+    it("turns a first message into an enquiry with its evidence, its person, its stage and its thread", async () => {
+      const from = freshNumber();
+      const message = textMessage("Hi, can you quote for a new bathroom?", from);
+      await post(
+        app,
+        webhook([message], { contacts: [{ profile: { name: "Priya Patel" }, wa_id: from }] }),
+      ).expect(200);
+
+      const lead = await leadFor(message.id);
+      expect(lead).not.toBeNull();
+      expect(lead).toMatchObject({
+        organisationId: org.id,
+        source: "whatsapp_enquiry",
+        contactName: "Priya Patel",
+        contactEmail: null,
+        contactPhone: `+${from}`,
+        enquiry: "Hi, can you quote for a new bathroom?",
+        status: "new",
+        // No person at the business did this.
+        createdBy: null,
+      });
+      // Their clock, not ours.
+      expect(lead!.receivedAt.toISOString()).toBe("2024-09-03T13:40:00.000Z");
+      expect(lead!.evidence).toMatchObject({
+        channel: "whatsapp_enquiry",
+        externalId: message.id,
+        senderAddress: `+${from}`,
+        // The number of ours it came to, from the webhook's own metadata.
+        recipientAddress: "+447700900123",
+        subject: null,
+        rawExcerpt: "Hi, can you quote for a new bathroom?",
+      });
+
+      const newStage = await owner.pipelineStage.findFirstOrThrow({
+        where: { organisationId: org.id, systemKey: "new" },
+      });
+      expect(lead!.pipelineStageId).toBe(newStage.id);
+      expect(lead!.personId).not.toBeNull();
+      expect(lead!.originConversationId).not.toBeNull();
+
+      const person = await owner.person.findUniqueOrThrow({
+        where: { id: lead!.personId! },
+        include: { identities: true },
+      });
+      expect(person.displayName).toBe("Priya Patel");
+      expect(person.primaryPhone).toBe(`+${from}`);
+      expect(person.identities.map((i) => [i.kind, i.value, i.verification]).sort()).toEqual([
+        ["phone", `+${from}`, "inbound"],
+        ["wa_id", from, "inbound"],
+      ]);
+
+      const thread = await owner.conversation.findUniqueOrThrow({
+        where: { id: lead!.originConversationId! },
+      });
+      expect(thread).toMatchObject({
+        channel: "whatsapp",
+        status: "open",
+        leadId: lead!.id,
+        personId: person.id,
+      });
+      expect(thread.channelConnectionId).not.toBeNull();
+      // The window 3.4 will read: 24 hours from THEIR message.
+      expect(thread.replyWindowExpiresAt?.toISOString()).toBe("2024-09-04T13:40:00.000Z");
+
+      const raw = await owner.inboundChannelMessage.findFirstOrThrow({
+        where: { providerMessageId: message.id },
+      });
+      expect(raw).toMatchObject({ status: "converted", leadId: lead!.id });
+      const canonical = await owner.message.findFirstOrThrow({
+        where: { sourceTable: "inbound_channel_messages", sourceId: raw.id },
+      });
+      expect(canonical).toMatchObject({
+        conversationId: thread.id,
+        personId: person.id,
+        channel: "whatsapp",
+        direction: "inbound",
+        senderKind: "person",
+        contentType: "text",
+        subject: null,
+        bodyText: "Hi, can you quote for a new bathroom?",
+        providerMessageId: message.id,
+      });
+    });
+
+    /**
+     * ⚠️ THE HAND-OFF, THROUGH THE REAL WIRING. The reply product's handler is
+     * registered at the composition root and must be reached from THIS door
+     * too — the `@Global()` lesson: a port that silently has no listeners
+     * looks exactly like one that does. It finds no channel to reply on and
+     * writes a held decision; that is 3.4's job to change.
+     */
+    it("hands the enquiry to the products, which hold it because nothing can reply on WhatsApp yet", async () => {
+      const from = freshNumber();
+      const message = textMessage("Are you open Saturday?", from);
+      await post(app, webhook([message])).expect(200);
+
+      const lead = await leadFor(message.id);
+      const decision = await owner.leadReplyDecision.findFirst({
+        where: { leadId: lead!.id, deletedAt: null },
+      });
+      expect(decision, "the reply handler must have run through the Nest wiring").not.toBeNull();
+      expect(decision).toMatchObject({
+        verdict: "hold",
+        channel: null,
+        signal: "unmapped_lead_source",
+        status: "not_sent",
+      });
+    });
+
+    it("files a second message from the same number on the same enquiry, not a new one (ruling 76)", async () => {
+      const from = freshNumber();
+      const first = textMessage("First message", from);
+      await post(app, webhook([first])).expect(200);
+
+      const second = { ...textMessage("Any update?", from), timestamp: "1725374400" };
+      const response = await post(app, webhook([second])).expect(200);
+      expect(response.body).toMatchObject({ status: "received", stored: 1 });
+
+      expect(
+        await owner.lead.count({ where: { organisationId: org.id, contactPhone: `+${from}` } }),
+      ).toBe(1);
+      const lead = await leadFor(first.id);
+      const secondRaw = await owner.inboundChannelMessage.findFirstOrThrow({
+        where: { providerMessageId: second.id },
+      });
+      expect(secondRaw).toMatchObject({ status: "converted", leadId: lead!.id });
+      expect(
+        await owner.message.count({ where: { conversationId: lead!.originConversationId! } }),
+      ).toBe(2);
+      expect(await owner.conversation.count({ where: { personId: lead!.personId! } })).toBe(1);
+      // The window moves with their newest message.
+      const thread = await owner.conversation.findUniqueOrThrow({
+        where: { id: lead!.originConversationId! },
+      });
+      expect(thread.replyWindowExpiresAt?.toISOString()).toBe("2024-09-04T14:40:00.000Z");
+      // Told once: a message on an enquiry is not a second enquiry.
+      expect(await owner.leadReplyDecision.count({ where: { leadId: lead!.id } })).toBe(1);
+    });
+
+    it("opens a new enquiry once the earlier thread is resolved", async () => {
+      const from = freshNumber();
+      const first = textMessage("Job one", from);
+      await post(app, webhook([first])).expect(200);
+      const lead = await leadFor(first.id);
+      await owner.conversation.update({
+        where: { id: lead!.originConversationId! },
+        data: { status: "resolved", resolvedAt: new Date() },
+      });
+
+      const second = textMessage("Job two, months later", from);
+      await post(app, webhook([second])).expect(200);
+      const next = await leadFor(second.id);
+      expect(next).not.toBeNull();
+      expect(next!.id).not.toBe(lead!.id);
+      expect(next!.personId).toBe(lead!.personId);
+      expect(next!.originConversationId).not.toBe(lead!.originConversationId);
+      expect(await owner.conversation.count({ where: { personId: lead!.personId! } })).toBe(2);
+    });
+
+    it("makes a photo with no words an enquiry with no words", async () => {
+      const from = freshNumber();
+      const message = {
+        from,
+        id: `wamid.${randomUUID()}`,
+        timestamp: "1725370800",
+        type: "image",
+        image: { id: "media-2", mime_type: "image/jpeg", sha256: "def" },
+      };
+      await post(app, webhook([message])).expect(200);
+
+      const lead = await leadFor(message.id);
+      expect(lead).not.toBeNull();
+      // Nothing invents words for a compliance record.
+      expect(lead!.enquiry).toBeNull();
+      expect(lead!.evidence!.rawExcerpt).toBeNull();
+      expect(lead!.contactName).toBeNull();
+      const person = await owner.person.findUniqueOrThrow({ where: { id: lead!.personId! } });
+      // No name was given, so the person is known by their number — never blank.
+      expect(person.displayName).toBe(`+${from}`);
+      const raw = await owner.inboundChannelMessage.findFirstOrThrow({
+        where: { providerMessageId: message.id },
+      });
+      const canonical = await owner.message.findFirstOrThrow({
+        where: { sourceTable: "inbound_channel_messages", sourceId: raw.id },
+      });
+      expect(canonical.contentType).toBe("media");
+    });
+
+    it("makes no enquiry for a lapsed organisation, and nothing on the spine either", async () => {
+      const message = textMessage("still here", freshNumber());
+      await post(app, webhook([message], { phoneNumberId: LAPSED_PHONE_NUMBER_ID })).expect(200);
+      expect(await owner.lead.count({ where: { organisationId: lapsedOrg.id } })).toBe(0);
+      expect(await owner.person.count({ where: { organisationId: lapsedOrg.id } })).toBe(0);
+    });
+
+    /**
+     * ⚠️ THE CASE THAT MUST FAIL. An id that is not a number cannot be
+     * answered and cannot be a phone handle; the delivery is still kept — the
+     * alternative is losing it — and says why it went no further.
+     */
+    it("keeps a message from an id that is not a number, and makes nothing of it", async () => {
+      const message = textMessage("who am I", "not-a-number");
+      const response = await post(app, webhook([message])).expect(200);
+      expect(response.body).toMatchObject({ status: "received", stored: 1 });
+      const raw = await owner.inboundChannelMessage.findFirstOrThrow({
+        where: { providerMessageId: message.id },
+      });
+      expect(raw).toMatchObject({ status: "failed", leadId: null });
+      expect(raw.failureReason).toContain("not a WhatsApp number");
+      expect(
+        await owner.message.count({
+          where: { sourceTable: "inbound_channel_messages", sourceId: raw.id },
+        }),
+      ).toBe(0);
     });
   });
 });

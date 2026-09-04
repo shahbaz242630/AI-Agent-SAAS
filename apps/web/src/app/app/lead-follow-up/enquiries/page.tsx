@@ -157,7 +157,7 @@ export default async function EnquiryBookPage() {
       <section className="flex w-full flex-col gap-2">
         <h1 className="font-display text-[29px] leading-tight font-semibold">Enquiries</h1>
         <p className="text-sm text-muted-foreground">
-          Everyone who has emailed {organisation.name} to ask about something, newest first.
+          Everyone who has written to {organisation.name} to ask about something, newest first.
         </p>
       </section>
 

@@ -42,6 +42,14 @@ describe("Inbound webhook: an email becomes an enquiry", () => {
   let unentitledOrg: FixtureOrg;
   let address: string;
   let unentitledAddress: string;
+  /**
+   * ⚠️ A FRESH SENDER PER TEST, SINCE 3.3b. Ruling 76: a second message from
+   * the same address on an open thread is filed on the enquiry already being
+   * worked, not made into a new one. Every case in this file is about a FIRST
+   * enquiry, so each gets its own stranger; the ruling itself is proved at
+   * the bottom, deliberately, with the same sender twice.
+   */
+  let sender: string;
 
   /** What the stubbed Resend fetch returns next, and what it was asked for. */
   let nextMessage: ReceivedMessage;
@@ -93,8 +101,9 @@ describe("Inbound webhook: an email becomes an enquiry", () => {
   beforeEach(() => {
     fetchFails = null;
     fetched.length = 0;
+    sender = `jane-${Math.random().toString(36).slice(2, 8)}@example.com`;
     nextMessage = {
-      from: "Jane Smith <jane@example.com>",
+      from: `Jane Smith <${sender}>`,
       subject: "Leaking roof",
       text: "Hello, my roof is leaking above the kitchen. Can someone come out this week?",
       html: "<p>Hello, my roof is leaking above the kitchen.</p>",
@@ -149,7 +158,7 @@ describe("Inbound webhook: an email becomes an enquiry", () => {
     data: {
       email_id: `re_${Math.random().toString(36).slice(2)}`,
       created_at: "2026-08-21T09:15:00.000Z",
-      from: "Jane Smith <jane@example.com>",
+      from: `Jane Smith <${sender}>`,
       to: [address],
       received_for: [address],
       message_id: "<abc@example.com>",
@@ -252,7 +261,7 @@ describe("Inbound webhook: an email becomes an enquiry", () => {
       });
       expect(lead).not.toBeNull();
       expect(lead!.source).toBe("email_enquiry");
-      expect(lead!.contactEmail).toBe("jane@example.com");
+      expect(lead!.contactEmail).toBe(sender);
       expect(lead!.contactName).toBe("Jane Smith");
       expect(lead!.contactPhone).toBeNull();
       expect(lead!.enquiry).toContain("my roof is leaking");
@@ -280,7 +289,7 @@ describe("Inbound webhook: an email becomes an enquiry", () => {
       });
       expect(evidence).not.toBeNull();
       expect(evidence!.channel).toBe("email_enquiry");
-      expect(evidence!.senderAddress).toBe("jane@example.com");
+      expect(evidence!.senderAddress).toBe(sender);
       expect(evidence!.recipientAddress).toBe(address);
       expect(evidence!.subject).toBe("Leaking roof");
       expect(evidence!.externalId).toBe(payload.data.email_id);
@@ -579,6 +588,156 @@ describe("Inbound webhook: an email becomes an enquiry", () => {
       expect(message!.leadId).toBeNull();
       expect(await owner.lead.count({ where: { organisationId: unentitledOrg.id } })).toBe(0);
       expect(fetched, "an unentitled delivery must not cost a fetch").toHaveLength(0);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  /**
+   * 🚨 RULING 76 (slice 3.3b): A MESSAGE ON A THREAD THAT IS ALREADY WORKING A
+   * LIVE LEAD IS A MESSAGE ON THAT LEAD, NOT A NEW ENQUIRY. Until this slice
+   * every inbound email was a lead, so "any update?" the next morning put the
+   * same person in the book twice and greeted them twice. Written before the
+   * change, as the handoff asked, so the old behaviour was seen to go red.
+   */
+  describe("a second message on an open thread (ruling 76)", () => {
+    const leadsFrom = (email: string) =>
+      owner.lead.findMany({
+        where: { organisationId: org.id, contactEmail: email, deletedAt: null },
+        orderBy: { createdAt: "asc" },
+      });
+
+    it("pins every new enquiry to its person, its stage and the thread it opened", async () => {
+      const payload = emailReceived();
+      await post(payload).expect(200);
+      const [lead] = await leadsFrom(sender);
+
+      const newStage = await owner.pipelineStage.findFirstOrThrow({
+        where: { organisationId: org.id, systemKey: "new" },
+      });
+      expect(lead!.pipelineStageId).toBe(newStage.id);
+      expect(lead!.personId).not.toBeNull();
+      expect(lead!.originConversationId).not.toBeNull();
+
+      const person = await owner.person.findUniqueOrThrow({
+        where: { id: lead!.personId! },
+        include: { identities: true },
+      });
+      expect(person.displayName).toBe("Jane Smith");
+      expect(person.primaryEmail).toBe(sender);
+      // A message arrived from the address: that is proof of control.
+      expect(person.identities.map((i) => [i.kind, i.value, i.verification])).toEqual([
+        ["email", sender, "inbound"],
+      ]);
+
+      const thread = await owner.conversation.findUniqueOrThrow({
+        where: { id: lead!.originConversationId! },
+      });
+      expect(thread).toMatchObject({
+        channel: "email",
+        channelConnectionId: null,
+        status: "open",
+        leadId: lead!.id,
+        personId: person.id,
+        // What a reply must quote to thread in their mail client.
+        providerThreadId: "<abc@example.com>",
+        // Email has no window.
+        replyWindowExpiresAt: null,
+      });
+
+      const raw = await owner.inboundMessage.findFirstOrThrow({
+        where: { providerMessageId: payload.data.email_id },
+      });
+      const canonical = await owner.message.findFirstOrThrow({
+        where: { sourceTable: "inbound_messages", sourceId: raw.id },
+      });
+      expect(canonical).toMatchObject({
+        conversationId: thread.id,
+        personId: person.id,
+        channel: "email",
+        direction: "inbound",
+        senderKind: "person",
+        contentType: "text",
+        subject: "Leaking roof",
+        providerMessageId: payload.data.email_id,
+      });
+      expect(canonical.bodyText).toContain("my roof is leaking");
+      expect(canonical.occurredAt.toISOString()).toBe("2026-08-21T09:15:00.000Z");
+    });
+
+    it("files a follow-up from the same person on the enquiry already being worked, not as a second one", async () => {
+      const opened = await post(emailReceived()).expect(200);
+      expect(opened.body.status).toBe("converted");
+
+      nextMessage = {
+        ...nextMessage,
+        subject: "Re: Leaking roof",
+        text: "Any update on this?",
+        headers: { "message-id": "<def@example.com>" },
+      };
+      const again = await post(
+        emailReceived({ subject: "Re: Leaking roof", message_id: "<def@example.com>" }),
+      ).expect(200);
+      expect(again.body.status).toBe("attached");
+
+      const leads = await leadsFrom(sender);
+      expect(leads, "a follow-up must not be a second enquiry").toHaveLength(1);
+      const lead = leads[0]!;
+
+      const rows = await owner.inboundMessage.findMany({
+        where: { organisationId: org.id, fromAddress: { contains: sender } },
+      });
+      expect(rows).toHaveLength(2);
+      expect(rows.every((row) => row.status === "converted" && row.leadId === lead.id)).toBe(true);
+      expect(
+        await owner.message.count({ where: { conversationId: lead.originConversationId! } }),
+      ).toBe(2);
+      expect(await owner.conversation.count({ where: { personId: lead.personId! } })).toBe(1);
+      // The thread keeps the FIRST message's id: that is what a reply threads on.
+      const thread = await owner.conversation.findUniqueOrThrow({
+        where: { id: lead.originConversationId! },
+      });
+      expect(thread.providerThreadId).toBe("<abc@example.com>");
+    });
+
+    it("opens a new enquiry once the earlier thread is resolved", async () => {
+      await post(emailReceived()).expect(200);
+      const [lead] = await leadsFrom(sender);
+      await owner.conversation.update({
+        where: { id: lead!.originConversationId! },
+        data: { status: "resolved", resolvedAt: new Date() },
+      });
+
+      const response = await post(emailReceived({ message_id: "<later@example.com>" })).expect(200);
+      expect(response.body.status).toBe("converted");
+
+      const leads = await leadsFrom(sender);
+      expect(leads).toHaveLength(2);
+      // The same person, a new thread; the old thread still names the old enquiry.
+      expect(leads[1]!.personId).toBe(lead!.personId);
+      expect(leads[1]!.originConversationId).not.toBe(lead!.originConversationId);
+      const old = await owner.conversation.findUniqueOrThrow({
+        where: { id: lead!.originConversationId! },
+      });
+      expect(old.leadId).toBe(lead!.id);
+    });
+
+    it("opens a new enquiry on the same thread when the earlier one was retired", async () => {
+      await post(emailReceived()).expect(200);
+      const [lead] = await leadsFrom(sender);
+      await owner.lead.update({ where: { id: lead!.id }, data: { deletedAt: new Date() } });
+
+      const response = await post(emailReceived()).expect(200);
+      expect(response.body.status).toBe("converted");
+
+      const live = await leadsFrom(sender);
+      expect(live).toHaveLength(1);
+      expect(live[0]!.id).not.toBe(lead!.id);
+      // Same thread, repointed at the new enquiry (ruling 67).
+      expect(live[0]!.originConversationId).toBe(lead!.originConversationId);
+      const thread = await owner.conversation.findUniqueOrThrow({
+        where: { id: lead!.originConversationId! },
+      });
+      expect(thread.leadId).toBe(live[0]!.id);
     });
   });
 });

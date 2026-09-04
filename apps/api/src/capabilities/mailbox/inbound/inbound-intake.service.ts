@@ -7,7 +7,12 @@ import { withInboundAddress } from "@eva/database";
 // eslint-disable-next-line @typescript-eslint/consistent-type-imports
 import { PrismaService } from "../../../common/database/prisma.service.js";
 import type { TenantTx } from "../../../platform/permissions/permissions.js";
-import { createLeadFromEmail } from "../../../platform/leads/lead-from-email.js";
+import { createLeadFromEmail, readEmailEnquiry } from "../../../platform/leads/lead-from-email.js";
+import {
+  attachLeadToThread,
+  ensureSystemStages,
+  recordInboundMessage,
+} from "../../../platform/people/spine.js";
 import { RECEIVED_MAIL, type InboundWebhookPayload, type ReceivedMail } from "./received-mail.js";
 import {
   isForwardingConfirmation,
@@ -16,7 +21,10 @@ import {
 // eslint-disable-next-line @typescript-eslint/consistent-type-imports
 import { ForwardingConfirmationsService } from "./forwarding-confirmations.service.js";
 import { readInboundVerdicts, refusalReason } from "./spam-verdict.js";
-import { NEW_LEAD_HANDLERS, type NewLeadHandlers } from "./new-lead-handler.js";
+import {
+  NEW_LEAD_HANDLERS,
+  type NewLeadHandlers,
+} from "../../../platform/leads/new-lead-handler.js";
 
 /**
  * What happens to a message between the door and the book (Slice 3.1b).
@@ -26,7 +34,8 @@ import { NEW_LEAD_HANDLERS, type NewLeadHandlers } from "./new-lead-handler.js";
  *   1. resolve the address to an organisation
  *   2. WRITE THE DELIVERY DOWN
  *   3. fetch the message itself (a second network call)
- *   4. store the body, make the lead, mark it converted
+ *   4. store the body, put it on the spine, make the lead (or find the one
+ *      the thread is already working — ruling 76), mark it converted
  *
  * Step 2 comes before step 3 because Resend's webhook carries metadata only —
  * the body and headers need a separate call that can fail on its own, after we
@@ -41,8 +50,14 @@ import { NEW_LEAD_HANDLERS, type NewLeadHandlers } from "./new-lead-handler.js";
 
 /** What the caller turns into an HTTP status. */
 export type IntakeOutcome =
-  /** A lead exists. */
+  /** A lead exists — a NEW one, and the products were told. */
   | { status: "converted"; leadId: string }
+  /**
+   * A message on an enquiry that was already being worked (ruling 76, 3.3b):
+   * stored on that lead's thread, no second enquiry, nobody told — a reply
+   * to an open conversation is the engine's business (3.5), not intake's.
+   */
+  | { status: "attached"; leadId: string }
   /** Seen before; nothing more to do. Webhooks retry, and this is the answer. */
   | { status: "duplicate" }
   /** Recorded, deliberately not converted. `reason` says why. */
@@ -258,10 +273,11 @@ export class InboundIntakeService {
       return { status: "ignored", reason: "provider-verdict" };
     }
 
-    // (4) Body, lead and evidence, in one transaction.
+    // (4) Body, spine, lead and evidence, in one transaction.
     try {
-      const leadId = await this.convert(organisationId, record.id, {
+      const { leadId, isNew } = await this.convert(organisationId, record.id, {
         providerMessageId,
+        rfcMessageId: payload.data.message_id ?? message.headers["message-id"] ?? null,
         deliveredTo,
         /**
          * ⚠️ THE RAW `From` HEADER FIRST, AND THIS WAS FOUND BY SENDING A REAL
@@ -293,7 +309,13 @@ export class InboundIntakeService {
        * it inside `convert`'s would either deadlock on the same rows or hand a
        * handler a lead that might still roll back — and a stranger would have
        * received a reply to an enquiry that no longer exists.
+       *
+       * ⚠️ ONLY A NEW LEAD IS ANNOUNCED. A second message on an enquiry Eva
+       * has already answered is not a second enquiry (ruling 76), and telling
+       * the reply handler about it would either send the stranger the same
+       * greeting twice or be a no-op it has to know to make.
        */
+      if (!isNew) return { status: "attached", leadId };
       await this.announceNewLead(organisationId, leadId);
       return { status: "converted", leadId };
     } catch (error) {
@@ -386,12 +408,29 @@ export class InboundIntakeService {
     });
   }
 
-  /** Body in, lead out, delivery marked converted — one transaction. */
+  /**
+   * Body in, spine written, lead out (or found), delivery marked converted —
+   * one transaction.
+   *
+   * 🔑 THE SPINE IS THE SECOND WRITE, IN THE SAME TRANSACTION AS THE FIRST
+   * (slice 3.3b, rulings 75–77). The delivery row is the evidence; the person,
+   * the thread and the canonical message are the shape every channel shares.
+   * Written together so they cannot disagree about whether a message exists.
+   *
+   * 🚨 RULING 76: A MESSAGE ON A THREAD THAT IS ALREADY WORKING A LIVE LEAD IS
+   * A MESSAGE ON THAT LEAD, NOT A NEW ENQUIRY. Until this slice every inbound
+   * email was a lead — so a person who wrote "any update?" the next morning
+   * appeared in the book twice and was greeted twice. Now the thread decides:
+   * open and pointing at a live lead, the delivery is filed on it; resolved,
+   * retired, or no thread at all, a new lead opens and the thread points at it.
+   */
   private async convert(
     organisationId: string,
     messageId: string,
     message: {
       providerMessageId: string;
+      /** The RFC Message-ID — what a reply must quote to thread in their client. */
+      rfcMessageId: string | null;
       deliveredTo: string;
       from: string;
       subject: string | null;
@@ -400,16 +439,60 @@ export class InboundIntakeService {
       headers: Record<string, string>;
       receivedAt: Date;
     },
-  ): Promise<string> {
+  ): Promise<{ leadId: string; isNew: boolean }> {
     return this.inTenant(organisationId, async (tx) => {
-      const lead = await createLeadFromEmail(tx, organisationId, {
+      const enquiry = {
         from: message.from,
         deliveredTo: message.deliveredTo,
         subject: message.subject,
         text: message.text,
         providerMessageId: message.providerMessageId,
         receivedAt: message.receivedAt,
+      };
+      /**
+       * Read ONCE, used for both writes: the person the delivery is filed
+       * under must be the same sender the lead names, forwarding unwrapped
+       * and all. Throws when there is no usable address, before anything is
+       * written, and the caller records that against the delivery.
+       */
+      const sender = readEmailEnquiry(enquiry);
+
+      const spine = await recordInboundMessage(tx, {
+        organisationId,
+        channel: "email",
+        channelConnectionId: null,
+        sender: {
+          displayName: sender.name,
+          handles: [{ kind: "email", value: sender.email }],
+        },
+        providerMessageId: message.providerMessageId,
+        providerThreadId: message.rfcMessageId,
+        // The delivery as it arrived, not the unwrapped enquiry: the canonical
+        // message is the message, and the lead quotes the excerpt.
+        subject: message.subject,
+        bodyText: message.text,
+        contentType: message.text || message.html ? "text" : "other",
+        sourceTable: "inbound_messages",
+        sourceId: messageId,
+        occurredAt: message.receivedAt,
       });
+
+      let leadId: string;
+      let isNew: boolean;
+      if (spine.workingLeadId) {
+        leadId = spine.workingLeadId;
+        isNew = false;
+      } else {
+        const stages = await ensureSystemStages(tx, organisationId);
+        const lead = await createLeadFromEmail(tx, organisationId, enquiry, {
+          personId: spine.personId,
+          pipelineStageId: stages.new,
+          originConversationId: spine.conversationId,
+        });
+        await attachLeadToThread(tx, spine.conversationId, lead.id);
+        leadId = lead.id;
+        isNew = true;
+      }
 
       await tx.inboundMessage.update({
         where: { id: messageId },
@@ -421,10 +504,10 @@ export class InboundIntakeService {
           headers: message.headers,
           status: "converted",
           failureReason: null,
-          leadId: lead.id,
+          leadId,
         },
       });
-      return lead.id;
+      return { leadId, isNew };
     });
   }
 

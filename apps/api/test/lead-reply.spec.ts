@@ -44,6 +44,12 @@ describe("Eva answers an enquiry", () => {
   let owner: EvaPrismaClient;
   let org: FixtureOrg;
   let address: string;
+  /**
+   * A fresh sender per test (3.3b, ruling 76): a second message from the same
+   * address lands on the enquiry Eva already answered, and is NOT answered
+   * again — proved once, at the bottom, on purpose.
+   */
+  let sender: string;
 
   /** What Eva handed the provider. One entry per genuine send. */
   let sent: OutboundMailDelivery[] = [];
@@ -122,8 +128,9 @@ describe("Eva answers an enquiry", () => {
   beforeEach(() => {
     sent = [];
     sendFailure = null;
+    sender = `dave.nolan-${Math.random().toString(36).slice(2, 8)}@example.com`;
     inbound = {
-      from: "Dave Nolan <dave.nolan@example.com>",
+      from: `Dave Nolan <${sender}>`,
       subject: "Leaking roof above the kitchen",
       text: "Hello, my roof is leaking above the kitchen. Could you take a look this week?",
       html: null,
@@ -154,7 +161,7 @@ describe("Eva answers an enquiry", () => {
     type: "email.received",
     data: {
       email_id: emailId,
-      from: "dave.nolan@example.com",
+      from: sender,
       to: [address],
       received_for: [address],
       subject: inbound.subject,
@@ -177,7 +184,7 @@ describe("Eva answers an enquiry", () => {
 
       expect(sent, "Eva sent nothing").toHaveLength(1);
       const delivery = sent[0]!;
-      expect(delivery.to).toBe("dave.nolan@example.com");
+      expect(delivery.to).toBe(sender);
       expect(delivery.subject).toBe("Re: Leaking roof above the kitchen");
       expect(delivery.account.emailAddress).toBe("office@hallowayroofing.co.uk");
       // The customer's own template wording, verbatim.
@@ -186,7 +193,7 @@ describe("Eva answers an enquiry", () => {
 
     it("records what was sent, so it can be answered for later", async () => {
       await post(enquiry()).expect(200);
-      const lead = await leadFrom("dave.nolan@example.com");
+      const lead = await leadFrom(sender);
       const decision = await decisionFor(lead!.id);
 
       expect(decision).toBeTruthy();
@@ -200,7 +207,7 @@ describe("Eva answers an enquiry", () => {
        * that combination outright.
        */
       expect(decision!.channel).toBe("email");
-      expect(decision!.toAddress).toBe("dave.nolan@example.com");
+      expect(decision!.toAddress).toBe(sender);
       expect(decision!.sentFrom).toBe("office@hallowayroofing.co.uk");
       expect(decision!.sentAt).toBeTruthy();
       expect(decision!.templateId).toBeTruthy();
@@ -218,7 +225,7 @@ describe("Eva answers an enquiry", () => {
      */
     it("stamps when the enquiry was first answered", async () => {
       await post(enquiry()).expect(200);
-      const lead = await leadFrom("dave.nolan@example.com");
+      const lead = await leadFrom(sender);
       expect(lead!.firstRespondedAt).toBeTruthy();
     });
   });
@@ -238,7 +245,7 @@ describe("Eva answers an enquiry", () => {
       await post(payload, id).expect(200);
       expect(sent, "the retry sent a second reply").toHaveLength(1);
 
-      const lead = await leadFrom("dave.nolan@example.com");
+      const lead = await leadFrom(sender);
       const decisions = await owner.leadReplyDecision.count({ where: { leadId: lead!.id } });
       expect(decisions).toBe(1);
     });
@@ -250,7 +257,7 @@ describe("Eva answers an enquiry", () => {
       await post(enquiry()).expect(200);
 
       expect(sent, "Eva answered a machine").toHaveLength(0);
-      const lead = await leadFrom("dave.nolan@example.com");
+      const lead = await leadFrom(sender);
       const decision = await decisionFor(lead!.id);
       expect(decision!.verdict).toBe("never");
       expect(decision!.status).toBe("not_sent");
@@ -263,7 +270,7 @@ describe("Eva answers an enquiry", () => {
       await post(enquiry()).expect(200);
 
       expect(sent).toHaveLength(0);
-      const lead = await leadFrom("dave.nolan@example.com");
+      const lead = await leadFrom(sender);
       const decision = await decisionFor(lead!.id);
       expect(decision!.verdict).toBe("hold");
       expect(decision!.status).toBe("not_sent");
@@ -278,7 +285,7 @@ describe("Eva answers an enquiry", () => {
     it("still files the enquiry when it does not answer it", async () => {
       inbound.headers = { ...inbound.headers, "auto-submitted": "auto-generated" };
       await post(enquiry()).expect(200);
-      const lead = await leadFrom("dave.nolan@example.com");
+      const lead = await leadFrom(sender);
       expect(lead).toBeTruthy();
       expect(lead!.firstRespondedAt).toBeNull();
     });
@@ -294,7 +301,7 @@ describe("Eva answers an enquiry", () => {
       sendFailure = new Error("the provider fell over");
       await post(enquiry()).expect(200);
 
-      const lead = await leadFrom("dave.nolan@example.com");
+      const lead = await leadFrom(sender);
       expect(lead, "the enquiry was lost").toBeTruthy();
       const decision = await decisionFor(lead!.id);
       expect(decision!.status).toBe("failed");
@@ -309,14 +316,14 @@ describe("Eva answers an enquiry", () => {
     it("marks a rate limit deferred rather than failed", async () => {
       sendFailure = new MailDeliveryDeferredError(30);
       await post(enquiry()).expect(200);
-      const lead = await leadFrom("dave.nolan@example.com");
+      const lead = await leadFrom(sender);
       expect((await decisionFor(lead!.id))!.status).toBe("deferred");
     });
 
     it("says the mailbox needs reconnecting when that is the problem", async () => {
       sendFailure = new MailboxUnusableError();
       await post(enquiry()).expect(200);
-      const lead = await leadFrom("dave.nolan@example.com");
+      const lead = await leadFrom(sender);
       const decision = await decisionFor(lead!.id);
       expect(decision!.status).toBe("failed");
       expect(decision!.failureReason).toContain("reconnecting");
@@ -357,7 +364,7 @@ describe("Eva answers an enquiry", () => {
         type: "email.received",
         data: {
           email_id: `re_${Math.random().toString(36).slice(2)}`,
-          from: "dave.nolan@example.com",
+          from: sender,
           to: [unequippedAddress],
           received_for: [unequippedAddress],
           subject: inbound.subject,
@@ -375,6 +382,41 @@ describe("Eva answers an enquiry", () => {
       expect(decision!.verdict).toBe("reply");
       expect(decision!.status).toBe("not_sent");
       expect(decision!.failureReason).toContain("no mailbox");
+    });
+  });
+
+  /**
+   * 🚨 RULING 76 (3.3b), SEEN FROM THE STRANGER'S SIDE. Before this slice a
+   * person who wrote back "any update?" was a brand-new enquiry and got the
+   * automatic greeting a second time — Eva introducing herself to somebody she
+   * had already answered, in the customer's name. Now the follow-up is filed
+   * on the enquiry already being worked, and nothing is sent.
+   */
+  describe("a second message on the same thread (ruling 76)", () => {
+    it("answers the first message and stays silent on the follow-up, which is not a new enquiry", async () => {
+      await post(enquiry()).expect(200);
+      expect(sent).toHaveLength(1);
+
+      inbound = {
+        ...inbound,
+        subject: "Re: Leaking roof above the kitchen",
+        text: "Any update on this?",
+        headers: { "message-id": "<followup@example.com>", "x-ses-spam-verdict": "PASS" },
+      };
+      await post(enquiry()).expect(200);
+      expect(sent, "a follow-up was greeted as a new enquiry").toHaveLength(1);
+
+      const lead = await leadFrom(sender);
+      expect(
+        await owner.lead.count({
+          where: { organisationId: org.id, contactEmail: sender, deletedAt: null },
+        }),
+      ).toBe(1);
+      expect(await owner.leadReplyDecision.count({ where: { leadId: lead!.id } })).toBe(1);
+      // Both deliveries sit on the one enquiry's thread.
+      expect(
+        await owner.message.count({ where: { conversationId: lead!.originConversationId! } }),
+      ).toBe(2);
     });
   });
 });
