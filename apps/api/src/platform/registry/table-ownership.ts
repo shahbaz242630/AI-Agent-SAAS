@@ -63,6 +63,21 @@ export const PLATFORM_TABLES = [
   "lead",
   "leadEvidence",
   "consentText",
+  /**
+   * The lead spine (slice 3.3a, migration 0041, founder rulings 66 and 67).
+   * The person, their handles, the thread per handle, the canonical message,
+   * the stages and the activities — shared by every product, owned by none,
+   * for the same reason `lead` is: three products and the CRM read the same
+   * person, and two people-books for one human is the failure ruling 15
+   * avoided for clients. `person_timeline` is a view over the last two and is
+   * read with `$queryRaw`; it has no accessor to list here.
+   */
+  "person",
+  "personIdentity",
+  "pipelineStage",
+  "conversation",
+  "message",
+  "activity",
 ] as const;
 
 /**

@@ -59,8 +59,35 @@ beforeAll(async () => {
   await owner.$executeRaw`DELETE FROM organisation_modules WHERE organisation_id = ${DEMO_ORGANISATION_ID}::uuid AND deleted_at IS NOT NULL`;
   await owner.$executeRaw`INSERT INTO organisation_modules (id, organisation_id, module_key, enabled, source, seats, updated_at, deleted_at)
     VALUES (${randomUUID()}::uuid, ${DEMO_ORGANISATION_ID}::uuid, 'voice_credit_controller', true, 'manual', 1, now(), now())`;
+  // POSITIVE CONTROL for the lead spine (slice 3.3a, migration 0041): one
+  // person under the DEMO org with a handle, a thread, a message, an activity
+  // and a custom stage — a row in every spine table for the ORG_A attacker
+  // context to fail to see. The seed creates none, and the migration's
+  // backfill ran against an empty database, so without these every spine
+  // assertion below would pass against nothing. Deleting the person cascades
+  // the rest; the stage is deleted on its own.
+  await owner.$executeRaw`DELETE FROM people WHERE id = ${SPINE_PERSON_ID}::uuid`;
+  await owner.$executeRaw`DELETE FROM pipeline_stages WHERE id = ${SPINE_STAGE_ID}::uuid`;
+  await owner.$executeRaw`INSERT INTO people (id, organisation_id, display_name, primary_email)
+    VALUES (${SPINE_PERSON_ID}::uuid, ${DEMO_ORGANISATION_ID}::uuid, 'RLS Fixture Person', 'rls-fixture-person@example.com')`;
+  await owner.$executeRaw`INSERT INTO person_identities (id, organisation_id, person_id, kind, value)
+    VALUES (${SPINE_IDENTITY_ID}::uuid, ${DEMO_ORGANISATION_ID}::uuid, ${SPINE_PERSON_ID}::uuid, 'email', 'rls-fixture-person@example.com')`;
+  await owner.$executeRaw`INSERT INTO pipeline_stages (id, organisation_id, name, position)
+    VALUES (${SPINE_STAGE_ID}::uuid, ${DEMO_ORGANISATION_ID}::uuid, 'RLS Fixture Stage', 99)`;
+  await owner.$executeRaw`INSERT INTO conversations (id, organisation_id, person_id, person_identity_id, channel)
+    VALUES (${SPINE_CONVERSATION_ID}::uuid, ${DEMO_ORGANISATION_ID}::uuid, ${SPINE_PERSON_ID}::uuid, ${SPINE_IDENTITY_ID}::uuid, 'email')`;
+  await owner.$executeRaw`INSERT INTO messages (organisation_id, conversation_id, person_id, channel, direction, sender_kind, content_type, body_text, source_table, source_id, occurred_at)
+    VALUES (${DEMO_ORGANISATION_ID}::uuid, ${SPINE_CONVERSATION_ID}::uuid, ${SPINE_PERSON_ID}::uuid, 'email', 'inbound', 'person', 'text', 'an rls fixture message', 'inbound_messages', ${randomUUID()}::uuid, now())`;
+  await owner.$executeRaw`INSERT INTO activities (organisation_id, person_id, kind, actor_kind, summary)
+    VALUES (${DEMO_ORGANISATION_ID}::uuid, ${SPINE_PERSON_ID}::uuid, 'note', 'system', 'an rls fixture note')`;
   await owner.$disconnect();
 });
+
+/** Deterministic ids for the spine fixture, so re-runs replace rather than pile up. */
+const SPINE_PERSON_ID = "cccccccc-3333-4000-8000-000000000001";
+const SPINE_IDENTITY_ID = "cccccccc-3333-4000-8000-000000000002";
+const SPINE_STAGE_ID = "cccccccc-3333-4000-8000-000000000003";
+const SPINE_CONVERSATION_ID = "cccccccc-3333-4000-8000-000000000004";
 
 afterAll(async () => {
   await prisma.$disconnect();
@@ -96,6 +123,15 @@ const TENANT_TABLES = [
   // Slice 3.1c-3 — what Eva decided about an enquiry and what she sent. It
   // holds the words a named stranger received, so it needs the boundary most.
   "lead_reply_decisions",
+  // Slice 3.3a (migration 0041) — the lead spine. A person's handles and
+  // every word they sent, so one customer's people-book must never be
+  // readable from another's.
+  "people",
+  "person_identities",
+  "pipeline_stages",
+  "conversations",
+  "messages",
+  "activities",
 ];
 
 describe("RLS: connection role hardening", () => {
@@ -121,7 +157,9 @@ describe("RLS: connection role hardening", () => {
         'organisation_role_permissions', 'reminder_sequences', 'reminder_steps',
         'scheduled_actions', 'human_escalations', 'email_accounts',
         'organisation_modules', 'leads', 'lead_evidence', 'consent_texts',
-        'lead_reply_templates', 'lead_reply_decisions'
+        'lead_reply_templates', 'lead_reply_decisions',
+        'people', 'person_identities', 'pipeline_stages', 'conversations',
+        'messages', 'activities'
       )`;
     expect(rows.length).toBe(TENANT_TABLES.length);
     for (const row of rows) {
@@ -140,7 +178,9 @@ describe("RLS: connection role hardening", () => {
         'organisation_role_permissions', 'reminder_sequences', 'reminder_steps',
         'scheduled_actions', 'human_escalations', 'email_accounts',
         'organisation_modules', 'leads', 'lead_evidence', 'consent_texts',
-        'lead_reply_templates', 'lead_reply_decisions'
+        'lead_reply_templates', 'lead_reply_decisions',
+        'people', 'person_identities', 'pipeline_stages', 'conversations',
+        'messages', 'activities'
       )
       GROUP BY tablename`;
     expect(rows.length).toBe(TENANT_TABLES.length);
@@ -172,6 +212,13 @@ describe("RLS: cross-tenant attacks are refused by Postgres itself", () => {
     // id; CI, which starts empty, said otherwise. The DEMO-owned control row
     // created in beforeAll is what stops this passing against an empty table.
     "organisation_modules",
+    // Slice 3.3a — each has a DEMO-owned control row from beforeAll.
+    "people",
+    "person_identities",
+    "pipeline_stages",
+    "conversations",
+    "messages",
+    "activities",
   ])("tenant A cannot SELECT tenant B's %s", async (table) => {
     const visible = await asTenant(ORG_A, async (tx) =>
       tx.$queryRawUnsafe<{ id: string }[]>(`SELECT id FROM ${table}`),
@@ -366,6 +413,91 @@ describe("RLS: cross-tenant attacks are refused by Postgres itself", () => {
       tx.$queryRawUnsafe(`DELETE FROM ${table} WHERE organisation_id = '${ORG_B}'::uuid`),
     );
     expect(Number(count)).toBe(0);
+  });
+});
+
+/**
+ * Slice 3.3a — the lead spine (migration 0041).
+ *
+ * 🚨 THE VIEW IS THE ONE THAT MATTERS. `person_timeline` is a SQL view over
+ * `messages` and `activities`, and a view runs with its OWNER's privileges by
+ * default — the migrations role, which no tenant policy binds. Without
+ * `security_invoker = true` in the migration, `SELECT * FROM person_timeline`
+ * as `eva_app` would return every organisation's timeline whatever
+ * `app.current_org` says. The three tests below are the proof, with a positive
+ * control first so an empty view cannot pass for a guarded one.
+ */
+describe("RLS: the lead spine and its timeline view (migration 0041)", () => {
+  const asDemo = (fn: (tx: PrismaClient) => Promise<unknown>) => asTenant(DEMO_ORGANISATION_ID, fn);
+
+  it("the owning tenant can read its own person's timeline (positive control)", async () => {
+    const rows = (await asDemo(
+      (tx) =>
+        tx.$queryRaw`SELECT item_type FROM person_timeline WHERE person_id = ${SPINE_PERSON_ID}::uuid ORDER BY item_type`,
+    )) as { item_type: string }[];
+    expect(rows.map((row) => row.item_type)).toEqual(["activity", "message"]);
+  });
+
+  it("another tenant reads an EMPTY timeline for that person — the view runs as the caller", async () => {
+    const rows = await asTenant(
+      ORG_A,
+      (tx) =>
+        tx.$queryRaw`SELECT item_type FROM person_timeline WHERE person_id = ${SPINE_PERSON_ID}::uuid`,
+    );
+    expect(rows).toEqual([]);
+  });
+
+  it("an unset tenant context reads nothing from the view at all (fails closed)", async () => {
+    const rows = await prisma.$transaction(
+      (tx) => tx.$queryRaw`SELECT item_type FROM person_timeline`,
+    );
+    expect(rows).toEqual([]);
+  });
+
+  it("the view was created with security_invoker, not merely tested into behaving", async () => {
+    // Belt and braces: the behaviour above is the real test, but the option is
+    // what a future `CREATE OR REPLACE VIEW` would silently drop.
+    const rows = await prisma.$queryRaw<{ reloptions: string[] | null }[]>`
+      SELECT reloptions FROM pg_class WHERE relname = 'person_timeline' AND relkind = 'v'`;
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.reloptions ?? []).toContain("security_invoker=true");
+  });
+
+  it("tenant A cannot INSERT a person carrying tenant B's organisation_id", async () => {
+    await expect(
+      asTenant(
+        ORG_A,
+        (tx) =>
+          tx.$executeRaw`INSERT INTO people (organisation_id, display_name)
+            VALUES (${ORG_B}::uuid, 'PWN')`,
+      ),
+    ).rejects.toThrow(/row-level security/i);
+  });
+
+  it("tenant A cannot INSERT a message into tenant B's thread", async () => {
+    await expect(
+      asTenant(
+        ORG_A,
+        (tx) =>
+          tx.$executeRaw`INSERT INTO messages (organisation_id, conversation_id, person_id, channel, direction, sender_kind, content_type, source_table, source_id, occurred_at)
+            VALUES (${DEMO_ORGANISATION_ID}::uuid, ${SPINE_CONVERSATION_ID}::uuid, ${SPINE_PERSON_ID}::uuid, 'email', 'inbound', 'person', 'text', 'inbound_messages', ${randomUUID()}::uuid, now())`,
+      ),
+    ).rejects.toThrow(/row-level security/i);
+  });
+
+  it("tenant A cannot UPDATE tenant B's person or thread", async () => {
+    const people = await asTenant(
+      ORG_A,
+      (tx) =>
+        tx.$executeRaw`UPDATE people SET display_name = 'Pwned' WHERE id = ${SPINE_PERSON_ID}::uuid`,
+    );
+    expect(Number(people)).toBe(0);
+    const threads = await asTenant(
+      ORG_A,
+      (tx) =>
+        tx.$executeRaw`UPDATE conversations SET status = 'resolved', resolved_at = now() WHERE id = ${SPINE_CONVERSATION_ID}::uuid`,
+    );
+    expect(Number(threads)).toBe(0);
   });
 });
 

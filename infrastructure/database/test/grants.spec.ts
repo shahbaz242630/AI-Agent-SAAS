@@ -159,10 +159,49 @@ describe("What the application may destroy", () => {
     // Slice 3.2c (migration 0040): a connection is retired, a delivery is evidence.
     "channel_connections",
     "inbound_channel_messages",
+    // Slice 3.3a (migration 0041): a person is retired, a handle is marked
+    // inactive, a thread is resolved; a message and an activity are what
+    // happened.
+    "people",
+    "person_identities",
+    "pipeline_stages",
+    "conversations",
+    "messages",
+    "activities",
   ] as const;
 
   it.each(NEVER_HARD_DELETED)("%s cannot be hard-deleted by the application", async (table) => {
     expect(await refused(`DELETE FROM "${table}"`)).toBe(true);
+  });
+
+  /**
+   * Slice 3.3a. A message is what somebody said and an activity is what
+   * happened; neither can be rewritten afterwards — the `lead_evidence` rule,
+   * one table over. The two positive controls stop this passing because the
+   * whole spine happened to be read-only.
+   */
+  describe("the spine's written-once tables", () => {
+    it.each(["messages", "activities"] as const)("%s cannot be rewritten", async (table) => {
+      expect(
+        await refused(`UPDATE "${table}" SET organisation_id = organisation_id WHERE false`),
+      ).toBe(true);
+    });
+
+    it.each(["people", "person_identities", "conversations", "pipeline_stages"] as const)(
+      "%s can still be updated — a person is edited, a handle retired, a thread resolved",
+      async (table) => {
+        expect(
+          await refused(`UPDATE "${table}" SET organisation_id = organisation_id WHERE false`),
+        ).toBe(false);
+      },
+    );
+
+    it("the timeline view is readable, and only readable", async () => {
+      const grants = await prisma.$queryRaw<{ privilege_type: string }[]>`
+        SELECT privilege_type FROM information_schema.role_table_grants
+        WHERE grantee = 'eva_app' AND table_name = 'person_timeline'`;
+      expect(grants.map((g) => g.privilege_type)).toEqual(["SELECT"]);
+    });
   });
 
   /**
