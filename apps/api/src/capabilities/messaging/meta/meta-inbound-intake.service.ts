@@ -1,4 +1,4 @@
-import { Injectable } from "@nestjs/common";
+import { Inject, Injectable, Optional } from "@nestjs/common";
 // Value import is intentional: NestJS DI reads design:paramtypes metadata,
 // which requires the class reference at runtime (not a type-only import).
 // eslint-disable-next-line @typescript-eslint/consistent-type-imports
@@ -6,6 +6,18 @@ import { PinoLogger } from "nestjs-pino";
 import { withChannelAsset, type EvaPrismaClient } from "@eva/database";
 // eslint-disable-next-line @typescript-eslint/consistent-type-imports
 import { PrismaService } from "../../../common/database/prisma.service.js";
+import { createLeadFromChannelMessage } from "../../../platform/leads/lead-from-channel-message.js";
+import {
+  NEW_LEAD_HANDLERS,
+  type NewLead,
+  type NewLeadHandlers,
+} from "../../../platform/leads/new-lead-handler.js";
+import { normaliseWaId, phoneFromWaId } from "../../../platform/people/handles.js";
+import {
+  attachLeadToThread,
+  ensureSystemStages,
+  recordInboundMessage,
+} from "../../../platform/people/spine.js";
 import {
   parseWhatsAppWebhook,
   WHATSAPP_WEBHOOK_OBJECT,
@@ -14,17 +26,21 @@ import {
 } from "./whatsapp-payload.js";
 
 /**
- * What happens to a WhatsApp message between the door and the record (3.2c).
- *
- * Two steps, and this slice deliberately stops after them:
+ * What happens to a WhatsApp message between the door and the book (3.2c,
+ * then 3.3b).
  *
  *   1. resolve the number the message arrived at → an organisation
  *   2. WRITE THE DELIVERY DOWN, idempotently
+ *   3. put it on the spine: the person, the thread, the canonical message
+ *   4. make the lead — or find the one the thread is already working
+ *      (ruling 76) — and mark the delivery converted
  *
- * Nothing becomes a lead here. That is 3.3, on the spine, once a delivery has
- * a person and a conversation to belong to (`docs/LEAD-360-BLUEPRINT.md` §7).
+ * Steps 2–4 are ONE transaction. 3.2c stopped after step 2; 3.3b added the
+ * rest once a delivery had a person and a conversation to belong to
+ * (`docs/LEAD-360-BLUEPRINT.md` §7). Only a NEW lead is announced to the
+ * products, after the transaction commits — the mail door's rule.
  *
- * ⚠️ WHY STEP 2 IS ALL THERE IS, AND WHY IT MUST NOT FAIL. Meta keeps no
+ * ⚠️ WHY STEP 2 COMES FIRST, AND WHY IT MUST NOT FAIL. Meta keeps no
  * history — there is no API for fetching past webhooks — so the row written
  * here is the only copy of what a stranger sent. And Meta retries anything
  * that is not a 200 for up to seven days, to every app subscribed to the
@@ -64,15 +80,51 @@ interface RoutedConnection {
   id: string;
   organisationId: string;
   moduleKey: string;
+  /** The display phone number a human knows the connection by, if recorded. */
+  displayName: string | null;
+}
+
+/** What one delivery came to, and whether the products need telling. */
+interface Recorded {
+  outcome: "stored" | "duplicates" | "ignored";
+  /** Set only when a NEW enquiry was opened — never for a message on one. */
+  newLead: NewLead | null;
 }
 
 @Injectable()
 export class MetaInboundIntakeService {
   constructor(
     private readonly prisma: PrismaService,
+    /**
+     * ⚠️ A PORT, NOT AN IMPORT — the same one the mail door announces
+     * through, which is why it lives in `platform/leads/` and not in either
+     * capability. This file must never name a product.
+     */
+    @Optional()
+    @Inject(NEW_LEAD_HANDLERS)
+    private readonly newLeadHandlers: NewLeadHandlers = [],
     private readonly logger: PinoLogger,
   ) {
     this.logger.setContext(MetaInboundIntakeService.name);
+  }
+
+  /**
+   * Tell everyone who cares that a lead arrived — the mail door's dispatcher,
+   * with the mail door's rules: every handler isolated, run in turn, and the
+   * webhook never fails for one. The enquiry is already committed by the
+   * time this runs.
+   */
+  private async announceNewLead(lead: NewLead): Promise<void> {
+    for (const handler of this.newLeadHandlers) {
+      try {
+        await handler.onNewLead(lead);
+      } catch (error) {
+        this.logger.error(
+          { ...lead, err: describe(error) },
+          "a new-lead handler threw; the enquiry is stored and the delivery still succeeded",
+        );
+      }
+    }
   }
 
   async receive(payload: unknown): Promise<ChannelIntakeOutcome> {
@@ -111,6 +163,7 @@ export class MetaInboundIntakeService {
       byNumber.set(key, list);
     }
 
+    const newLeads: NewLead[] = [];
     for (const deliveries of byNumber.values()) {
       const first = deliveries[0]!;
       const connection = await this.connectionFor(first.wabaId, first.phoneNumberId);
@@ -131,9 +184,21 @@ export class MetaInboundIntakeService {
         continue;
       }
       for (const delivery of deliveries) {
-        counts[await this.record(connection, delivery)] += 1;
+        const { outcome, newLead } = await this.record(connection, delivery);
+        counts[outcome] += 1;
+        if (newLead) newLeads.push(newLead);
       }
     }
+
+    /**
+     * ⚠️ AFTER EVERY TRANSACTION HAS COMMITTED, AND THAT ORDER IS LOAD-BEARING
+     * — the mail door's rule, for the same reason. The reply handler opens its
+     * own transaction and reads the lead; inside `record`'s it would either
+     * deadlock on the same rows or be handed a lead that might still roll
+     * back, and a stranger would have been answered about an enquiry that
+     * no longer exists.
+     */
+    for (const lead of newLeads) await this.announceNewLead(lead);
 
     return { status: statusOf(counts, parsed), ...counts };
   }
@@ -155,7 +220,7 @@ export class MetaInboundIntakeService {
       { channel: CHANNEL, externalAccountId: wabaId, externalAssetId: phoneNumberId },
       (tx) =>
         tx.channelConnection.findFirst({
-          select: { id: true, organisationId: true, moduleKey: true },
+          select: { id: true, organisationId: true, moduleKey: true, displayName: true },
         }),
     );
   }
@@ -171,13 +236,14 @@ export class MetaInboundIntakeService {
   private async record(
     connection: RoutedConnection,
     delivery: WhatsAppDelivery,
-  ): Promise<"stored" | "duplicates" | "ignored"> {
-    return this.inTenant(connection.organisationId, async (tx) => {
+  ): Promise<Recorded> {
+    const { organisationId } = connection;
+    return this.inTenant(organisationId, async (tx) => {
       const existing = await tx.inboundChannelMessage.findFirst({
         where: { channel: CHANNEL, providerMessageId: delivery.providerMessageId },
         select: { id: true },
       });
-      if (existing) return "duplicates";
+      if (existing) return { outcome: "duplicates", newLead: null };
 
       /**
        * The number outlives the entitlement, exactly as an inbound address
@@ -190,10 +256,35 @@ export class MetaInboundIntakeService {
           where: { moduleKey: connection.moduleKey, enabled: true, deletedAt: null },
         })) > 0;
 
+      /**
+       * The sender's two handles, from one id: WhatsApp's `wa_id` IS the E.164
+       * number without its plus, so no country is guessed. An id that is not
+       * a number is stored and goes no further — nothing could answer it.
+       */
+      const waId = normaliseWaId(delivery.fromIdentifier);
+      const phone = waId ? phoneFromWaId(waId) : null;
+      /**
+       * Their clock when they gave us one. A message with no usable timestamp
+       * is still stored — the alternative is losing it — and the arrival time
+       * is the honest fallback.
+       */
+      const receivedAt = delivery.receivedAt ?? new Date();
+
+      /** Why the delivery is kept but goes no further, or null when it becomes an enquiry. */
+      const held: { status: "ignored" | "failed"; reason: string } | null = !entitled
+        ? { status: "ignored", reason: `organisation does not hold ${connection.moduleKey}` }
+        : !waId || !phone
+          ? {
+              status: "failed",
+              reason: "the sender id is not a WhatsApp number, so nothing could answer it",
+            }
+          : null;
+
+      let row: { id: string };
       try {
-        await tx.inboundChannelMessage.create({
+        row = await tx.inboundChannelMessage.create({
           data: {
-            organisationId: connection.organisationId,
+            organisationId,
             connectionId: connection.id,
             channel: CHANNEL,
             providerMessageId: delivery.providerMessageId,
@@ -202,21 +293,96 @@ export class MetaInboundIntakeService {
             messageType: delivery.messageType,
             textBody: delivery.textBody,
             payload: delivery.payload,
-            status: entitled ? "received" : "ignored",
-            failureReason: entitled ? null : `organisation does not hold ${connection.moduleKey}`,
-            /**
-             * Their clock when they gave us one. A message with no usable
-             * timestamp is still stored — the alternative is losing it — and
-             * the arrival time is the honest fallback.
-             */
-            receivedAt: delivery.receivedAt ?? new Date(),
+            status: held?.status ?? "received",
+            failureReason: held?.reason ?? null,
+            receivedAt,
           },
+          select: { id: true },
         });
       } catch (error) {
-        if (isUniqueViolation(error)) return "duplicates";
+        if (isUniqueViolation(error)) return { outcome: "duplicates", newLead: null };
         throw error;
       }
-      return entitled ? "stored" : "ignored";
+
+      if (held) {
+        if (held.status === "failed") {
+          // The reason, never the id: this is a stranger's identifier.
+          this.logger.warn(
+            { organisationId, providerMessageId: delivery.providerMessageId },
+            "a WhatsApp message arrived from an id that is not a number; stored, not converted",
+          );
+        }
+        return { outcome: held.status === "ignored" ? "ignored" : "stored", newLead: null };
+      }
+
+      // (3) The spine: who, which thread, the canonical message.
+      const spine = await recordInboundMessage(tx, {
+        organisationId,
+        channel: CHANNEL,
+        channelConnectionId: connection.id,
+        sender: {
+          displayName: delivery.fromDisplayName,
+          // The WhatsApp id first: it is the reply handle the thread hangs off.
+          handles: [
+            { kind: "wa_id", value: waId! },
+            { kind: "phone", value: phone! },
+          ],
+        },
+        providerMessageId: delivery.providerMessageId,
+        providerThreadId: null,
+        subject: null,
+        bodyText: delivery.textBody,
+        contentType: contentTypeOf(delivery.messageType),
+        sourceTable: "inbound_channel_messages",
+        sourceId: row.id,
+        occurredAt: receivedAt,
+      });
+      if (spine.conflicts.length > 0) {
+        // Kinds only — the values are a stranger's number.
+        this.logger.warn(
+          { organisationId, personId: spine.personId, kinds: spine.conflicts.map((h) => h.kind) },
+          "a handle on this message already belongs to another person and was left with them",
+        );
+      }
+
+      /**
+       * (4) The enquiry — ruling 76. A thread already working a live lead
+       * files the message on it; otherwise this message opens one and the
+       * thread points at it.
+       */
+      let leadId: string;
+      let newLead: NewLead | null = null;
+      if (spine.workingLeadId) {
+        leadId = spine.workingLeadId;
+      } else {
+        const stages = await ensureSystemStages(tx, organisationId);
+        const lead = await createLeadFromChannelMessage(
+          tx,
+          organisationId,
+          {
+            displayName: delivery.fromDisplayName,
+            phone: phone!,
+            text: delivery.textBody,
+            providerMessageId: delivery.providerMessageId,
+            deliveredTo: deliveredTo(connection, delivery),
+            receivedAt,
+          },
+          {
+            personId: spine.personId,
+            pipelineStageId: stages.new,
+            originConversationId: spine.conversationId,
+          },
+        );
+        await attachLeadToThread(tx, spine.conversationId, lead.id);
+        leadId = lead.id;
+        newLead = { organisationId, leadId: lead.id };
+      }
+
+      await tx.inboundChannelMessage.update({
+        where: { id: row.id },
+        data: { status: "converted", leadId },
+      });
+      return { outcome: "stored", newLead };
     });
   }
 
@@ -241,6 +407,33 @@ function statusOf(
   if (counts.ignored > 0) return "ignored";
   void parsed;
   return "not-applicable";
+}
+
+/**
+ * What a message IS, for the timeline. Mirrors the 0041 backfill's case
+ * statement so a message that arrived yesterday and one arriving today read
+ * the same.
+ */
+function contentTypeOf(messageType: string): "text" | "media" | "other" {
+  if (messageType === "text") return "text";
+  if (["image", "audio", "video", "document", "sticker"].includes(messageType)) return "media";
+  return "other";
+}
+
+/**
+ * The number of OURS the message came to, as a human would recognise it: the
+ * display number Meta named in the webhook, else the one recorded on the
+ * connection, else the phone number id — never nothing, because the
+ * evidence's "sent to" is half of the claim.
+ */
+function deliveredTo(connection: RoutedConnection, delivery: WhatsAppDelivery): string {
+  const display = delivery.displayPhoneNumber ? phoneFromWaId(delivery.displayPhoneNumber) : null;
+  return display ?? connection.displayName ?? delivery.phoneNumberId;
+}
+
+/** A message safe to store and log: never a provider's error body. */
+function describe(error: unknown): string {
+  return error instanceof Error ? error.message : "unknown failure";
 }
 
 /** Prisma's code for a unique-constraint violation. Duck-typed to keep the client type out of here. */

@@ -1,10 +1,7 @@
 import { Injectable } from "@nestjs/common";
 // eslint-disable-next-line @typescript-eslint/consistent-type-imports
 import { PinoLogger } from "nestjs-pino";
-import type {
-  NewLead,
-  NewLeadHandler,
-} from "../../../capabilities/mailbox/inbound/new-lead-handler.js";
+import type { NewLead, NewLeadHandler } from "../../../platform/leads/new-lead-handler.js";
 // eslint-disable-next-line @typescript-eslint/consistent-type-imports
 import { LeadReplyService } from "./lead-reply.service.js";
 

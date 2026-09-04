@@ -7,6 +7,7 @@ import { PrismaService } from "../../common/database/prisma.service.js";
 import { UsersService } from "../users/users.service.js";
 import { requirePermission, type TenantTx } from "../permissions/permissions.js";
 import { writeAuditLog } from "../audit/audit-log.js";
+import { ensureSystemStages } from "../people/spine.js";
 import {
   addSuppression,
   normaliseSuppressionValue,
@@ -152,6 +153,13 @@ export class LeadsService {
       if (input.customerId) await this.requireCustomer(tx, input.customerId);
 
       const receivedAt = new Date(input.receivedAt);
+      /**
+       * Every writer supplies a stage (3.3b) — this one too, though no screen
+       * reaches it any more. A person is NOT made here: a handle somebody
+       * typed is unproven (blueprint §3.3 step 3), and the spine only links on
+       * a message that actually arrived from the handle.
+       */
+      const stages = await ensureSystemStages(tx, organisationId);
       const lead = await tx.lead.create({
         data: {
           organisationId,
@@ -162,6 +170,7 @@ export class LeadsService {
           enquiry: input.enquiry ?? null,
           receivedAt,
           customerId: input.customerId ?? null,
+          pipelineStageId: stages.new,
           createdBy: user.id,
           evidence: {
             create: {

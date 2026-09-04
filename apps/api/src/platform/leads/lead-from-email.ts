@@ -1,6 +1,7 @@
 import type { TenantTx } from "../permissions/permissions.js";
 import { writeAuditLog } from "../audit/audit-log.js";
 import { unwrapForwardedEmail } from "./forwarded-email.js";
+import { excerpt, type CreatedLead, type LeadSpine } from "./lead-writer.js";
 
 /**
  * Turning a delivered email into a lead and its evidence (Slice 3.1b).
@@ -34,17 +35,6 @@ export interface EmailEnquiry {
   /** When it arrived at our door. Their clock, not ours. */
   receivedAt: Date;
 }
-
-/**
- * How much of the message is quoted onto the lead.
- *
- * ⚠️ THE WHOLE MESSAGE IS NOT LOST BY THIS — it is in
- * `inbound_messages.text_body`, complete. `lead_evidence.raw_excerpt` is named
- * an excerpt and is one; the lead's `enquiry` matches the 4,000 the API
- * contract has always accepted, so a lead made by email and a lead made any
- * other way hold the same shape of thing.
- */
-const EXCERPT_LIMIT = 4000;
 
 /** `Display Name <a@b.com>` — the name half is anything before the brackets. */
 const ANGLE_ADDRESSED = /^(.*)<([^<>]+)>\s*$/;
@@ -96,66 +86,88 @@ function looksLikeAddress(value: string): boolean {
   return parts.length === 2 && parts[0]!.length > 0 && parts[1]!.includes(".");
 }
 
-/** Trimmed and capped, or null when there is nothing to quote. */
-function excerpt(text: string | null): string | null {
-  const trimmed = text?.trim();
-  if (!trimmed) return null;
-  return trimmed.slice(0, EXCERPT_LIMIT);
-}
-
-export interface CreatedLead {
-  id: string;
+/** Who actually wrote, and what they wrote — after any forwarding is unwrapped. */
+export interface EmailSender {
+  name: string | null;
+  /** Lowercased — the handle the person is looked up by. */
+  email: string;
+  subject: string | null;
+  /** The enquiry itself, capped for the lead. */
+  body: string | null;
 }
 
 /**
- * Writes the lead, its evidence and the audit line in ONE transaction — the
- * same transaction the caller uses to mark the delivery converted.
+ * Reads the sender and the enquiry out of a delivery.
  *
- * ⚠️ EVIDENCE IN THE SAME TRANSACTION AS THE LEAD, ALWAYS. BRD 4.3: "A lead
- * without complete channel-appropriate evidence must never enter the call
- * queue." A lead that committed without its proof would be a record nobody is
- * allowed to act on, sitting in the book looking exactly like one they are.
+ * ⚠️ A MANUALLY FORWARDED ENQUIRY IS ABOUT SOMEBODY ELSE, AND BOTH HALVES OF
+ * IT MOVE (slice 3.1c-0b). When a customer presses Forward, the `From` header
+ * becomes THEM and their covering note sits above the real message — so
+ * without this the lead is filed against the customer, quotes their note as
+ * the enquiry, and 3.1c would answer them instead of the person who asked.
+ * Seen on a real production lead.
+ *
+ * `unwrapForwardedEmail` returns null for anything it cannot read with
+ * confidence, and null means "use the message exactly as it arrived" — the
+ * behaviour that has always been here.
+ *
+ * ⚠️ SHARED WITH THE SPINE (3.3b). The person a delivery is filed under must
+ * be the same sender the lead names, forwarding unwrapped and all — so the
+ * intake reads the sender ONCE through this function and hands the same
+ * answer to both writes. Two parsers would eventually disagree.
  *
  * Throws when the message carries no usable sender address: a lead with no way
  * to answer it cannot be followed up, and `leads_contact_check` refuses it in
  * the database anyway. The caller records the failure against the delivery, so
  * the message is still kept and still visible.
  */
-export async function createLeadFromEmail(
-  tx: TenantTx,
-  organisationId: string,
-  enquiry: EmailEnquiry,
-): Promise<CreatedLead> {
-  /**
-   * ⚠️ A MANUALLY FORWARDED ENQUIRY IS ABOUT SOMEBODY ELSE, AND BOTH HALVES OF
-   * IT MOVE (slice 3.1c-0b). When a customer presses Forward, the `From` header
-   * becomes THEM and their covering note sits above the real message — so
-   * without this the lead is filed against the customer, quotes their note as
-   * the enquiry, and 3.1c would answer them instead of the person who asked.
-   * Seen on a real production lead.
-   *
-   * `unwrapForwardedEmail` returns null for anything it cannot read with
-   * confidence, and null means "use the message exactly as it arrived" — the
-   * behaviour that has always been here.
-   */
+export function readEmailEnquiry(enquiry: EmailEnquiry): EmailSender {
   const forwarded = unwrapForwardedEmail(enquiry.text);
   const fromHeader = forwarded?.from ?? enquiry.from;
   const { name, email } = parseFromHeader(fromHeader);
   if (!email) {
     throw new Error(`Could not read a sender address from '${fromHeader}'`);
   }
+  return {
+    name,
+    email,
+    // The forwarded block's own subject when there is one: the outer subject
+    // is whatever the forwarder's client prefixed with "Fwd:".
+    subject: forwarded?.subject ?? enquiry.subject,
+    body: excerpt(forwarded?.body ?? enquiry.text),
+  };
+}
 
-  const body = excerpt(forwarded?.body ?? enquiry.text);
+/**
+ * Writes the lead, its evidence and the audit line in ONE transaction — the
+ * same transaction the caller uses to mark the delivery converted and to
+ * write the spine.
+ *
+ * ⚠️ EVIDENCE IN THE SAME TRANSACTION AS THE LEAD, ALWAYS. BRD 4.3: "A lead
+ * without complete channel-appropriate evidence must never enter the call
+ * queue." A lead that committed without its proof would be a record nobody is
+ * allowed to act on, sitting in the book looking exactly like one they are.
+ */
+export async function createLeadFromEmail(
+  tx: TenantTx,
+  organisationId: string,
+  enquiry: EmailEnquiry,
+  spine: LeadSpine,
+): Promise<CreatedLead> {
+  const sender = readEmailEnquiry(enquiry);
+
   const lead = await tx.lead.create({
     data: {
       organisationId,
       source: "email_enquiry",
-      contactName: name,
-      contactEmail: email,
+      contactName: sender.name,
+      contactEmail: sender.email,
       contactPhone: null,
-      enquiry: body,
+      enquiry: sender.body,
       receivedAt: enquiry.receivedAt,
       createdBy: null,
+      personId: spine.personId,
+      pipelineStageId: spine.pipelineStageId,
+      originConversationId: spine.originConversationId,
       evidence: {
         create: {
           organisationId,
@@ -170,13 +182,11 @@ export async function createLeadFromEmail(
            * that address about this, and here is the message id": the part of
            * the evidence that can actually be checked against a mail server.
            */
-          senderAddress: email,
+          senderAddress: sender.email,
           recipientAddress: enquiry.deliveredTo,
-          // The forwarded block's own subject when there is one: the outer
-          // subject is whatever the forwarder's client prefixed with "Fwd:".
-          subject: forwarded?.subject ?? enquiry.subject,
+          subject: sender.subject,
           occurredAt: enquiry.receivedAt,
-          rawExcerpt: body,
+          rawExcerpt: sender.body,
           createdBy: null,
         },
       },

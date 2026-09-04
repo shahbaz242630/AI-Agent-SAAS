@@ -12,22 +12,33 @@
 import { describeMoment } from "@/lib/today";
 
 /**
+ * The sources whose English `sentenceCase` cannot reach.
+ *
+ * ⚠️ THE MAP IS BACK, FOR ONE ENTRY, AND THE DOC BELOW SAYS WHEN IT WAS
+ * PROMISED. WhatsApp spells itself with a capital A, and sentence-casing the
+ * key would put "Whatsapp enquiry" on a customer's screen — a brand name
+ * misspelt, which reads as carelessness about their own enquiry. Anything
+ * not listed here still falls through to `sentenceCase`.
+ */
+const LEAD_SOURCE_LABELS: Readonly<Record<string, string>> = {
+  whatsapp_enquiry: "WhatsApp enquiry",
+};
+
+/**
  * How an enquiry came in, in English.
  *
- * ⚠️ THERE IS NO LOOKUP TABLE HERE ANY MORE, AND THAT IS A SIMPLIFICATION, NOT
- * AN OVERSIGHT. Until 2026-08-21 this mapped three hand-logged sources —
- * `missed_call`, `existing_customer`, `callback_request` — which were removed
- * with the manual form when the founder ruled that this product is one mailbox
- * in and a reply out. The one source it now produces, `email_enquiry`, reads
- * correctly straight out of `sentenceCase` ("Email enquiry"), so a map would be
- * three lines that restate what the function below already does.
- *
- * A map comes back the moment a source needs wording `sentenceCase` cannot
- * reach — the retired `existing_customer` was exactly that, because it had to
- * read "Existing client".
+ * ⚠️ THE LOOKUP TABLE WAS REMOVED ON 2026-08-21 AND CAME BACK ON 2026-09-04,
+ * BOTH TIMES FOR A REASON. Until 2026-08-21 this mapped three hand-logged
+ * sources — `missed_call`, `existing_customer`, `callback_request` — which
+ * were removed with the manual form when the founder ruled that this product
+ * is one mailbox in and a reply out; `email_enquiry` reads correctly straight
+ * out of `sentenceCase` ("Email enquiry"), so the map was three lines
+ * restating the function. The comment then said a map comes back the moment
+ * a source needs wording `sentenceCase` cannot reach. `whatsapp_enquiry`
+ * (slice 3.3b, ruling 62) is that source.
  */
 export function leadSourceLabel(source: string): string {
-  return sentenceCase(source);
+  return LEAD_SOURCE_LABELS[source] ?? sentenceCase(source);
 }
 
 /**

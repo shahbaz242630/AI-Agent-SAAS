@@ -13,8 +13,11 @@ import {
 import { describeMoment } from "@/lib/today";
 
 describe("lead vocabulary", () => {
-  it("says the source this product produces the way a person would", () => {
+  it("says the sources this product produces the way a person would", () => {
     expect(leadSourceLabel("email_enquiry")).toBe("Email enquiry");
+    // Since 3.3b — and spelt the way the brand spells itself, which
+    // `sentenceCase` cannot do.
+    expect(leadSourceLabel("whatsapp_enquiry")).toBe("WhatsApp enquiry");
   });
 
   /**
