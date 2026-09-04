@@ -48,7 +48,7 @@ describe("Suppression list: add/check and permanence", () => {
      * correct` where the test asserts two events, and the failure looks like a
      * code defect rather than leftover state. Found by re-running.
      */
-    await owner.$executeRaw`DELETE FROM suppression_events WHERE organisation_id IN (${ORG_A}::uuid, ${ORG_B}::uuid)`;
+    await owner.$executeRaw`DELETE FROM consent_events WHERE organisation_id IN (${ORG_A}::uuid, ${ORG_B}::uuid)`;
     app = createPrismaClient(APP_DATABASE_URL);
   });
 
@@ -87,7 +87,7 @@ describe("Suppression list: add/check and permanence", () => {
     await asOrgA((tx) =>
       addSuppression(tx, { organisationId: ORG_A, channel: "call", value: "+44 20 7946 0000" }),
     );
-    const rows = await owner.suppressionEvent.findMany({
+    const rows = await owner.consentEvent.findMany({
       where: { organisationId: ORG_A, channel: "call", value: "+44 20 7946 0000" },
     });
     expect(rows).toHaveLength(1);
@@ -153,12 +153,12 @@ describe("Suppression list: add/check and permanence", () => {
       // ⚠️ NOTHING WAS REMOVED. The trail still shows the request was made and
       // then said to be an error — that is correcting a record, not rewriting
       // one, and it is the difference the whole design turns on.
-      const rows = await owner.suppressionEvent.findMany({
+      const rows = await owner.consentEvent.findMany({
         where: { organisationId: ORG_A, channel: "email", value: "misclick@example.com" },
         orderBy: { createdAt: "asc" },
-        select: { action: true, reason: true },
+        select: { state: true, reason: true },
       });
-      expect(rows.map((row) => row.action)).toEqual(["suppress", "correct"]);
+      expect(rows.map((row) => row.state)).toEqual(["opted_out", "corrected"]);
       expect(rows[0]!.reason).toBe("lead_requested");
       expect(rows[1]!.reason).toBe("Pressed it on the wrong enquiry");
     });
@@ -209,7 +209,7 @@ describe("Suppression list: add/check and permanence", () => {
         }),
       );
       expect(corrected).toBe(false);
-      const rows = await owner.suppressionEvent.count({
+      const rows = await owner.consentEvent.count({
         where: { organisationId: ORG_A, value: "never-suppressed@example.com" },
       });
       expect(rows, "a correction was written for a value nobody suppressed").toBe(0);
@@ -236,8 +236,8 @@ describe("Suppression list: add/check and permanence", () => {
         }),
       );
       expect([first, second]).toEqual([true, false]);
-      const corrections = await owner.suppressionEvent.count({
-        where: { organisationId: ORG_A, value, action: "correct" },
+      const corrections = await owner.consentEvent.count({
+        where: { organisationId: ORG_A, value, state: "corrected" },
       });
       expect(corrections).toBe(1);
     });
@@ -253,8 +253,8 @@ describe("Suppression list: add/check and permanence", () => {
       await expect(
         asOrgA(
           (tx) =>
-            tx.$executeRaw`INSERT INTO suppression_events (id, organisation_id, action, channel, value)
-                           VALUES (gen_random_uuid(), ${ORG_A}::uuid, 'correct', 'email', 'no-reason@example.com')`,
+            tx.$executeRaw`INSERT INTO consent_events (id, organisation_id, state, channel, value)
+                           VALUES (gen_random_uuid(), ${ORG_A}::uuid, 'corrected', 'email', 'no-reason@example.com')`,
         ),
       ).rejects.toThrow();
     });
@@ -266,6 +266,37 @@ describe("Suppression list: add/check and permanence", () => {
       expect(values).toContain("stop@example.com");
       expect(values).not.toContain("misclick@example.com");
       expect(values).not.toContain("twice-corrected@example.com");
+    });
+
+    /**
+     * ⚠️ A CONSENT IS NOT A CORRECTION (slice 3.3d, migration 0042). The engine
+     * (3.5) will write `opted_in` rows for `marketing` into the same table; a
+     * NEWER one of those on a do-not-contact value must not read as
+     * "contactable", which is why every question in `suppression.ts` is pinned
+     * to `purpose = 'all'`. Written by the owner, because the API has no
+     * consent writer yet — this is the row the engine will one day write.
+     */
+    it("ignores a newer marketing consent when asked the do-not-contact question", async () => {
+      await owner.consentEvent.create({
+        data: {
+          organisationId: ORG_A,
+          state: "opted_in",
+          purpose: "marketing",
+          basis: "express",
+          source: "form",
+          channel: "email",
+          value: "stop@example.com",
+        },
+      });
+      expect(await asOrgA((tx) => isSuppressed(tx, ORG_A, "email", "stop@example.com"))).toBe(true);
+      const listed = await asOrgA((tx) => listSuppressed(tx, ORG_A));
+      expect(listed.filter((entry) => entry.value === "stop@example.com")).toHaveLength(1);
+      // Nor does the old name show it: a consent is not a `correct`.
+      const viaView = (await asOrgA(
+        (tx) =>
+          tx.$queryRaw`SELECT action FROM suppression_events WHERE organisation_id = ${ORG_A}::uuid AND value = 'stop@example.com'`,
+      )) as { action: string }[];
+      expect(viaView.map((row) => row.action)).toEqual(["suppress"]);
     });
 
     /**
@@ -288,15 +319,38 @@ describe("Suppression list: add/check and permanence", () => {
     await expect(
       asOrgA(
         (tx) =>
-          tx.$executeRaw`UPDATE suppression_events SET reason = 'tampered' WHERE organisation_id = ${ORG_A}::uuid`,
+          tx.$executeRaw`UPDATE consent_events SET reason = 'tampered' WHERE organisation_id = ${ORG_A}::uuid`,
       ),
     ).rejects.toThrow();
 
     await expect(
       asOrgA(
-        (tx) =>
-          tx.$executeRaw`DELETE FROM suppression_events WHERE organisation_id = ${ORG_A}::uuid`,
+        (tx) => tx.$executeRaw`DELETE FROM consent_events WHERE organisation_id = ${ORG_A}::uuid`,
       ),
     ).rejects.toThrow();
+  });
+
+  /**
+   * Slice 3.3d (migration 0042). The table is `consent_events` now; the old
+   * name is a read-only view in the 0028 shape, for hand SQL. It must show the
+   * same do-not-contact history in the old words — and take nothing.
+   */
+  it("still answers under the old name, in the old words, and only for reading", async () => {
+    const rows = (await asOrgA(
+      (tx) =>
+        tx.$queryRaw`SELECT action, reason FROM suppression_events
+                     WHERE organisation_id = ${ORG_A}::uuid AND value = 'misclick@example.com'
+                     ORDER BY created_at ASC, id ASC`,
+    )) as { action: string; reason: string | null }[];
+    expect(rows.map((row) => row.action)).toEqual(["suppress", "correct"]);
+    expect(rows[1]!.reason).toBe("Pressed it on the wrong enquiry");
+
+    await expect(
+      asOrgA(
+        (tx) =>
+          tx.$executeRaw`INSERT INTO suppression_events (id, organisation_id, action, channel, value)
+                         VALUES (gen_random_uuid(), ${ORG_A}::uuid, 'suppress', 'email', 'via-the-view@example.com')`,
+      ),
+    ).rejects.toThrow(/permission denied|cannot insert/i);
   });
 });

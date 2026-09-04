@@ -84,6 +84,7 @@ describe("Schema conventions (BRD 10)", () => {
       "activities",
       "audit_logs",
       "channel_connections",
+      "consent_events",
       "consent_texts",
       "contacts",
       "conversations",
@@ -115,7 +116,6 @@ describe("Schema conventions (BRD 10)", () => {
       "reminder_steps",
       "roles",
       "scheduled_actions",
-      "suppression_events",
       "user_sessions",
       "users",
     ]);
@@ -131,7 +131,7 @@ describe("Schema conventions (BRD 10)", () => {
     "imports",
     "import_rows",
     "invoice_documents",
-    "suppression_events",
+    "consent_events",
     "organisation_role_permissions",
     "reminder_sequences",
     "reminder_steps",
@@ -935,12 +935,125 @@ describe("Schema conventions (BRD 10)", () => {
     expect(names).not.toContain("deleted_at");
   });
 
-  it("suppression_events is permanent: created_at only, no updated_at/deleted_at", async () => {
-    const names = (await columnsOf("suppression_events")).map((c) => c.column_name);
+  it("consent_events is permanent: created_at only, no updated_at/deleted_at", async () => {
+    const names = (await columnsOf("consent_events")).map((c) => c.column_name);
     expect(names).toContain("created_at");
     expect(names).toContain("created_by");
     expect(names).not.toContain("updated_at");
     expect(names).not.toContain("deleted_at");
+  });
+
+  /**
+   * Slice 3.3d (migration 0042): the do-not-contact log's old name is a VIEW
+   * in the 0028 shape, so a hand-written query from before the rename reads
+   * exactly what it used to — and none of the consent columns leak into it.
+   */
+  it("suppression_events is a view in the 0028 shape over consent_events", async () => {
+    // `relkind` is Postgres's one-byte "char", which Prisma cannot read raw.
+    const kind = await prisma.$queryRaw<{ relkind: string }[]>`
+      SELECT relkind::text AS relkind FROM pg_class WHERE relname = 'suppression_events'`;
+    expect(kind).toEqual([{ relkind: "v" }]);
+    const names = (await columnsOf("suppression_events")).map((c) => c.column_name).sort();
+    expect(names).toEqual([
+      "action",
+      "channel",
+      "created_at",
+      "created_by",
+      "id",
+      "organisation_id",
+      "reason",
+      "value",
+    ]);
+    const table = (await columnsOf("consent_events")).map((c) => c.column_name);
+    for (const column of [
+      "state",
+      "purpose",
+      "basis",
+      "source",
+      "evidence",
+      "jurisdiction",
+      "expires_at",
+    ]) {
+      expect(table, `consent_events.${column}`).toContain(column);
+    }
+  });
+
+  /**
+   * ⚠️ THE CONSENT RULES ARE CHECKS, NOT CONVENTIONS (migration 0042, blueprint
+   * §2.5): consent names a purpose and rests on a basis; an opt-out carries no
+   * basis and never expires; a correction says why. Each is tried by hand as
+   * the OWNER, whom nothing else stops, so a refusal can only be the
+   * constraint. The positive control comes last: a well-formed consent goes in,
+   * so the refusals above it were not vacuous.
+   */
+  describe("consent_events refuses a row that contradicts itself (migration 0042)", () => {
+    const VALUE = "contradiction@example.com";
+    const attempt = (columns: string, values: string) =>
+      prisma.$executeRawUnsafe(
+        `INSERT INTO consent_events (id, organisation_id, channel, value, ${columns})
+         VALUES ('${randomUUID()}', '${DEMO_ORGANISATION_ID}', 'email', '${VALUE}', ${values})`,
+      );
+
+    afterAll(async () => {
+      await prisma.$executeRaw`DELETE FROM consent_events WHERE value = ${VALUE}`;
+    });
+
+    it("a consent to `all` — there is no such thing", async () => {
+      await expect(
+        attempt("state, purpose, basis", "'opted_in', 'all', 'express'"),
+      ).rejects.toThrow(/consent_events_consent_names_a_purpose_check/);
+    });
+
+    it("a consent with no basis — the boolean the report forbids", async () => {
+      await expect(attempt("state, purpose", "'opted_in', 'marketing'")).rejects.toThrow(
+        /consent_events_basis_on_consent_only_check/,
+      );
+    });
+
+    it("an opt-out with a basis — an opt-out rests on nothing but itself", async () => {
+      await expect(attempt("state, basis", "'opted_out', 'express'")).rejects.toThrow(
+        /consent_events_basis_on_consent_only_check/,
+      );
+    });
+
+    it("an opt-out that expires — permanently is the BRD's word", async () => {
+      await expect(
+        attempt("state, expires_at", "'opted_out', now() + interval '1 day'"),
+      ).rejects.toThrow(/consent_events_expiry_on_consent_only_check/);
+    });
+
+    it("a correction with no reason (carried from 0028)", async () => {
+      await expect(attempt("state", "'corrected'")).rejects.toThrow(
+        /consent_events_correction_reason_check/,
+      );
+    });
+
+    it.each([
+      ["state", "'maybe'", /consent_events_state_check/],
+      ["purpose", "'everything'", /consent_events_purpose_check/],
+      ["source", "'telepathy'", /consent_events_source_check/],
+      [
+        "state, purpose, basis",
+        "'opted_in', 'marketing', 'because_they_said_so'",
+        /consent_events_basis_check/,
+      ],
+      [
+        "state, purpose, basis, jurisdiction",
+        "'opted_in', 'marketing', 'express', 'Florida'",
+        /consent_events_jurisdiction_check/,
+      ],
+    ] as const)("a word the vocabulary does not have: %s = %s", async (columns, values, check) => {
+      await expect(attempt(columns, values)).rejects.toThrow(check);
+    });
+
+    it("and accepts a well-formed consent (positive control)", async () => {
+      await expect(
+        attempt(
+          "state, purpose, basis, source, evidence, jurisdiction, expires_at",
+          `'opted_in', 'marketing', 'express', 'form', '{"wording": "Send me offers"}'::jsonb, 'US-FL', now() + interval '2 years'`,
+        ),
+      ).resolves.toBe(1);
+    });
   });
 
   it("stores timestamps as timestamptz (UTC, BRD 18.1)", async () => {

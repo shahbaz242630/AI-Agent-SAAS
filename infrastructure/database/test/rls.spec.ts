@@ -35,7 +35,7 @@ beforeAll(async () => {
   await seed(owner);
   // Suppression rows are permanent and may be left by earlier test runs; clean
   // the deterministic fixture orgs so cross-tenant SELECT assertions are sound.
-  await owner.$executeRaw`DELETE FROM suppression_events WHERE organisation_id IN (${ORG_A}::uuid, ${ORG_B}::uuid)`;
+  await owner.$executeRaw`DELETE FROM consent_events WHERE organisation_id IN (${ORG_A}::uuid, ${ORG_B}::uuid)`;
   // POSITIVE CONTROL for email_accounts (Slice 1.6): unlike customers/invoices,
   // seed() creates no mailbox rows, so "tenant A cannot SELECT tenant B's
   // email_accounts" would pass against an empty table whether the
@@ -105,7 +105,7 @@ const TENANT_TABLES = [
   "imports",
   "import_rows",
   "invoice_documents",
-  "suppression_events",
+  "consent_events",
   "organisation_role_permissions",
   "reminder_sequences",
   "reminder_steps",
@@ -153,7 +153,7 @@ describe("RLS: connection role hardening", () => {
       WHERE relname IN (
         'organisations', 'organisation_settings', 'organisation_memberships',
         'users', 'audit_logs', 'customers', 'contacts', 'invoices',
-        'imports', 'import_rows', 'invoice_documents', 'suppression_events',
+        'imports', 'import_rows', 'invoice_documents', 'consent_events',
         'organisation_role_permissions', 'reminder_sequences', 'reminder_steps',
         'scheduled_actions', 'human_escalations', 'email_accounts',
         'organisation_modules', 'leads', 'lead_evidence', 'consent_texts',
@@ -174,7 +174,7 @@ describe("RLS: connection role hardening", () => {
       WHERE tablename IN (
         'organisations', 'organisation_settings', 'organisation_memberships',
         'users', 'audit_logs', 'customers', 'contacts', 'invoices',
-        'imports', 'import_rows', 'invoice_documents', 'suppression_events',
+        'imports', 'import_rows', 'invoice_documents', 'consent_events',
         'organisation_role_permissions', 'reminder_sequences', 'reminder_steps',
         'scheduled_actions', 'human_escalations', 'email_accounts',
         'organisation_modules', 'leads', 'lead_evidence', 'consent_texts',
@@ -196,7 +196,7 @@ describe("RLS: cross-tenant attacks are refused by Postgres itself", () => {
     "imports",
     "import_rows",
     "invoice_documents",
-    "suppression_events",
+    "consent_events",
     "organisation_role_permissions",
     "reminder_sequences",
     "reminder_steps",
@@ -511,12 +511,12 @@ describe("RLS: list_active_organisations sweep enumeration (migration 0010, plan
 });
 
 describe("RLS: suppression list permanence (BRD hard rule)", () => {
-  it("runtime role has UPDATE and DELETE revoked on suppression_events", async () => {
+  it("runtime role has UPDATE and DELETE revoked on consent_events", async () => {
     await expect(
       asTenant(
         ORG_A,
         async (tx) =>
-          tx.$executeRaw`UPDATE suppression_events SET reason = 'tampered' WHERE organisation_id = ${ORG_A}::uuid`,
+          tx.$executeRaw`UPDATE consent_events SET reason = 'tampered' WHERE organisation_id = ${ORG_A}::uuid`,
       ),
     ).rejects.toThrow(/permission denied|cannot update/i);
 
@@ -524,8 +524,87 @@ describe("RLS: suppression list permanence (BRD hard rule)", () => {
       asTenant(
         ORG_A,
         async (tx) =>
-          tx.$executeRaw`DELETE FROM suppression_events WHERE organisation_id = ${ORG_A}::uuid`,
+          tx.$executeRaw`DELETE FROM consent_events WHERE organisation_id = ${ORG_A}::uuid`,
       ),
+    ).rejects.toThrow(/permission denied|cannot delete/i);
+  });
+});
+
+/**
+ * Slice 3.3d — migration 0042. The do-not-contact log is `consent_events`
+ * now, and `suppression_events` is a VIEW over it in the 0028 shape, kept for
+ * hand SQL. A view runs with its OWNER's privileges unless it was created with
+ * `security_invoker` — the 0041 lesson, applied a second time — so without
+ * that option a hand-written `SELECT * FROM suppression_events` as `eva_app`
+ * would list every organisation's do-not-contact entries. The positive control
+ * comes first: an empty view must not pass for a guarded one.
+ */
+describe("RLS: the do-not-contact log's old name (migration 0042)", () => {
+  const VALUE = "old-name@example.com";
+  const asDemo = (fn: (tx: PrismaClient) => Promise<unknown>) => asTenant(DEMO_ORGANISATION_ID, fn);
+
+  beforeAll(async () => {
+    // The log is permanent and this row is re-made every run: the OWNER clears
+    // it first, or the second run finds two.
+    const owner = createPrismaClient(TEST_DATABASE_URL);
+    await owner.$executeRaw`DELETE FROM consent_events WHERE value = ${VALUE}`;
+    await owner.$disconnect();
+  });
+
+  it("the owning tenant reads its entry through the old name, in the old words (positive control)", async () => {
+    // The DEMO organisation, because ORG_A is a synthetic tenant context that
+    // does not exist in `organisations` and the foreign key would refuse it.
+    // `id` has no database default (Prisma generates it), so raw SQL supplies it.
+    await asDemo(
+      async (tx) =>
+        tx.$executeRaw`INSERT INTO consent_events (id, organisation_id, channel, value)
+          VALUES (${randomUUID()}::uuid, ${DEMO_ORGANISATION_ID}::uuid, 'email', ${VALUE})`,
+    );
+    const rows = await asDemo(
+      (tx) =>
+        tx.$queryRaw`SELECT action, channel, value FROM suppression_events WHERE value = ${VALUE}`,
+    );
+    expect(rows).toEqual([{ action: "suppress", channel: "email", value: VALUE }]);
+  });
+
+  it("another tenant reads NOTHING through the old name — the view runs as the caller", async () => {
+    const rows = await asTenant(
+      ORG_A,
+      (tx) => tx.$queryRaw`SELECT action FROM suppression_events WHERE value = ${VALUE}`,
+    );
+    expect(rows).toEqual([]);
+  });
+
+  it("an unset tenant context reads nothing through it at all (fails closed)", async () => {
+    const rows = await prisma.$transaction(
+      (tx) => tx.$queryRaw`SELECT action FROM suppression_events WHERE value = ${VALUE}`,
+    );
+    expect(rows).toEqual([]);
+  });
+
+  it("the view was created with security_invoker, not merely tested into behaving", async () => {
+    const rows = await prisma.$queryRaw<{ reloptions: string[] | null }[]>`
+      SELECT reloptions FROM pg_class WHERE relname = 'suppression_events' AND relkind = 'v'`;
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.reloptions ?? []).toContain("security_invoker=true");
+  });
+
+  it("the old name cannot be written through, by anyone at the keyboard of the app", async () => {
+    await expect(
+      asDemo(
+        async (tx) =>
+          tx.$executeRaw`INSERT INTO suppression_events (id, organisation_id, action, channel, value)
+            VALUES (${randomUUID()}::uuid, ${DEMO_ORGANISATION_ID}::uuid, 'suppress', 'email', 'through-the-view@example.com')`,
+      ),
+    ).rejects.toThrow(/permission denied|cannot insert/i);
+    await expect(
+      asDemo(
+        async (tx) =>
+          tx.$executeRaw`UPDATE suppression_events SET reason = 'tampered' WHERE value = ${VALUE}`,
+      ),
+    ).rejects.toThrow(/permission denied|cannot update/i);
+    await expect(
+      asDemo(async (tx) => tx.$executeRaw`DELETE FROM suppression_events WHERE value = ${VALUE}`),
     ).rejects.toThrow(/permission denied|cannot delete/i);
   });
 });

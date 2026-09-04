@@ -32,7 +32,7 @@ model Organisation {
   imports         Import[]
   importRows      ImportRow[]
   invoiceDocuments InvoiceDocument[]
-  suppressionEvents SuppressionEvent[]
+  consentEvents     ConsentEvent[]
   rolePermissions OrganisationRolePermission[]
   reminderSequences ReminderSequence[]
   reminderSteps     ReminderStep[]
@@ -460,37 +460,64 @@ model InvoiceDocument {
   @@map("invoice_documents")
 }
 
-/// Cross-channel do-not-contact, as an APPEND-ONLY LOG OF EVENTS rather than a
-/// list of values (migration 0028). BRD hard rule: a request is actioned
-/// immediately and permanently, across all channels.
+/// Consent and do-not-contact, per channel per purpose, as an APPEND-ONLY LOG
+/// OF EVENTS (migration 0028 made the do-not-contact list a log; 0042 widened
+/// it into this — slice 3.3d, blueprint §2.5). BRD hard rule: a request is
+/// actioned immediately and permanently, across all channels.
 ///
 /// ⚠️ A ROW IS NOT "THIS VALUE IS SUPPRESSED". It is "on this date, somebody
-/// did this". `action` is `suppress` or `correct`, and the CURRENT state of a
-/// value is whatever its NEWEST row says — never `EXISTS(...)`, which was the
-/// right question up to 0027 and is a bug after it. Read it through
-/// `suppression.ts`; a hand-written query that ignores `action` will silently
-/// treat a corrected entry as live.
+/// did this". `state` is `opted_out`, `corrected` or `opted_in`, and the
+/// CURRENT standing of a value FOR A PURPOSE is whatever its NEWEST row with
+/// that purpose says — never `EXISTS(...)`, which was the right question up to
+/// 0027 and is a bug after it. A do-not-contact is `opted_out` with
+/// `purpose = 'all'`; read it through `suppression.ts`, which pins every query
+/// to that purpose. A hand-written query that ignores `state` or `purpose`
+/// will silently treat a corrected entry — or a marketing opt-in — as live.
+///
+/// ⚠️ CONSENT IS NOT A BOOLEAN. An `opted_in` row names a `purpose` (`service`
+/// or `marketing`, never `all`) and a `basis`; an opt-out carries neither and
+/// never expires. Every one of those rules is a CHECK in 0042, not a
+/// convention. Nothing writes `opted_in` yet — the engine (3.5) will.
 ///
 /// ⚠️ NO updated_at / deleted_at, AND `eva_app` HOLDS NO UPDATE OR DELETE
-/// (migration 0005, re-asserted by 0028). That is what makes "permanent" a
-/// database fact rather than an app convention, and it is exactly why undoing
-/// a mis-click had to become a new row rather than an edit.
+/// (migration 0005, re-asserted by 0028 and 0042). That is what makes
+/// "permanent" a database fact rather than an app convention, and it is
+/// exactly why undoing a mis-click had to become a new row rather than an edit.
 ///
 /// ⚠️ THE UNIQUE KEY ON (org, channel, value) WAS DROPPED BY 0028 and could not
 /// survive: a value that is suppressed, corrected, then genuinely asked for
-/// again needs a SECOND `suppress` row, and a genuine request that silently did
-/// nothing is the worst bug this table could have. Idempotency moved into
+/// again needs a SECOND `opted_out` row, and a genuine request that silently
+/// did nothing is the worst bug this table could have. Idempotency moved into
 /// `addSuppression`, which does not write when the value is already suppressed.
 ///
+/// The old name, `suppression_events`, is a `security_invoker` read-only VIEW
+/// over the `purpose = 'all'` rows in the old columns, for hand SQL. It is not
+/// a Prisma model (the `views` preview feature stays off).
+///
 /// Channels: email | call (whatsapp added additively when Phase 3 needs it).
-model SuppressionEvent {
+model ConsentEvent {
   id             String       @id @default(uuid()) @db.Uuid
   organisationId String       @map("organisation_id") @db.Uuid
-  /// `suppress` | `correct` — CHECK-constrained in migration 0028.
-  action         String       @default("suppress")
+  /// `opted_in` | `opted_out` | `corrected` — CHECK-constrained in migration 0042.
+  /// Defaults to the safe direction: a row that says nothing is an opt-out.
+  state          String       @default("opted_out")
+  /// `all` (an opt-out's scope) | `service` | `marketing` (what consent is for).
+  purpose        String       @default("all")
   channel        String
   /// The address/number, normalised by the application layer.
   value          String
+  /// The legal footing of an `opted_in` row (blueprint §2.5 item 1); NULL on
+  /// everything else. Enumerated by a CHECK.
+  basis          String?
+  /// `user` | `inbound_message` | `form` | `import` | `system` — who or what
+  /// recorded the event.
+  source         String       @default("user")
+  /// Wording shown, message id, IP, form URL, OTP reference — whatever proves it.
+  evidence       Json?
+  /// ISO 3166-1 alpha-2, optionally with a 3166-2 subdivision (`US-FL`).
+  jurisdiction   String?
+  /// Only a consent runs out. An opt-out is permanent (CHECK).
+  expiresAt      DateTime?    @map("expires_at") @db.Timestamptz(6)
   /// Why. Optional on a suppression, REQUIRED on a correction (CHECK).
   reason         String?
   createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
@@ -499,7 +526,7 @@ model SuppressionEvent {
 
   /// The lookup every send path makes: newest row for one value on one channel.
   @@index([organisationId, channel, value, createdAt])
-  @@map("suppression_events")
+  @@map("consent_events")
 }
 
 /// Per-organisation role→permission grants (BRD 7 amendment, Slice 1.1 plan

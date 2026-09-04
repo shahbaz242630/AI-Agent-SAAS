@@ -17,7 +17,7 @@ import {
  * the lead said otherwise, which is the money-bug family: a screen promising an
  * outcome that does not happen.
  *
- * The root cause is two records of one fact. `suppression_events` is the gate
+ * The root cause is two records of one fact. `consent_events` is the gate
  * Eva actually obeys; `leads.status` is a label. When the gate opens, the label
  * has to follow, or one of them is wrong from that moment on.
  *

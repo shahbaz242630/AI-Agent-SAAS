@@ -10,6 +10,15 @@ import type { TenantTx } from "../permissions/permissions.js";
  * runtime role holds no UPDATE or DELETE on the table, so permanence is a
  * database fact and not a convention this file could quietly drop.
  *
+ * ⚠️ SINCE MIGRATION 0042 THE LOG IS `consent_events` (slice 3.3d, blueprint
+ * §2.5). A do-not-contact is an `opted_out` event whose `purpose` is `all` —
+ * every message, on every product — and its correction is a `corrected` event.
+ * Consent (`opted_in`, for `service` or `marketing`, with a basis and evidence)
+ * lives in the same table and is NOT this file's business: every read here is
+ * pinned to `purpose = 'all'`, so a marketing opt-in written by the engine can
+ * never make the do-not-contact question answer "contactable". The old name,
+ * `suppression_events`, is a read-only view for hand SQL.
+ *
  * ⚠️ A CORRECTION IS FOR AN ENTRY THAT SHOULD NEVER HAVE BEEN MADE. It is NOT
  * for changing your mind about a request somebody actually made — that person
  * stays unreachable forever, which is the whole point of the rule. We cannot
@@ -26,9 +35,25 @@ import type { TenantTx } from "../permissions/permissions.js";
 export const SUPPRESSION_CHANNELS = ["email", "call"] as const;
 export type SuppressionChannel = (typeof SUPPRESSION_CHANNELS)[number];
 
-/** What a row records. CHECK-constrained in migration 0028. */
-export const SUPPRESSION_ACTIONS = ["suppress", "correct"] as const;
-export type SuppressionAction = (typeof SUPPRESSION_ACTIONS)[number];
+/**
+ * What a row records. CHECK-constrained in migration 0042. `opted_in` is
+ * admitted by the database and written by nothing yet — the engine (3.5) is
+ * its first writer, and it must not need a migration to say the one word the
+ * table exists for.
+ */
+export const CONSENT_STATES = ["opted_in", "opted_out", "corrected"] as const;
+export type ConsentState = (typeof CONSENT_STATES)[number];
+
+/**
+ * Whom a message would be for. `all` is an opt-out's scope — "do not contact
+ * me" names no purpose, it names everything; `service` and `marketing` are
+ * what consent is granted for, and a CHECK forbids consenting to `all`.
+ */
+export const CONSENT_PURPOSES = ["all", "service", "marketing"] as const;
+export type ConsentPurpose = (typeof CONSENT_PURPOSES)[number];
+
+/** The purpose a do-not-contact request covers: every message, on every product. */
+const DO_NOT_CONTACT: ConsentPurpose = "all";
 
 /** Normalises a value for storage/comparison (emails case-fold). */
 export function normaliseSuppressionValue(channel: SuppressionChannel, value: string): string {
@@ -53,12 +78,13 @@ export interface SuppressionState {
  * ⚠️ IDEMPOTENT, BUT NO LONGER BY THE DATABASE. The unique key on
  * (org, channel, value) went with 0028 — it could not survive corrections —
  * so this reads the current state and writes nothing when the value is already
- * suppressed. Two identical `suppress` rows would be harmless (the newest still
- * says `suppress`); one row is simply tidier and keeps the old guarantee.
+ * suppressed. Two identical `opted_out` rows would be harmless (the newest
+ * still says `opted_out`); one row is simply tidier and keeps the old
+ * guarantee.
  *
  * ⚠️ AND THIS IS WHY IT MUST WRITE AFTER A CORRECTION. Somebody suppressed by
  * mistake, corrected, then genuinely asking six months later gets a NEW
- * `suppress` row that supersedes the correction. The old code's
+ * `opted_out` row that supersedes the correction. The old code's
  * `upsert(update: {})` would have done nothing at all here and left the stale
  * correction winning — a real request that silently failed.
  */
@@ -75,10 +101,14 @@ export async function addSuppression(
   const value = normaliseSuppressionValue(input.channel, input.value);
   if (await isSuppressed(tx, input.organisationId, input.channel, value)) return;
 
-  await tx.suppressionEvent.create({
+  await tx.consentEvent.create({
     data: {
       organisationId: input.organisationId,
-      action: "suppress",
+      state: "opted_out",
+      purpose: DO_NOT_CONTACT,
+      // A person at a screen asked. The STOP keyword (`inbound_message`) and
+      // the bounce (`system`) are later writers, and they say so themselves.
+      source: "user",
       channel: input.channel,
       value,
       reason: input.reason ?? null,
@@ -117,10 +147,12 @@ export async function correctSuppression(
   const value = normaliseSuppressionValue(input.channel, input.value);
   if (!(await isSuppressed(tx, input.organisationId, input.channel, value))) return false;
 
-  await tx.suppressionEvent.create({
+  await tx.consentEvent.create({
     data: {
       organisationId: input.organisationId,
-      action: "correct",
+      state: "corrected",
+      purpose: DO_NOT_CONTACT,
+      source: "user",
       channel: input.channel,
       value,
       reason: input.reason,
@@ -137,19 +169,20 @@ export async function isSuppressed(
   channel: SuppressionChannel,
   value: string,
 ): Promise<boolean> {
-  const newest = await tx.suppressionEvent.findFirst({
+  const newest = await tx.consentEvent.findFirst({
     where: {
       organisationId,
       channel,
       value: normaliseSuppressionValue(channel, value),
+      purpose: DO_NOT_CONTACT,
     },
     // ⚠️ `id` BREAKS THE TIE, AND IT IS NOT DECORATION. Two events on one value
     // inside the same millisecond would otherwise order arbitrarily, and the
     // arbitrary answer here is "contact somebody who asked us not to".
     orderBy: [{ createdAt: "desc" }, { id: "desc" }],
-    select: { action: true },
+    select: { state: true },
   });
-  return newest?.action === "suppress";
+  return newest?.state === "opted_out";
 }
 
 /**
@@ -171,20 +204,18 @@ export async function suppressedValues(
   const normalised = [...new Set(values.map((value) => normaliseSuppressionValue(channel, value)))];
   if (normalised.length === 0) return new Set();
 
-  const events = await tx.suppressionEvent.findMany({
-    where: { organisationId, channel, value: { in: normalised } },
+  const events = await tx.consentEvent.findMany({
+    where: { organisationId, channel, value: { in: normalised }, purpose: DO_NOT_CONTACT },
     orderBy: [{ createdAt: "desc" }, { id: "desc" }],
-    select: { value: true, action: true },
+    select: { value: true, state: true },
   });
 
   // Newest-first, so the first sighting of each value is its current state.
   const decided = new Map<string, string>();
   for (const event of events) {
-    if (!decided.has(event.value)) decided.set(event.value, event.action);
+    if (!decided.has(event.value)) decided.set(event.value, event.state);
   }
-  return new Set(
-    [...decided].filter(([, action]) => action === "suppress").map(([value]) => value),
-  );
+  return new Set([...decided].filter(([, state]) => state === "opted_out").map(([value]) => value));
 }
 
 /**
@@ -201,13 +232,13 @@ export async function listSuppressed(
   tx: TenantTx,
   organisationId: string,
 ): Promise<SuppressionState[]> {
-  const events = await tx.suppressionEvent.findMany({
-    where: { organisationId },
+  const events = await tx.consentEvent.findMany({
+    where: { organisationId, purpose: DO_NOT_CONTACT },
     orderBy: [{ createdAt: "desc" }, { id: "desc" }],
     select: {
       channel: true,
       value: true,
-      action: true,
+      state: true,
       reason: true,
       createdAt: true,
       createdBy: true,
@@ -216,12 +247,15 @@ export async function listSuppressed(
 
   const newest = new Map<string, SuppressionState>();
   for (const event of events) {
-    const key = `${event.channel} ${event.value}`;
+    // A colon separates the pair: a channel is one of two words that contain
+    // none, so the key cannot collide. (It used to be a raw NUL byte, which
+    // made every tool that touched this file call it binary.)
+    const key = `${event.channel}:${event.value}`;
     if (newest.has(key)) continue;
     newest.set(key, {
       channel: event.channel as SuppressionChannel,
       value: event.value,
-      suppressed: event.action === "suppress",
+      suppressed: event.state === "opted_out",
       since: event.createdAt,
       reason: event.reason,
       actorUserId: event.createdBy,

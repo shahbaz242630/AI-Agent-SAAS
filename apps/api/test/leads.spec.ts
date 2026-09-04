@@ -154,7 +154,7 @@ describe("Leads: the record, the evidence and the refusal", () => {
 
     expect(response.body.status).toBe("do_not_contact");
 
-    const suppressed = await owner.suppressionEvent.findMany({
+    const suppressed = await owner.consentEvent.findMany({
       where: { organisationId: org.id },
       select: { channel: true, value: true },
     });
@@ -184,7 +184,7 @@ describe("Leads: the record, the evidence and the refusal", () => {
       .set("Authorization", `Bearer ${token}`)
       .expect(201);
 
-    const rows = await owner.suppressionEvent.count({
+    const rows = await owner.consentEvent.count({
       where: { organisationId: org.id, channel: "email", value: "twice@example.com" },
     });
     expect(rows).toBe(1);
