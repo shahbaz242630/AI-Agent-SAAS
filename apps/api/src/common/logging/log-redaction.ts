@@ -44,8 +44,19 @@ export const LOG_REDACT_PATHS: string[] = SENSITIVE_KEYS.flatMap((key) => [
  * This list is deliberately shared with the Sentry scrubber (common/monitoring)
  * and the exception filter: pino is not the only place a URL escapes the
  * process, and two copies of the rule would drift.
+ *
+ * ⚠️ THE META HANDSHAKE IS THE SAME SHAPE (slice 3.2c, redacted 2026-09-04).
+ * `GET /integrations/meta/webhook?hub.mode=…&hub.verify_token=…&hub.challenge=…`
+ * carries OUR shared secret for that route (`WHATSAPP_VERIFY_TOKEN`) in the
+ * query. The controller logs only its refusal reason, but the serialized
+ * request rides on every line, and the key has a dot in it, which the
+ * key-based `redact` list cannot name. The POST on the same path — Meta's
+ * deliveries — has no query string, so nothing is lost there.
  */
-const CREDENTIAL_QUERY_PATHS = new Set(["/integrations/microsoft/callback"]);
+const CREDENTIAL_QUERY_PATHS = new Set([
+  "/integrations/microsoft/callback",
+  "/integrations/meta/webhook",
+]);
 
 /** Path portion of a path-only OR absolute URL (Sentry sends origin + path). */
 function pathOf(url: string): string {

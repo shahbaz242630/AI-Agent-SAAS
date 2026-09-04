@@ -164,4 +164,69 @@ describe("log redaction (BRD 14)", () => {
       });
     });
   });
+
+  /**
+   * Meta's webhook verification handshake (slice 3.2c) puts OUR shared secret
+   * for the route in the query string: `hub.verify_token`. Same rule, same
+   * list, same three sinks as the OAuth callback — and a key with a dot in
+   * it, which the key-based `redact` paths could never have named.
+   */
+  describe("Meta handshake query (Slice 3.2c, BRD 14)", () => {
+    const HANDSHAKE =
+      "/integrations/meta/webhook?hub.mode=subscribe&hub.verify_token=our-shared-secret&hub.challenge=1234567890";
+
+    function fakeRequest(url: string) {
+      return {
+        id: "req-2",
+        method: "GET",
+        url,
+        headers: { host: "api.eva.local" },
+        socket: { remoteAddress: "127.0.0.1", remotePort: 44445 },
+      } as unknown as Parameters<typeof serializeRequest>[0];
+    }
+
+    it("strips the verify token from the handshake URL, keeping the path", () => {
+      const serialized = serializeRequest(fakeRequest(HANDSHAKE));
+      const logged = JSON.stringify(serialized);
+      expect(logged).not.toContain("our-shared-secret");
+      expect(logged).not.toContain("hub.verify_token");
+      expect(serialized.url).toBe("/integrations/meta/webhook");
+      expect(serialized.query).toBe("[Redacted]");
+    });
+
+    it("survives a real pino round-trip on the controller's own refusal line", async () => {
+      const { logger, output } = captureLogger();
+      logger.warn(
+        {
+          req: serializeRequest(fakeRequest(HANDSHAKE)),
+          reason: "hub.verify_token does not match",
+        },
+        "refused a Meta webhook verification handshake",
+      );
+      await new Promise((resolve) => setImmediate(resolve));
+      const logged = output();
+      expect(logged).not.toContain("our-shared-secret");
+      expect(logged).toContain("/integrations/meta/webhook");
+    });
+
+    it("is dropped by the shared helper too, absolute URLs and odd casing included", () => {
+      expect(stripCredentialQuery(HANDSHAKE)).toBe("/integrations/meta/webhook");
+      expect(stripCredentialQuery(`https://api-production-0e01.up.railway.app${HANDSHAKE}`)).toBe(
+        "/integrations/meta/webhook",
+      );
+      expect(isCredentialQueryUrl("/Integrations/Meta/Webhook?hub.verify_token=x")).toBe(true);
+    });
+
+    /**
+     * ⚠️ THE CASE THAT MUST FAIL. The rule is keyed by the exact path: a
+     * near-miss is left alone, which is what a mistyped entry in the list
+     * would amount to — the token in the log, and every test above still
+     * green if it only asserted on the matching path.
+     */
+    it("does not fire on a near-miss path — the match is exact", () => {
+      const nearMiss = "/integrations/meta/webhooks?hub.verify_token=would-leak";
+      expect(isCredentialQueryUrl(nearMiss)).toBe(false);
+      expect(serializeRequest(fakeRequest(nearMiss)).url).toBe(nearMiss);
+    });
+  });
 });
