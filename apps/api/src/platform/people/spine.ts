@@ -372,6 +372,82 @@ export async function attachLeadToThread(
   await tx.conversation.update({ where: { id: conversationId }, data: { leadId } });
 }
 
+/** What Eva (or a person at the business) sent, on a thread that exists. */
+export interface OutboundDelivery {
+  organisationId: string;
+  /** The thread it went out on — the enquiry's origin thread, today. */
+  conversationId: string;
+  /** `assistant` for Eva's automatic reply; `user` for a person at the business. */
+  senderKind: "assistant" | "user";
+  /** Email only — dropped on any other channel, as the CHECK requires. */
+  subject: string | null;
+  bodyText: string | null;
+  providerMessageId: string | null;
+  /** The product row this is the second write of. */
+  sourceTable: "lead_reply_decisions";
+  sourceId: string;
+  /** When it was sent. Ours, this time. */
+  occurredAt: Date;
+}
+
+/**
+ * The second write for a reply (3.3c): Eva's answer is a message on the same
+ * thread as the enquiry, so the timeline shows both halves of a conversation.
+ *
+ * The 0041 backfill did this once for every reply already sent; this is the
+ * runtime half. Idempotent on `(source_table, source_id)` like the inbound
+ * write, and the thread's `last_outbound_at` moves forward only — "who
+ * replied last" is the two timestamps (blueprint §3.2).
+ */
+export async function recordOutboundMessage(
+  tx: TenantTx,
+  delivery: OutboundDelivery,
+): Promise<{ messageId: string }> {
+  const thread = await tx.conversation.findFirst({
+    where: { id: delivery.conversationId, organisationId: delivery.organisationId },
+    select: { id: true, personId: true, channel: true, lastOutboundAt: true },
+  });
+  if (!thread) {
+    throw new Error("the thread this reply went out on does not exist in this organisation");
+  }
+
+  const already = await tx.message.findFirst({
+    where: { sourceTable: delivery.sourceTable, sourceId: delivery.sourceId },
+    select: { id: true },
+  });
+  const messageId =
+    already?.id ??
+    (
+      await tx.message.create({
+        data: {
+          organisationId: delivery.organisationId,
+          conversationId: thread.id,
+          personId: thread.personId,
+          channel: thread.channel,
+          direction: "outbound",
+          senderKind: delivery.senderKind,
+          contentType: "text",
+          subject: thread.channel === "email" ? delivery.subject : null,
+          bodyText: delivery.bodyText,
+          providerMessageId: delivery.providerMessageId,
+          sourceTable: delivery.sourceTable,
+          sourceId: delivery.sourceId,
+          occurredAt: delivery.occurredAt,
+        },
+        select: { id: true },
+      })
+    ).id;
+
+  if (!thread.lastOutboundAt || delivery.occurredAt.getTime() >= thread.lastOutboundAt.getTime()) {
+    await tx.conversation.update({
+      where: { id: thread.id },
+      data: { lastOutboundAt: delivery.occurredAt },
+    });
+  }
+
+  return { messageId };
+}
+
 // ---------------------------------------------------------------------------
 // System stages
 // ---------------------------------------------------------------------------

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   alsoAffectsLine,
+  answeredLine,
   bookCountLine,
   contactLine,
   evidenceSummary,
@@ -8,7 +9,10 @@ import {
   leadSourceLabel,
   leadStatusLabel,
   leadStatusTone,
+  timelineEmptyLine,
+  timelineEntry,
   type AlsoAffected,
+  type TimelineItem,
 } from "@/products/lead-follow-up/lead-book";
 import { describeMoment } from "@/lib/today";
 
@@ -185,5 +189,148 @@ describe("what a do-not-contact will also stop", () => {
     expect(alsoAffectsLine([client("Acme"), client("Byrne")])!).toContain(
       "are on your client list",
     );
+  });
+});
+
+/**
+ * The conversation panel (slice 3.3c): one row of the timeline, in English.
+ * The rules live here rather than in the page so a test can reach them — the
+ * page is an async server component nothing can render in a node test.
+ */
+describe("the conversation", () => {
+  const TZ = "Europe/London";
+  const at = "2026-09-04T11:26:40.000Z";
+  const item = (overrides: Partial<TimelineItem>): TimelineItem => ({
+    id: "m1",
+    type: "message",
+    channel: "whatsapp",
+    detail: "inbound",
+    actorKind: "person",
+    subject: null,
+    summary: "Hey partner how are you",
+    happenedAt: at,
+    ...overrides,
+  });
+
+  it("names the person for what they sent, and sets it apart", () => {
+    const entry = timelineEntry(item({}), "Shahbaz Malik", TZ);
+    expect(entry.who).toBe("Shahbaz Malik");
+    expect(entry.fromThem).toBe(true);
+    expect(entry.body).toBe("Hey partner how are you");
+    expect(entry.subject).toBeNull();
+    // The brand's own spelling, and the moment in the organisation's zone.
+    expect(entry.meta).toMatch(/^WhatsApp · /);
+    expect(entry.meta).toContain(describeMoment(at, TZ));
+  });
+
+  it("names Eva for her reply, with the subject on email", () => {
+    const entry = timelineEntry(
+      item({
+        channel: "email",
+        detail: "outbound",
+        actorKind: "assistant",
+        subject: "Re: Leaking roof",
+        summary: "Thanks for getting in touch.",
+      }),
+      "Jane Smith",
+      TZ,
+    );
+    expect(entry.who).toBe("Eva");
+    expect(entry.fromThem).toBe(false);
+    expect(entry.subject).toBe("Re: Leaking roof");
+    expect(entry.meta).toMatch(/^Email · /);
+  });
+
+  it("names the business for a message a person there sent", () => {
+    const entry = timelineEntry(
+      item({ channel: "email", detail: "outbound", actorKind: "user", summary: "On my way." }),
+      "Jane Smith",
+      TZ,
+    );
+    expect(entry.who).toBe("Your team");
+  });
+
+  /** A subject on a WhatsApp row would be a database fault; the screen ignores one anyway. */
+  it("never shows a subject on a channel that has none", () => {
+    const entry = timelineEntry(item({ subject: "should not appear" }), "Jane", TZ);
+    expect(entry.subject).toBeNull();
+  });
+
+  it("says so when a message had no words, rather than printing nothing", () => {
+    const entry = timelineEntry(item({ summary: null }), "Jane Smith", TZ);
+    expect(entry.body).toContain("without words");
+    const reply = timelineEntry(
+      item({ detail: "outbound", actorKind: "assistant", summary: null }),
+      "Jane Smith",
+      TZ,
+    );
+    expect(reply.body).toBe("Nothing was written down.");
+  });
+
+  it("reads an activity by its kind and its actor", () => {
+    const entry = timelineEntry(
+      item({
+        type: "activity",
+        channel: null,
+        detail: "stage_changed",
+        actorKind: "assistant",
+        summary: "Moved to Contacted",
+      }),
+      "Jane Smith",
+      TZ,
+    );
+    expect(entry.who).toBe("Eva");
+    expect(entry.meta).toMatch(/^Stage changed · /);
+    expect(entry.body).toBe("Moved to Contacted");
+    expect(entry.fromThem).toBe(false);
+
+    const note = timelineEntry(
+      item({
+        type: "activity",
+        channel: null,
+        detail: "note",
+        actorKind: "user",
+        summary: "Rang them.",
+      }),
+      "Jane Smith",
+      TZ,
+    );
+    expect(note.who).toBe("Your team");
+    expect(note.meta).toMatch(/^Note · /);
+  });
+
+  /** The web trails the api by minutes on every deploy; a new channel or kind must still read as English. */
+  it("turns a channel or kind it has never heard of into English", () => {
+    expect(timelineEntry(item({ channel: "messenger" }), "Jane", TZ).meta).toMatch(/^Messenger · /);
+    expect(
+      timelineEntry(item({ type: "activity", channel: null, detail: "call_attempt" }), "Jane", TZ)
+        .meta,
+    ).toMatch(/^Call attempt · /);
+  });
+
+  it("says when nothing has been exchanged", () => {
+    expect(timelineEmptyLine("Jane Smith")).toBe("Nothing has been exchanged with Jane Smith yet.");
+  });
+});
+
+describe("whether the enquiry was answered", () => {
+  const TZ = "Europe/London";
+
+  it("gives the moment when it was", () => {
+    expect(
+      answeredLine({ firstRespondedAt: "2026-09-04T11:30:00.000Z", source: "email_enquiry" }, TZ),
+    ).toBe(describeMoment("2026-09-04T11:30:00.000Z", TZ));
+  });
+
+  /**
+   * ⚠️ THE OLD SENTENCE CLAIMED EVA COULD NOT REPLY AT ALL, TWO DAYS AFTER
+   * SHE COULD. The claim is now exact per channel: nothing about email, which
+   * she answers; the truth about WhatsApp, which she cannot yet.
+   */
+  it("does not claim Eva cannot reply by email, and says exactly what she cannot do on WhatsApp", () => {
+    expect(answeredLine({ firstRespondedAt: null, source: "email_enquiry" }, TZ)).toBe("Not yet.");
+    const whatsapp = answeredLine({ firstRespondedAt: null, source: "whatsapp_enquiry" }, TZ);
+    expect(whatsapp).toContain("WhatsApp");
+    expect(whatsapp).not.toMatch(/next two pieces/);
   });
 });

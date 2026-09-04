@@ -171,3 +171,110 @@ function list(names: readonly string[]): string {
   if (names.length === 1) return names[0]!;
   return `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
 }
+
+// ---------------------------------------------------------------------------
+// The conversation (slice 3.3c)
+// ---------------------------------------------------------------------------
+
+/** One row of the API's timeline — the `person_timeline` view, per person. */
+export interface TimelineItem {
+  id: string;
+  type: "message" | "activity";
+  /** `email` | `whatsapp` for a message; null for an activity. */
+  channel: string | null;
+  /** A message's direction (`inbound` | `outbound`); an activity's kind. */
+  detail: string;
+  /** `person` | `user` | `assistant` | `system`. */
+  actorKind: string;
+  subject: string | null;
+  summary: string | null;
+  happenedAt: string;
+}
+
+/** What one timeline row says on the screen. */
+export interface TimelineEntry {
+  /** Who did it: the person's name, "Eva", or "Your team". */
+  who: string;
+  /** The channel or the kind of activity, and when. */
+  meta: string;
+  /** Email subject lines only; null everywhere else. */
+  subject: string | null;
+  body: string;
+  /** True for something the person sent — the screen sets those apart. */
+  fromThem: boolean;
+}
+
+const CHANNEL_LABELS: Readonly<Record<string, string>> = {
+  email: "Email",
+  whatsapp: "WhatsApp",
+};
+
+const ACTIVITY_LABELS: Readonly<Record<string, string>> = {
+  note: "Note",
+  stage_changed: "Stage changed",
+};
+
+/**
+ * How one timeline row reads.
+ *
+ * ⚠️ THE PERSON IS NAMED BY THE ENQUIRY, NOT BY THE ROW. The view carries no
+ * name — it is a union of messages and activities keyed by person — so the
+ * screen passes down what it already calls them (`leadName`), and "Someone
+ * who didn't leave a name" reads correctly here too.
+ *
+ * ⚠️ A MESSAGE WITH NO WORDS STILL SAYS SOMETHING. A bare photo or sticker
+ * arrives as a message with a null body; printing nothing would look like a
+ * rendering fault, and inventing words for a compliance record is worse.
+ */
+export function timelineEntry(item: TimelineItem, who: string, timezone: string): TimelineEntry {
+  const when = describeMoment(item.happenedAt, timezone);
+  if (item.type === "message") {
+    const fromThem = item.detail === "inbound";
+    const channel = CHANNEL_LABELS[item.channel ?? ""] ?? sentenceCase(item.channel ?? "");
+    return {
+      who: fromThem ? who : item.actorKind === "assistant" ? "Eva" : "Your team",
+      meta: `${channel} · ${when}`,
+      subject: item.channel === "email" ? item.subject : null,
+      body:
+        item.summary ??
+        (fromThem
+          ? "They sent something without words — a photo, a sticker or a file."
+          : "Nothing was written down."),
+      fromThem,
+    };
+  }
+  const kind = ACTIVITY_LABELS[item.detail] ?? sentenceCase(item.detail);
+  return {
+    who: item.actorKind === "user" ? "Your team" : "Eva",
+    meta: `${kind} · ${when}`,
+    subject: null,
+    body: item.summary ?? "",
+    fromThem: false,
+  };
+}
+
+/** What the conversation panel says when there is nothing in it. */
+export function timelineEmptyLine(who: string): string {
+  return `Nothing has been exchanged with ${who} yet.`;
+}
+
+/**
+ * Whether and when the enquiry was answered.
+ *
+ * ⚠️ THIS REPLACED "Eva cannot reply until the next two pieces are built",
+ * WHICH STOPPED BEING TRUE ON 2026-09-02 (#131) AND STAYED ON THE SCREEN FOR
+ * TWO DAYS. Eva answers an email enquiry when a mailbox is connected and an
+ * automatic wording is on; what she still cannot do is answer on WhatsApp,
+ * and the sentence says which, so the screen never claims more or less
+ * than the product does.
+ */
+export function answeredLine(
+  lead: { firstRespondedAt: string | null; source: string },
+  timezone: string,
+): string {
+  if (lead.firstRespondedAt) return describeMoment(lead.firstRespondedAt, timezone);
+  if (lead.source === "whatsapp_enquiry") {
+    return "Not yet — Eva cannot reply on WhatsApp until a later piece is built.";
+  }
+  return "Not yet.";
+}

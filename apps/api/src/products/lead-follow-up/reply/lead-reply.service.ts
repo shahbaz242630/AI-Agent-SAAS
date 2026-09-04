@@ -13,6 +13,7 @@ import {
   type OutboundMail,
 } from "../../../capabilities/mailbox/outbound-mail.js";
 import type { TenantTx } from "../../../platform/permissions/permissions.js";
+import { recordOutboundMessage } from "../../../platform/people/spine.js";
 import { REPLY_DECISION_PROVIDER, type ReplyDecisionProvider } from "../decision/reply-decision.js";
 import { composeReply } from "./compose-reply.js";
 
@@ -327,6 +328,37 @@ export class LeadReplyService {
         where: { id: leadId, firstRespondedAt: null },
         data: { firstRespondedAt: now },
       });
+
+      /**
+       * 🔑 THE SECOND WRITE FOR A REPLY (slice 3.3c). What Eva sent is a
+       * message on the same thread as the enquiry, so the timeline shows both
+       * halves. The decision row stays the product's own record of the send;
+       * this is the platform's. An enquiry with no thread — hand-logged, or
+       * one of the backfilled call-shaped leads — keeps its decision and
+       * simply does not appear on a timeline it never had.
+       */
+      const lead = await tx.lead.findFirst({
+        where: { id: leadId },
+        select: { originConversationId: true },
+      });
+      if (lead?.originConversationId) {
+        await recordOutboundMessage(tx, {
+          organisationId,
+          conversationId: lead.originConversationId,
+          senderKind: "assistant",
+          subject: sent.subject,
+          bodyText: sent.body,
+          providerMessageId: null,
+          sourceTable: "lead_reply_decisions",
+          sourceId: decisionId,
+          occurredAt: now,
+        });
+      } else {
+        this.logger.info(
+          { organisationId, leadId, decisionId },
+          "reply sent on an enquiry with no thread; recorded on the decision, not on a timeline",
+        );
+      }
     });
   }
 

@@ -60,6 +60,47 @@ export interface LeadAlsoAffects {
   matchedOn: ("email" | "phone")[];
 }
 
+/**
+ * One entry on a person's timeline (slice 3.3c) — a row of the
+ * `person_timeline` view, which unions `messages` and `activities`.
+ *
+ * ⚠️ PER PERSON, NOT PER LEAD, AND THAT IS THE 360 (ruling 67). A repeat
+ * customer's earlier enquiries and Eva's earlier replies belong on the same
+ * screen as today's message; the enquiry is only the way in.
+ */
+export interface TimelineItem {
+  id: string;
+  type: "message" | "activity";
+  /** `email` | `whatsapp` for a message; null for an activity. */
+  channel: string | null;
+  /** A message's direction (`inbound` | `outbound`); an activity's kind. */
+  detail: string;
+  /** `person` | `user` | `assistant` | `system`. */
+  actorKind: string;
+  /** Email messages only. */
+  subject: string | null;
+  /** A message's words, or an activity's one-line summary. */
+  summary: string | null;
+  conversationId: string | null;
+  /** The enquiry an activity was posted on, when it names one. */
+  leadId: string | null;
+  happenedAt: Date;
+}
+
+/** The view's columns, as `$queryRaw` hands them back. */
+interface TimelineRow {
+  item_type: "message" | "activity";
+  item_id: string;
+  channel: string | null;
+  detail: string;
+  actor_kind: string;
+  subject: string | null;
+  summary: string | null;
+  conversation_id: string | null;
+  lead_id: string | null;
+  happened_at: Date;
+}
+
 /** A lead with the proof behind it — the detail screen's shape. */
 export interface LeadDetail extends LeadSummary {
   /**
@@ -126,6 +167,59 @@ export class LeadsService {
             }
           : null,
       };
+    });
+  }
+
+  /**
+   * Everything exchanged with the person behind an enquiry, oldest first —
+   * leads:read (slice 3.3c).
+   *
+   * 🔑 READ THROUGH THE VIEW, AS THE RUNTIME ROLE, INSIDE THE TENANT
+   * TRANSACTION. `person_timeline` is `security_invoker`, so it runs as
+   * `eva_app` with `app.current_org` set and the policies on `messages` and
+   * `activities` apply — which is the whole of its security (migration
+   * 0041). `$queryRaw` because Prisma's `views` preview stays off; the
+   * parameter is bound, never interpolated.
+   *
+   * ⚠️ AN ENQUIRY WITH NO PERSON HAS AN EMPTY TIMELINE, NOT AN ERROR. A
+   * hand-logged lead carries a typed handle and no proof of control, so 3.3b
+   * deliberately gave it no person. The screen says "nothing yet"; a 404 here
+   * would read as the enquiry itself being missing.
+   */
+  async timeline(
+    authUser: AuthUser,
+    organisationId: string,
+    leadId: string,
+  ): Promise<TimelineItem[]> {
+    const user = await this.usersService.resolveOrProvision(authUser);
+    return withTenant(this.prisma.db, { organisationId, userId: user.id }, async (tx) => {
+      await requirePermission(tx, organisationId, user.id, "leads:read");
+      const lead = await tx.lead.findFirst({
+        where: { id: leadId, deletedAt: null },
+        select: { personId: true },
+      });
+      if (!lead) throw new NotFoundException("Lead not found");
+      if (!lead.personId) return [];
+
+      const rows = await tx.$queryRaw<TimelineRow[]>`
+        SELECT "item_type", "item_id", "channel", "detail", "actor_kind", "subject",
+               "summary", "conversation_id", "lead_id", "happened_at"
+        FROM "person_timeline"
+        WHERE "person_id" = ${lead.personId}::uuid
+        ORDER BY "happened_at" ASC, "item_id" ASC`;
+
+      return rows.map((row) => ({
+        id: row.item_id,
+        type: row.item_type,
+        channel: row.channel,
+        detail: row.detail,
+        actorKind: row.actor_kind,
+        subject: row.subject,
+        summary: row.summary,
+        conversationId: row.conversation_id,
+        leadId: row.lead_id,
+        happenedAt: row.happened_at,
+      }));
     });
   }
 

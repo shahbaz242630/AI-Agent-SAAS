@@ -220,6 +220,46 @@ describe("Eva answers an enquiry", () => {
     });
 
     /**
+     * 🔑 THE REPLY IS ON THE TIMELINE (slice 3.3c). The decision row is the
+     * product's record of the send; the platform's is an outbound message on
+     * the same thread as the enquiry, which is what the conversation panel
+     * reads. Without this write the screen would show the person's message
+     * and never Eva's answer.
+     */
+    it("puts what was sent on the enquiry's thread, as Eva's message", async () => {
+      await post(enquiry()).expect(200);
+      const lead = await leadFrom(sender);
+      const decision = await decisionFor(lead!.id);
+
+      const message = await owner.message.findFirst({
+        where: { sourceTable: "lead_reply_decisions", sourceId: decision!.id },
+      });
+      expect(message, "the reply must be a message on the thread").not.toBeNull();
+      expect(message).toMatchObject({
+        conversationId: lead!.originConversationId,
+        personId: lead!.personId,
+        channel: "email",
+        direction: "outbound",
+        senderKind: "assistant",
+        contentType: "text",
+        subject: decision!.subject,
+        bodyText: decision!.body,
+      });
+      expect(message!.occurredAt.toISOString()).toBe(decision!.sentAt!.toISOString());
+
+      const thread = await owner.conversation.findUniqueOrThrow({
+        where: { id: lead!.originConversationId! },
+      });
+      expect(thread.lastOutboundAt?.toISOString()).toBe(decision!.sentAt!.toISOString());
+      // Both halves, in order: theirs first, then Eva's.
+      const onThread = await owner.message.findMany({
+        where: { conversationId: thread.id },
+        orderBy: { occurredAt: "asc" },
+      });
+      expect(onThread.map((m) => m.direction)).toEqual(["inbound", "outbound"]);
+    });
+
+    /**
      * ⚠️ SPEED-TO-LEAD IS THE NUMBER THIS PRODUCT EXISTS TO MAKE SMALL, and
      * this column has existed unused since 3.1a. Nothing else sets it.
      */
@@ -413,10 +453,14 @@ describe("Eva answers an enquiry", () => {
         }),
       ).toBe(1);
       expect(await owner.leadReplyDecision.count({ where: { leadId: lead!.id } })).toBe(1);
-      // Both deliveries sit on the one enquiry's thread.
-      expect(
-        await owner.message.count({ where: { conversationId: lead!.originConversationId! } }),
-      ).toBe(2);
+      // Both deliveries and Eva's one reply sit on the one enquiry's thread,
+      // in the order they happened: theirs, Eva's, theirs again — and no
+      // second reply after the follow-up.
+      const onThread = await owner.message.findMany({
+        where: { conversationId: lead!.originConversationId! },
+        orderBy: { occurredAt: "asc" },
+      });
+      expect(onThread.map((m) => m.direction)).toEqual(["inbound", "outbound", "inbound"]);
     });
   });
 });
