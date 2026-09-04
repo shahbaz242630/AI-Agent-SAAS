@@ -798,14 +798,16 @@ model Lead {
   /// 67: the lead is the enquiry, the person is separate). The as-captured
   /// `contact_*` snapshot stays beside it because form data is dirty.
   ///
-  /// ⚠️ ALL THREE NULLABLE, `pipelineStageId` DELIBERATELY. The email intake
-  /// does not set a stage until 3.3b, and a NOT NULL here would break every
-  /// enquiry arriving between this migration and that deploy. The backfill
-  /// sets them for every lead that exists; a later migration tightens them.
+  /// ⚠️ `personId` AND `originConversationId` STAY NULLABLE: an enquiry logged
+  /// by hand has no proven person (blueprint §3.3 step 3) and opened no
+  /// thread. `pipelineStageId` was nullable from 0041 to 0043 only because the
+  /// email intake did not set a stage until 3.3b; every writer has supplied
+  /// one since, and migration 0043 made the database refuse a lead without.
   personId       String?   @map("person_id") @db.Uuid
   /// Where this enquiry is (new / contacted / … / lost). The stage carries the
-  /// lifecycle; `status` still only says `new` or `do_not_contact`.
-  pipelineStageId String?  @map("pipeline_stage_id") @db.Uuid
+  /// lifecycle; `status` still only says `new` or `do_not_contact`. NOT NULL
+  /// since 0043 — `ensureSystemStages` is where every writer gets one.
+  pipelineStageId String   @map("pipeline_stage_id") @db.Uuid
   /// The thread this enquiry opened, when it arrived as a message.
   originConversationId String? @map("origin_conversation_id") @db.Uuid
   createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
@@ -817,7 +819,7 @@ model Lead {
   /// NO ACTION, not SET NULL: an enquiry silently losing its person is the bug
   /// nobody would see. The application cannot hard-delete a person anyway.
   person         Person?       @relation(fields: [personId], references: [id], onDelete: NoAction)
-  pipelineStage  PipelineStage? @relation(fields: [pipelineStageId], references: [id], onDelete: NoAction)
+  pipelineStage  PipelineStage @relation(fields: [pipelineStageId], references: [id], onDelete: NoAction)
   originConversation Conversation? @relation("LeadOrigin", fields: [originConversationId], references: [id], onDelete: NoAction)
   /// Threads currently working this enquiry (`conversations.lead_id`).
   conversations  Conversation[] @relation("ConversationLead")

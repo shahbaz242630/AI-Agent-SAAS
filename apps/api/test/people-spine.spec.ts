@@ -479,6 +479,8 @@ describe("The spine's normaliser: one person, many handles, never guessed", () =
   // -------------------------------------------------------------------------
   describe("ruling 76: the thread decides whether this is a new enquiry", () => {
     async function leadOn(write: SpineWrite, phone: string): Promise<string> {
+      // A lead cannot exist without a stage (migration 0043).
+      const stages = await ensureSystemStages(owner, org.id);
       const lead = await owner.lead.create({
         data: {
           organisationId: org.id,
@@ -486,6 +488,7 @@ describe("The spine's normaliser: one person, many handles, never guessed", () =
           contactPhone: phone,
           receivedAt: AT,
           personId: write.personId,
+          pipelineStageId: stages.new,
           originConversationId: write.conversationId,
         },
         select: { id: true },

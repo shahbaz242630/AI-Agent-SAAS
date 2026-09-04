@@ -1,0 +1,21 @@
+-- Migration 0043: an enquiry always has a stage.
+--
+-- 0041 added `leads.pipeline_stage_id` NULLABLE on purpose: the email intake
+-- did not set a stage until 3.3b, and NOT NULL then would have broken every
+-- enquiry arriving between that migration and that deploy. The backfill
+-- staged every lead that existed (`contacted` where Eva had answered, `new`
+-- everywhere else); 3.3b made every writer supply one — the email door, the
+-- WhatsApp door and the hand-logged endpoint all pass `pipelineStageId` from
+-- `ensureSystemStages`. Production has held zero NULLs since (checked
+-- 2026-09-04: six leads, one retired, none without a stage).
+--
+-- ⚠️ THIS IS THE `endsAt` DEFENCE, MADE PERMANENT. A column a writer can
+-- forget is a column a future writer WILL forget — the CRM's hand-logged lead
+-- (3.10) is the obvious candidate — and an enquiry with no stage is one the
+-- engine (3.5) cannot see. The database refuses it from here.
+--
+-- ⚠️ REFUSED IF ANY LEAD HAS NO STAGE. That is correct behaviour: find it and
+-- stage it by hand before re-running, never default it silently — a lead the
+-- backfill missed is a lead worth looking at.
+
+ALTER TABLE "leads" ALTER COLUMN "pipeline_stage_id" SET NOT NULL;

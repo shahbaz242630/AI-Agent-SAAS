@@ -3,6 +3,7 @@ import type { INestApplication } from "@nestjs/common";
 import request from "supertest";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { EvaPrismaClient } from "@eva/database";
+import { ensureSystemStages } from "../src/platform/people/spine.js";
 import {
   createOrgWithMembers,
   createOwnerClient,
@@ -134,6 +135,9 @@ describe("Lead timeline: everything exchanged with the person", () => {
         replyWindowExpiresAt: new Date(T3.getTime() + 24 * 3600 * 1000),
       },
     });
+    // A lead cannot exist without a stage (migration 0043); the same call the
+    // real writers make.
+    const stages = await ensureSystemStages(owner, fixture.id);
     const lead = await owner.lead.create({
       data: {
         organisationId: fixture.id,
@@ -143,6 +147,7 @@ describe("Lead timeline: everything exchanged with the person", () => {
         enquiry: "My roof is leaking.",
         receivedAt: T0,
         personId: person.id,
+        pipelineStageId: stages.new,
         originConversationId: emailThread.id,
       },
     });

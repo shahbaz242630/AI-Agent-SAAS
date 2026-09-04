@@ -935,6 +935,19 @@ describe("Schema conventions (BRD 10)", () => {
     expect(names).not.toContain("deleted_at");
   });
 
+  /**
+   * Migration 0043: an enquiry always has a stage. The other two spine
+   * pointers stay nullable on purpose — a hand-logged enquiry has no proven
+   * person and opened no thread — and are the positive control here.
+   */
+  it("leads.pipeline_stage_id is NOT NULL since 0043; person_id and origin_conversation_id stay nullable", async () => {
+    const cols = await columnsOf("leads");
+    const nullability = Object.fromEntries(cols.map((c) => [c.column_name, c.is_nullable]));
+    expect(nullability.pipeline_stage_id).toBe("NO");
+    expect(nullability.person_id).toBe("YES");
+    expect(nullability.origin_conversation_id).toBe("YES");
+  });
+
   it("consent_events is permanent: created_at only, no updated_at/deleted_at", async () => {
     const names = (await columnsOf("consent_events")).map((c) => c.column_name);
     expect(names).toContain("created_at");
