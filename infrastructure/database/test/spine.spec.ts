@@ -373,6 +373,30 @@ describe("The backfill: every row that already exists finds its place (migration
     });
     organisationId = organisation.id;
 
+    // 0. The eight system stages, the way 0041's backfill seeds them for an
+    //    organisation with none — created here because migration 0043 made a
+    //    lead without a stage impossible, so the fixture's enquiries must be
+    //    born staged. The backfill's own seed step finds them and skips them.
+    const stageIds: Record<string, string> = {};
+    for (const [position, [key, name]] of (
+      [
+        ["new", "New"],
+        ["contacted", "Contacted"],
+        ["qualified", "Qualified"],
+        ["quoted", "Quoted"],
+        ["booked", "Booked"],
+        ["done", "Done"],
+        ["reviewed", "Reviewed"],
+        ["lost", "Lost"],
+      ] as const
+    ).entries()) {
+      const row = await prisma.pipelineStage.create({
+        data: { organisationId, systemKey: key, name, position: position + 1 },
+        select: { id: true },
+      });
+      stageIds[key] = row.id;
+    }
+
     // 1. A client with a handle, typed with the mess real data has.
     const customer = await prisma.customer.create({
       data: {
@@ -429,6 +453,11 @@ describe("The backfill: every row that already exists finds its place (migration
             receivedAt: data.receivedAt,
             firstRespondedAt: data.firstRespondedAt,
             status: data.status ?? "new",
+            // Staged the way the backfill staged production on 2026-09-04:
+            // `contacted` where Eva had answered, `new` everywhere else. The
+            // backfill's own stage step (`WHERE pipeline_stage_id IS NULL`)
+            // can no longer fire on anything — see the stage test below.
+            pipelineStageId: data.firstRespondedAt ? stageIds.contacted! : stageIds.new!,
           },
         })
         .then((row) => {
@@ -685,7 +714,16 @@ describe("The backfill: every row that already exists finds its place (migration
     ).toBe(0);
   });
 
-  it("stages every enquiry: contacted where Eva answered, new everywhere else", async () => {
+  /**
+   * ⚠️ WEAKER THAN IT WAS, AND SAID SO. Until migration 0043 this fixture
+   * created stage-less leads and asserted the backfill staged them —
+   * `contacted` where Eva had answered, `new` everywhere else. A NOT NULL
+   * column cannot hold that shape, so the fixture now creates its enquiries
+   * already staged that way, and what this proves is that the backfill leaves
+   * an existing stage alone. The null case ran once, on production, on
+   * 2026-09-04, and is history the database no longer admits.
+   */
+  it("leaves every enquiry's stage where it was: contacted where Eva answered, new everywhere else", async () => {
     const rows = await prisma.lead.findMany({
       where: { organisationId },
       include: { pipelineStage: true },
