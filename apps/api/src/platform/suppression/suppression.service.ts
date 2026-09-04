@@ -131,7 +131,7 @@ export class SuppressionService {
          * ⚠️ THE VALUE IS THE ENTITY, BECAUSE THE ENTITY HAS NO STABLE ID. The
          * log is a sequence of events about a value, not a record with a
          * lifetime, so the address or number IS what was acted on. It is
-         * already in `suppression_events` in the same organisation's rows, so
+         * already in `consent_events` in the same organisation's rows, so
          * this puts nothing new in front of anyone.
          */
         entityId: normaliseSuppressionValue(input.channel, input.value),

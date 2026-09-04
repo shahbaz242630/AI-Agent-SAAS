@@ -151,7 +151,7 @@ describe("What the application may destroy", () => {
    */
   const NEVER_HARD_DELETED = [
     "lead_evidence",
-    "suppression_events",
+    "consent_events",
     "consent_texts",
     "lead_reply_templates",
     "lead_reply_decisions",
@@ -200,6 +200,29 @@ describe("What the application may destroy", () => {
       const grants = await prisma.$queryRaw<{ privilege_type: string }[]>`
         SELECT privilege_type FROM information_schema.role_table_grants
         WHERE grantee = 'eva_app' AND table_name = 'person_timeline'`;
+      expect(grants.map((g) => g.privilege_type)).toEqual(["SELECT"]);
+    });
+  });
+
+  /**
+   * Slice 3.3d (migration 0042). The do-not-contact log is `consent_events`;
+   * its old name is a view in the old shape, for hand SQL. Same trap as
+   * `person_timeline`, one migration later: default privileges hand `eva_app`
+   * every verb on a view too, and only an explicit REVOKE takes them back.
+   */
+  describe("the do-not-contact log", () => {
+    it("consent_events cannot be rewritten", async () => {
+      expect(await refused(`UPDATE consent_events SET reason = 'tampered' WHERE false`)).toBe(true);
+    });
+
+    it("its old name, suppression_events, is a view that is readable, and only readable", async () => {
+      // `relkind` is Postgres's one-byte "char", which Prisma cannot read raw.
+      const kind = await prisma.$queryRaw<{ relkind: string }[]>`
+        SELECT relkind::text AS relkind FROM pg_class WHERE relname = 'suppression_events'`;
+      expect(kind).toEqual([{ relkind: "v" }]);
+      const grants = await prisma.$queryRaw<{ privilege_type: string }[]>`
+        SELECT privilege_type FROM information_schema.role_table_grants
+        WHERE grantee = 'eva_app' AND table_name = 'suppression_events'`;
       expect(grants.map((g) => g.privilege_type)).toEqual(["SELECT"]);
     });
   });

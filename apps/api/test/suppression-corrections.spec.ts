@@ -112,12 +112,12 @@ describe("Do-not-contact: the correction path", () => {
     );
 
     // ⚠️ SUPERSEDED, NOT DELETED. Both events survive, in order.
-    const events = await owner.suppressionEvent.findMany({
+    const events = await owner.consentEvent.findMany({
       where: { organisationId: org.id, value: "wrong-person@example.com" },
       orderBy: { createdAt: "asc" },
-      select: { action: true },
+      select: { state: true },
     });
-    expect(events.map((event) => event.action)).toEqual(["suppress", "correct"]);
+    expect(events.map((event) => event.state)).toEqual(["opted_out", "corrected"]);
   });
 
   it("writes an audit entry naming who undid it and why", async () => {
@@ -159,11 +159,11 @@ describe("Do-not-contact: the correction path", () => {
         }).expect(403);
 
         // Still suppressed — the refusal was real, not cosmetic.
-        const events = await owner.suppressionEvent.findMany({
+        const events = await owner.consentEvent.findMany({
           where: { organisationId: org.id, value: `${role}-cannot-undo@example.com` },
-          select: { action: true },
+          select: { state: true },
         });
-        expect(events.map((event) => event.action)).toEqual(["suppress"]);
+        expect(events.map((event) => event.state)).toEqual(["opted_out"]);
       },
     );
 
@@ -246,7 +246,7 @@ describe("Do-not-contact: the correction path", () => {
    * (2026-08-21). The founder pressed do-not-contact on their own enquiry, both
    * channels went on the list, both were corrected — and the enquiry book still
    * showed a red "Do not contact" pill on somebody Eva was by then perfectly
-   * willing to write to. Two records of one fact: `suppression_events` is the
+   * willing to write to. Two records of one fact: `consent_events` is the
    * gate Eva obeys, `leads.status` is only a label, and the label did not
    * follow. Found by walking, not by any of the 821 tests.
    */

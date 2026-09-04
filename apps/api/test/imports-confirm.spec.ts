@@ -373,7 +373,7 @@ describe("Imports: confirm and cancel", () => {
   });
 
   it("imports suppressed rows as Draft and keeps the suppressed flag (§7.4)", async () => {
-    await owner.suppressionEvent.create({
+    await owner.consentEvent.create({
       data: {
         id: randomUUID(),
         organisationId: org.id,

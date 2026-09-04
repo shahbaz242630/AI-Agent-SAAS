@@ -89,10 +89,11 @@ WHERE n.nspname = 'public' AND c.relkind = 'r' AND a.grantee = 0
 ORDER BY kind, name;
 
 \echo == FINDING IF ANY ROWS: eva_app cannot read/write a tenant table ==
--- Not a privilege-count check: suppression_events deliberately holds only
--- SELECT + INSERT (migration 20260724061409 revokes UPDATE/DELETE so
--- do-not-contact entries are permanent), so counting to 4 would flag correct
--- design. Assert the floor the runtime actually needs instead.
+-- Not a privilege-count check: consent_events (suppression_events until
+-- migration 0042) deliberately holds only SELECT + INSERT (migration
+-- 20260724061409 revokes UPDATE/DELETE so do-not-contact entries are
+-- permanent), so counting to 4 would flag correct design. Assert the floor the
+-- runtime actually needs instead.
 SELECT c.relname AS table_name,
        has_table_privilege('eva_app', c.oid, 'SELECT') AS can_select,
        has_table_privilege('eva_app', c.oid, 'INSERT') AS can_insert
@@ -114,11 +115,29 @@ FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
 WHERE n.nspname = 'public' AND p.proname = 'list_active_organisations'
   AND NOT has_function_privilege('eva_app', p.oid, 'EXECUTE');
 
-\echo == FINDING IF ANY ROWS: suppression_events is no longer append-only ==
+\echo == FINDING IF ANY ROWS: consent_events is no longer append-only ==
 -- BRD compliance: a do-not-contact entry must never be editable or erasable by
--- the runtime role.
-SELECT 'suppression_events' AS table_name,
-       has_table_privilege('eva_app', 'suppression_events', 'UPDATE') AS can_update,
-       has_table_privilege('eva_app', 'suppression_events', 'DELETE') AS can_delete
-WHERE has_table_privilege('eva_app', 'suppression_events', 'UPDATE')
-   OR has_table_privilege('eva_app', 'suppression_events', 'DELETE');
+-- the runtime role. The table was suppression_events until migration 0042.
+SELECT 'consent_events' AS table_name,
+       has_table_privilege('eva_app', 'consent_events', 'UPDATE') AS can_update,
+       has_table_privilege('eva_app', 'consent_events', 'DELETE') AS can_delete
+WHERE has_table_privilege('eva_app', 'consent_events', 'UPDATE')
+   OR has_table_privilege('eva_app', 'consent_events', 'DELETE');
+
+\echo == FINDING IF ANY ROWS: a view runs as its owner or can be written ==
+-- Migration 0041 (person_timeline) and 0042 (suppression_events, the old name
+-- of the do-not-contact log): a view runs with its OWNER's privileges unless
+-- created WITH (security_invoker = true), and default privileges hand eva_app
+-- every verb on a view just as on a table. Either lets a tenant past RLS.
+SELECT c.relname AS view_name,
+       COALESCE(array_to_string(c.reloptions, ','), '') AS reloptions,
+       has_table_privilege('eva_app', c.oid, 'INSERT') AS can_insert,
+       has_table_privilege('eva_app', c.oid, 'UPDATE') AS can_update,
+       has_table_privilege('eva_app', c.oid, 'DELETE') AS can_delete
+FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+WHERE n.nspname = 'public' AND c.relkind = 'v'
+  AND (COALESCE(array_to_string(c.reloptions, ','), '') NOT LIKE '%security_invoker=true%'
+       OR has_table_privilege('eva_app', c.oid, 'INSERT')
+       OR has_table_privilege('eva_app', c.oid, 'UPDATE')
+       OR has_table_privilege('eva_app', c.oid, 'DELETE'))
+ORDER BY c.relname;
