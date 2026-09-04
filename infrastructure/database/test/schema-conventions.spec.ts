@@ -81,10 +81,12 @@ describe("Schema conventions (BRD 10)", () => {
       WHERE table_schema = 'public' AND table_type = 'BASE TABLE'`;
     expect(rows.map((r) => r.table_name).sort()).toEqual([
       "_prisma_migrations",
+      "activities",
       "audit_logs",
       "channel_connections",
       "consent_texts",
       "contacts",
+      "conversations",
       "customers",
       "email_accounts",
       "human_escalations",
@@ -100,11 +102,15 @@ describe("Schema conventions (BRD 10)", () => {
       "lead_reply_decisions",
       "lead_reply_templates",
       "leads",
+      "messages",
       "organisation_memberships",
       "organisation_modules",
       "organisation_role_permissions",
       "organisation_settings",
       "organisations",
+      "people",
+      "person_identities",
+      "pipeline_stages",
       "reminder_sequences",
       "reminder_steps",
       "roles",
@@ -150,6 +156,13 @@ describe("Schema conventions (BRD 10)", () => {
     // Slice 3.2c (migration 0040): the Meta channel pair.
     "channel_connections",
     "inbound_channel_messages",
+    // Slice 3.3a (migration 0041): the lead spine.
+    "people",
+    "person_identities",
+    "pipeline_stages",
+    "conversations",
+    "messages",
+    "activities",
   ])("tenant-owned table %s has a non-nullable organisation_id", async (table) => {
     const cols = await columnsOf(table);
     const orgColumn = cols.find((c) => c.column_name === "organisation_id");
@@ -186,6 +199,12 @@ describe("Schema conventions (BRD 10)", () => {
     "inbound_addresses",
     "leads",
     "organisation_modules",
+    // Slice 3.3a: the four spine tables that are edited. `messages` and
+    // `activities` are deliberately absent — written once, like evidence.
+    "people",
+    "person_identities",
+    "pipeline_stages",
+    "conversations",
   ])("mutable table %s carries created_at/updated_at/created_by", async (table) => {
     const names = (await columnsOf(table)).map((c) => c.column_name);
     for (const col of ["created_at", "updated_at", "created_by"]) {
@@ -225,9 +244,32 @@ describe("Schema conventions (BRD 10)", () => {
     "users",
     // A connection is retired, never destroyed — the mailbox rule, one channel over.
     "channel_connections",
+    // Slice 3.3a: a person and a custom stage are retired, never destroyed.
+    // `person_identities` is NOT here on purpose — a handle is marked
+    // `inactive`, and the unique index keeps it from being claimed by
+    // somebody else; a `deleted_at` would suggest the handle was free.
+    // `conversations` are resolved, not deleted.
+    "people",
+    "pipeline_stages",
   ])("soft-deletable table %s has deleted_at", async (table) => {
     const names = (await columnsOf(table)).map((c) => c.column_name);
     expect(names).toContain("deleted_at");
+  });
+
+  it("messages and activities are written once: created_at only, no updated_at/deleted_at (migration 0041)", async () => {
+    for (const table of ["messages", "activities"]) {
+      const names = (await columnsOf(table)).map((c) => c.column_name);
+      expect(names, `${table} must have created_at`).toContain("created_at");
+      expect(names, `${table} must not have updated_at`).not.toContain("updated_at");
+      expect(names, `${table} must not have deleted_at`).not.toContain("deleted_at");
+    }
+  });
+
+  it("person_identities and conversations have no deleted_at: a handle goes inactive, a thread is resolved", async () => {
+    for (const table of ["person_identities", "conversations"]) {
+      const names = (await columnsOf(table)).map((c) => c.column_name);
+      expect(names, `${table} must not have deleted_at`).not.toContain("deleted_at");
+    }
   });
 
   it("import_rows has no deleted_at: lifecycle follows the parent import (plan §3)", async () => {
