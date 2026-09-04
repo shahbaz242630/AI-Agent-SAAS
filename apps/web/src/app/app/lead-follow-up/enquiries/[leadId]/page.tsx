@@ -7,13 +7,17 @@ import { createClient } from "@/lib/supabase/server";
 import { BackChip, StatusPill } from "@/components/ui";
 import {
   alsoAffectsLine,
+  answeredLine,
   contactLine,
   evidenceSummary,
   leadName,
   leadSourceLabel,
   leadStatusLabel,
   leadStatusTone,
+  timelineEmptyLine,
+  timelineEntry,
   type AlsoAffected,
+  type TimelineItem,
 } from "@/products/lead-follow-up/lead-book";
 import { describeMoment } from "@/lib/today";
 import { StopContactingControl } from "./stop-contacting-control";
@@ -142,6 +146,28 @@ export default async function EnquiryDetailPage({
 
   const canWrite = can(organisation, "leads:write");
   const stopped = lead.status === "do_not_contact";
+  const who = leadName(lead);
+
+  /**
+   * The conversation (3.3c), fetched after the enquiry has passed its gates.
+   *
+   * ⚠️ A FAILURE HERE DOES NOT TAKE THE ENQUIRY DOWN WITH IT. The record and
+   * its evidence are the screen's reason to exist; the conversation is
+   * context. If it cannot be loaded the panel says so and everything else
+   * renders — a compliance record hidden behind a timeline outage would be
+   * the wrong trade.
+   */
+  let timeline: TimelineItem[] = [];
+  let timelineUnavailable = false;
+  try {
+    timeline = (await (
+      await apiFetch(`/organisations/${organisation.id}/leads/${leadId}/timeline`, accessToken)
+    ).json()) as TimelineItem[];
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 401) redirect("/sign-in");
+    else if (error instanceof ApiError) timelineUnavailable = true;
+    else throw error;
+  }
 
   return (
     <Shell>
@@ -168,14 +194,7 @@ export default async function EnquiryDetailPage({
             {lead.enquiry ?? "Nothing was written down."}
           </p>
         </div>
-        <Field
-          label="Answered"
-          value={
-            lead.firstRespondedAt
-              ? describeMoment(lead.firstRespondedAt, timezone)
-              : "Not yet — Eva cannot reply until the next two pieces are built."
-          }
-        />
+        <Field label="Answered" value={answeredLine(lead, timezone)} />
       </section>
 
       {/**
@@ -225,6 +244,51 @@ export default async function EnquiryDetailPage({
               to it. That is what makes it evidence rather than a note.
             </p>
           </>
+        )}
+      </section>
+
+      {/**
+       * THE CONVERSATION (slice 3.3c). Per PERSON, not per enquiry — the
+       * 360's whole point (ruling 67): a repeat customer's earlier enquiries
+       * and Eva's earlier replies sit in the same stream as today's message.
+       * Oldest first, because a conversation is read top-down; the person's
+       * own messages are set apart on the page's background so a glance
+       * tells who said what.
+       */}
+      <section className="flex w-full flex-col gap-3 rounded-[var(--radius-card)] border border-border bg-surface px-6 py-5">
+        <h2 className="text-sm font-semibold">Everything exchanged with {who}</h2>
+        <p className="text-xs text-muted-foreground">
+          Every message to or from this person on any channel, oldest first — including earlier
+          enquiries from the same person, and Eva&apos;s replies.
+        </p>
+        {timelineUnavailable ? (
+          <p className="text-sm text-muted-foreground">
+            The conversation could not be loaded just now. The enquiry above is unaffected.
+          </p>
+        ) : timeline.length === 0 ? (
+          <p className="text-sm text-muted-foreground">{timelineEmptyLine(who)}</p>
+        ) : (
+          <ol className="flex flex-col gap-3">
+            {timeline.map((item) => {
+              const entry = timelineEntry(item, who, timezone);
+              return (
+                <li
+                  key={item.id}
+                  className={`flex flex-col gap-1 rounded-[var(--radius-card)] px-4 py-3 ${
+                    entry.fromThem ? "bg-background" : "border border-border"
+                  }`}
+                >
+                  <div className="flex flex-wrap items-baseline gap-2">
+                    <span className="text-sm font-semibold">{entry.who}</span>
+                    <span className="text-[11.5px] tracking-[0.04em] text-faint">{entry.meta}</span>
+                  </div>
+                  {entry.subject && <span className="text-sm font-medium">{entry.subject}</span>}
+                  {/* Their words, as written — the same rule as the enquiry above. */}
+                  <p className="text-sm whitespace-pre-wrap">{entry.body}</p>
+                </li>
+              );
+            })}
+          </ol>
         )}
       </section>
 

@@ -4,7 +4,12 @@ import { ZodValidationPipe } from "../../common/validation/zod-validation.pipe.j
 import { OwnedBy } from "../../common/monitoring/owner.js";
 import { CurrentAuthUser, type AuthUser } from "../authentication/current-auth-user.decorator.js";
 // eslint-disable-next-line @typescript-eslint/consistent-type-imports
-import { LeadsService, type LeadDetail, type LeadSummary } from "./leads.service.js";
+import {
+  LeadsService,
+  type LeadDetail,
+  type LeadSummary,
+  type TimelineItem,
+} from "./leads.service.js";
 
 /**
  * The lead book (Slice 3.1a).
@@ -52,6 +57,19 @@ export class LeadsController {
     @Param("leadId", ParseUUIDPipe) leadId: string,
   ): Promise<LeadDetail> {
     return this.leadsService.getById(authUser, organisationId, leadId);
+  }
+
+  /**
+   * Everything exchanged with the person behind this enquiry, oldest first
+   * (slice 3.3c) — the `person_timeline` view, through the lead.
+   */
+  @Get(":leadId/timeline")
+  timeline(
+    @CurrentAuthUser() authUser: AuthUser,
+    @Param("organisationId", ParseUUIDPipe) organisationId: string,
+    @Param("leadId", ParseUUIDPipe) leadId: string,
+  ): Promise<TimelineItem[]> {
+    return this.leadsService.timeline(authUser, organisationId, leadId);
   }
 
   /** BRD 4.3: actioned immediately and permanently, across every channel. */
