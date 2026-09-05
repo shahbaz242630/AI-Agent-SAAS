@@ -9,7 +9,7 @@ import {
   replyChannelForLeadSource,
 } from "@eva/types";
 import { ensureSystemStages } from "../src/platform/people/spine.js";
-import { csvCell, stamp } from "../src/platform/leads/lead-book-csv.js";
+import { csvCell, phoneCell, stamp } from "../src/platform/leads/lead-book-csv.js";
 import {
   createOrgWithMembers,
   createOwnerClient,
@@ -223,13 +223,16 @@ describe("The enquiry book at volume", () => {
     /**
      * ⚠️ A STRANGER'S FORMULA MUST NOT RUN ON THE CUSTOMER'S MACHINE. The
      * enquiry text is whatever they typed; `=HYPERLINK(...)` in a cell is code
-     * to Excel. The apostrophe is the defence, and a phone number that merely
-     * starts with a plus keeps its plus.
+     * to Excel. The apostrophe is the defence. A phone number is the one cell
+     * written as a formula on purpose — `="+44 7700 900123"`, a string literal
+     * and nothing else — so Excel keeps the plus (founder, 2026-09-05).
      */
-    it("defuses a formula in an enquiry and leaves a phone number alone", async () => {
+    it("defuses a formula in an enquiry and wraps a phone number so Excel keeps it", async () => {
       const response = await exportCsv({ search: "stranger" }).expect(200);
       expect(response.text).toContain(`"'=HYPERLINK(""http://example.invalid"",""click"")"`);
-      expect(response.text).toContain('"+44 7700 900123"');
+      expect(response.text).toContain('"=""+44 7700 900123"""');
+      // A whole bare cell would read ,"+44 7700 900123", — that is what must be gone.
+      expect(response.text).not.toContain(',"+44 7700 900123",');
     });
 
     it("is refused to a role that cannot read the book, and to an organisation without the product", async () => {
@@ -251,6 +254,19 @@ describe("The enquiry book at volume", () => {
       expect(csvCell("+44 7700 900123")).toBe('"+44 7700 900123"');
       expect(csvCell("-")).toBe(`"'-"`);
       expect(csvCell("\tx")).toBe(`"'\tx"`);
+    });
+
+    it("wraps a phone number for Excel, and only a phone number", () => {
+      // Digit-only is what WhatsApp gives us; Excel would show 4.477E+11.
+      expect(phoneCell("+447700900123")).toBe('"=""+447700900123"""');
+      // A leading zero would go the same way.
+      expect(phoneCell("07700 900123")).toBe('"=""07700 900123"""');
+      expect(phoneCell("+1 (555) 197-4045")).toBe('"=""+1 (555) 197-4045"""');
+      // Not a phone shape: the ordinary path, so a formula still cannot run.
+      expect(phoneCell("")).toBe('""');
+      expect(phoneCell("ext 12")).toBe('"ext 12"');
+      expect(phoneCell("=1+1")).toBe(`"'=1+1"`);
+      expect(phoneCell('+44 "x"')).toBe(`"'+44 ""x"""`);
     });
 
     it("stamps a moment in the organisation's own zone, sortable", () => {

@@ -17,6 +17,9 @@ export interface LeadCsvRow {
   stage: { name: string };
 }
 
+/** The Phone column's place in the header and in every row: the one cell `phoneCell` writes. */
+const PHONE_COLUMN = 2;
+
 /**
  * The enquiry book as a file, for the customer's own records (founder,
  * 2026-09-05: *"the user should be able to download a csv of the enquiries"*).
@@ -42,12 +45,13 @@ export function leadBookCsv(rows: readonly LeadCsvRow[], timezone: string): stri
     "Stage",
     "Do not contact",
   ];
-  const lines = [header.map(csvCell).join(",")];
+  const lines = [header.map((cell) => csvCell(cell)).join(",")];
   for (const row of rows) {
     lines.push(
       [
         row.contactName ?? "",
         row.contactEmail ?? "",
+        // The one column that does not go through csvCell — see phoneCell.
         row.contactPhone ?? "",
         channelLabel(row.source),
         row.enquiry ?? "",
@@ -56,7 +60,7 @@ export function leadBookCsv(rows: readonly LeadCsvRow[], timezone: string): stri
         row.stage.name,
         row.status === "do_not_contact" ? "yes" : "no",
       ]
-        .map(csvCell)
+        .map((value, column) => (column === PHONE_COLUMN ? phoneCell(value) : csvCell(value)))
         .join(","),
     );
   }
@@ -80,13 +84,33 @@ function channelLabel(source: string): string {
  *
  * A phone number written `+44 7700 900123` is left alone: it is digits and
  * separators, not a formula, and an apostrophe on every phone number would
- * make the column useless for the one thing it is exported for.
+ * make the column useless for the one thing it is exported for. The Phone
+ * column itself goes through `phoneCell`, which does more than leave it alone.
  */
 export function csvCell(value: string): string {
   const looksLikePhone = /^[+-][\d\s().-]+$/.test(value);
   const dangerous = /^[=+\-@\t\r]/.test(value) && !looksLikePhone;
   const text = dangerous ? `'${value}` : value;
   return `"${text.replace(/"/g, '""')}"`;
+}
+
+/**
+ * ⚠️ A PHONE NUMBER IS WRAPPED SO EXCEL KEEPS IT WHOLE (founder, 2026-09-05:
+ * *"wrap phone numbers in csv for excel"*). To Excel `+447700900123` is the
+ * number 447,700,900,123 — shown as 4.477E+11, the plus gone — and
+ * `07700900123` loses its leading zero; digit-only is exactly the shape
+ * WhatsApp gives us. `="+447700900123"` is a formula whose whole body is one
+ * string literal, the spreadsheet idiom for "this is text": Excel, Google
+ * Sheets and LibreOffice all show the number as typed.
+ *
+ * It is the one place this file writes a leading `=` on purpose, and it is
+ * safe by construction: only a value made of digits, a leading plus and
+ * separators is wrapped — no letter, no quote, nothing that can name a
+ * function — and anything else in the column takes the ordinary path.
+ */
+export function phoneCell(value: string): string {
+  if (!/^\+?\d[\d\s().-]*$/.test(value)) return csvCell(value);
+  return `"=""${value}"""`;
 }
 
 /** `2026-09-05 11:39`, in the zone given — the form a spreadsheet sorts. */

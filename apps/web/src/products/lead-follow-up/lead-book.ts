@@ -322,6 +322,8 @@ export interface LeadBookStage {
 export interface LeadBook {
   rows: LeadBookRow[];
   totalCount: number;
+  /** Every enquiry in the book, no filter — what the All tab says and clears to. */
+  bookCount: number;
   stages: LeadBookStage[];
 }
 

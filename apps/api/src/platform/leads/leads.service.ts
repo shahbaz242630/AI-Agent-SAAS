@@ -60,6 +60,8 @@ export interface LeadBookStage {
 export interface LeadBook {
   rows: LeadSummary[];
   totalCount: number;
+  /** Every enquiry in the book, no filter — what the All tab says and clears to. */
+  bookCount: number;
   stages: LeadBookStage[];
 }
 
@@ -185,6 +187,9 @@ export class LeadsService {
         include: { evidence: { select: { id: true } }, pipelineStage: STAGE_SELECT },
       });
       const totalCount = await tx.lead.count({ where });
+      // The whole book, no filter: the All tab's number, because All clears
+      // every filter (founder, 2026-09-05), and a tab must say what a click does.
+      const bookCount = await tx.lead.count({ where: leadBookWhere({}) });
       const perStage = await tx.lead.groupBy({
         by: ["pipelineStageId"],
         where: leadBookWhere({ ...query, stage: undefined }),
@@ -199,6 +204,7 @@ export class LeadsService {
       return {
         rows: rows.map((lead) => toSummary(lead)),
         totalCount,
+        bookCount,
         stages: stages.map((stage) => ({
           id: stage.id,
           key: stage.systemKey,

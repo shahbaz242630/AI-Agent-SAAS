@@ -147,15 +147,18 @@ export function EnquiryBook({
   }
 
   const stageTabs = book.stages.filter((stage) => stage.count > 0 || stage.key === filters.stage);
-  const total = book.stages.reduce((sum, stage) => sum + stage.count, 0);
 
   return (
     <div ref={top} className="flex w-full scroll-mt-6 flex-col gap-4">
       {/* Stage tabs, with counts, only for stages that hold something. Every
           enquiry is "New" until the engine slice moves stages, so today this
-          row is short; the shape is right for when it is not. */}
+          row is short; the shape is right for when it is not.
+          "All" is the whole book and clears EVERYTHING — chips and the search
+          too (founder, 2026-09-05: "all tabs clears every filter"; it had
+          read "44" with a channel on). So its number is the book's, not the
+          filter's, and it is the selected tab only when nothing at all is on. */}
       <div className="flex flex-wrap items-center gap-2">
-        {filterLink(`All ${total}`, { ...filters, stage: undefined }, !filters.stage, "all")}
+        {filterLink(`All ${book.bookCount}`, {}, !filtered, "all")}
         {stageTabs.map((stage) =>
           filterLink(
             `${stage.name} ${stage.count}`,

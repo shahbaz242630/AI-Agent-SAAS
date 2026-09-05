@@ -48,6 +48,8 @@ const book: LeadBook = {
     row({ id: "lead-3", contactName: "A Stranger", status: "do_not_contact" }),
   ],
   totalCount: 273,
+  // More than the stages sum to: the All tab must say this, not 273.
+  bookCount: 300,
   stages,
 };
 
@@ -66,12 +68,24 @@ const render = (filters = {}, page = 1) =>
 describe("the enquiry book", () => {
   it("shows a tab per stage that holds something, with its count, and an All tab", () => {
     const html = render();
-    expect(html).toContain("All 273");
+    expect(html).toContain("All 300");
     expect(html).toContain("New 212");
     expect(html).toContain("Contacted 61");
     // An empty stage is not a tab — until it is the one selected.
     expect(html).not.toContain("Quoted 0");
     expect(render({ stage: "quoted" })).toContain("Quoted 0");
+  });
+
+  it("makes All the whole book: it clears every filter, not only the stage (founder, 2026-09-05)", () => {
+    const html = render({ stage: "new", channel: "whatsapp", search: "boiler" });
+    // The number is the book's whatever is on, and the link carries nothing.
+    expect(html).toMatch(/href="\/app\/lead-follow-up\/enquiries"[^>]*>All 300</);
+    expect(html).not.toMatch(/aria-current="true"[^>]*>All 300</);
+    // A chip alone is a filter too: All is selected only when nothing is on.
+    expect(render({ channel: "email" })).not.toMatch(/aria-current="true"[^>]*>All 300</);
+    expect(render()).toMatch(
+      /href="\/app\/lead-follow-up\/enquiries" aria-current="true"[^>]*>All 300</,
+    );
   });
 
   it("draws the eight columns and a row per enquiry, each linking into the enquiry", () => {
@@ -137,6 +151,7 @@ describe("the enquiry book", () => {
     const empty: LeadBook = {
       rows: [],
       totalCount: 0,
+      bookCount: 0,
       stages: stages.map((s) => ({ ...s, count: 0 })),
     };
     const asIs = renderToStaticMarkup(
