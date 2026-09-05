@@ -691,4 +691,80 @@ describe("Lead reply templates: what Eva writes back", () => {
       expect(serialised).not.toContain("we are full until October");
     });
   });
+
+  /**
+   * ⚠️ WHERE REPLIES LEAVE FROM, ASKED THE WAY THE SENDER ASKS (ruling 89).
+   * The screen says "replies leave from office@…" or "nothing connected"; if
+   * it read a different table from the sender it could say one thing while
+   * Eva did another. So the same two resolvers answer both.
+   *
+   * Runs LAST: it connects a mailbox and a number to the shared organisation,
+   * and every test above is about the words, not the wiring.
+   */
+  describe("where each channel's replies leave from", () => {
+    const account = (moduleKey: string, emailAddress: string) => ({
+      organisationId: org.id,
+      moduleKey,
+      provider: "google",
+      emailAddress,
+      isPrimary: true,
+      healthStatus: "active",
+      connectedBy: org.members[0]!.id,
+      accessTokenEncrypted: "v1.stub",
+      refreshTokenEncrypted: "v1.stub",
+      tokenExpiresAt: new Date(Date.now() + 3_600_000),
+      scopes: ["https://www.googleapis.com/auth/gmail.send"],
+    });
+
+    it("is null on both channels while nothing is connected for the product", async () => {
+      expect((await read()).sendsFrom).toEqual({ email: null, whatsapp: null });
+    });
+
+    it("does not count the other product's mailbox, nor a number that needs reconnecting", async () => {
+      // A mailbox belongs to ONE product (ruling 36): Invoice Chasing's is not ours.
+      await owner.emailAccount.create({
+        data: account("email_credit_controller", "accounts@hallowayroofing.co.uk"),
+      });
+      // A number that needs reconnecting cannot send, so it is not "connected".
+      await owner.channelConnection.create({
+        data: {
+          organisationId: org.id,
+          moduleKey: "lead_follow_up",
+          channel: "whatsapp",
+          externalAccountId: "waba-templates",
+          externalAssetId: "pn-templates-stale",
+          displayName: "+44 7700 900124",
+          status: "needs_reconnect",
+        },
+      });
+      expect((await read()).sendsFrom).toEqual({ email: null, whatsapp: null });
+    });
+
+    it("names the product's own mailbox and number once they are connected", async () => {
+      await owner.emailAccount.create({
+        data: account("lead_follow_up", "office@hallowayroofing.co.uk"),
+      });
+      await owner.channelConnection.create({
+        data: {
+          organisationId: org.id,
+          moduleKey: "lead_follow_up",
+          channel: "whatsapp",
+          externalAccountId: "waba-templates",
+          externalAssetId: "pn-templates-live",
+          displayName: "+44 7700 900123",
+          connectedBy: org.members[0]!.id,
+        },
+      });
+      expect((await read()).sendsFrom).toEqual({
+        email: { from: "office@hallowayroofing.co.uk" },
+        whatsapp: { from: "+44 7700 900123" },
+      });
+    });
+
+    /** Every role that can read the words can read where they leave from. */
+    it("is part of what sales can read", async () => {
+      const body = await read(tokens.get("sales")!);
+      expect(body.sendsFrom.email).toEqual({ from: "office@hallowayroofing.co.uk" });
+    });
+  });
 });

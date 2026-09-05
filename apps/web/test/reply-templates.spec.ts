@@ -220,7 +220,7 @@ describe("the replies screen never nests a form", () => {
   it("actually found the components it is scanning", () => {
     const components = readComponents(readFileSync(CONTROLS, "utf8"), "reply-controls.tsx");
     expect(components.size).toBeGreaterThanOrEqual(6);
-    for (const name of ["ReplyTemplateList", "ReplyTemplateCard", "ConfirmRow", "MakeAutomatic"]) {
+    for (const name of ["ChannelWordings", "ReplyTemplateCard", "ConfirmRow", "MakeAutomatic"]) {
       expect(components.has(name), `${name} was not found`).toBe(true);
     }
     // And the thing the guard is about is genuinely there to get wrong.
@@ -360,27 +360,36 @@ describe("the screen says what Eva can and cannot do, and both halves are checke
    * is now checked against what is actually built, so the test fails when
    * reality moves rather than when the prose does.
    */
-  it("says the automatic reply sends, because it does", () => {
+  it("says Eva sends the wording marked automatic, because she does", () => {
     const source = stripComments(readFileSync(PAGE, "utf8"));
-    expect(source).toMatch(/Eva sends the automatic reply/);
-    // The old claim, which is now false. Its return is a regression.
+    expect(source).toMatch(/Eva sends the wording marked automatic/);
+    // The old claims, both now false. Their return is a regression.
     expect(source).not.toMatch(/sending these replies is the next thing being built/);
+    expect(source).not.toMatch(/next thing being built/);
   });
 
   /**
-   * ⚠️ AND THIS ONE IS STILL TRUE, SO IT IS STILL ASSERTED. Sending a saved
-   * wording BY HAND is slice 3.1c-4 and does not exist. **When that ships, this
-   * is the test that fails** — and unlike its predecessor it fails for the
-   * right reason, because it is pinned to the half that is genuinely unbuilt.
+   * ⚠️ SEND-BY-HAND IS DROPPED (ruling 89), SO NO SENTENCE MAY PROMISE IT.
+   * Four did, for four days on production, about a screen that was never
+   * built (3.1c-4). If it is ever built — inside 3.5 — this is the test that
+   * fails, and the fix is to write the true sentence, not to delete the guard.
    */
-  it("still admits the by-hand half is unbuilt", () => {
-    const source = stripComments(readFileSync(PAGE, "utf8"));
-    expect(source).toMatch(/sending one by hand is the next thing being built/);
+  it("promises no send-by-hand, because none exists", () => {
+    for (const file of [PAGE, CONTROLS, ACTIONS]) {
+      expect(stripComments(readFileSync(file, "utf8"))).not.toMatch(/by hand/i);
+    }
   });
 
-  it("warns when no automatic reply is switched on", () => {
+  /**
+   * ⚠️ AND ONLY FOR A CHANNEL THAT CAN SEND. Until ruling 89 the proxy for
+   * "can send" was "has wordings", and every channel has wordings from first
+   * sight — so an email-only customer was warned about WhatsApp silence they
+   * could do nothing about on this screen.
+   */
+  it("warns when no automatic reply is switched on, for a channel that is connected", () => {
     const source = stripComments(readFileSync(PAGE, "utf8"));
     expect(source).toContain("automaticTemplateIds[channel] === null");
+    expect(source).toContain("sendsFrom[channel] !== null");
     expect(source).toContain("nobody hears back");
   });
 });
@@ -421,10 +430,10 @@ describe("adding a channel is a deliberate act, not a silent one", () => {
    * while it is the only thing standing between the second channel and one
    * undifferentiated list.
    */
-  it("groups by channel and labels the groups once there is more than one", () => {
-    const source = stripComments(readFileSync(CONTROLS, "utf8"));
+  it("draws a labelled panel per channel, whether or not the channel holds a wording", () => {
+    const source = stripComments(readFileSync(PAGE, "utf8"));
+    expect(source).toContain("REPLY_CHANNELS.map(");
     expect(source).toContain("REPLY_CHANNEL_LABELS[channel]");
-    expect(source).toContain("groups.length > 1");
   });
 });
 

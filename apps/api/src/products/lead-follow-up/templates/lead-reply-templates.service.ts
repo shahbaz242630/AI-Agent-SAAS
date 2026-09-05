@@ -19,6 +19,10 @@ import type { CreateLeadReplyTemplateInput, UpdateLeadReplyTemplateInput } from 
 import { PrismaService } from "../../../common/database/prisma.service.js";
 // eslint-disable-next-line @typescript-eslint/consistent-type-imports
 import { UsersService } from "../../../platform/users/users.service.js";
+// eslint-disable-next-line @typescript-eslint/consistent-type-imports
+import { MailboxesService } from "../../../capabilities/mailbox/mailboxes.service.js";
+// eslint-disable-next-line @typescript-eslint/consistent-type-imports
+import { WhatsAppNumbersService } from "../../../capabilities/messaging/whatsapp-numbers.service.js";
 import { requirePermission, type TenantTx } from "../../../platform/permissions/permissions.js";
 import { writeAuditLog } from "../../../platform/audit/audit-log.js";
 import type { AuthUser } from "../../../platform/authentication/current-auth-user.decorator.js";
@@ -50,6 +54,8 @@ export class LeadReplyTemplatesService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly usersService: UsersService,
+    private readonly mailboxes: MailboxesService,
+    private readonly numbers: WhatsAppNumbersService,
   ) {}
 
   /** GET .../lead-reply-templates — `leads:read`. Seeds the three defaults on
@@ -59,8 +65,35 @@ export class LeadReplyTemplatesService {
     return withTenant(this.prisma.db, { organisationId, userId: user.id }, async (tx) => {
       await requirePermission(tx, organisationId, user.id, "leads:read");
       await ensureDefaultTemplates(tx, organisationId, user.id);
-      return toListDto(await liveTemplates(tx));
+      return toListDto(await liveTemplates(tx), await this.sendsFrom(tx, organisationId));
     });
+  }
+
+  /**
+   * Where each channel's replies leave from (ruling 89) — asked of the two
+   * capabilities exactly the way the sender asks (`LeadReplyService`), so the
+   * screen and the send can never disagree about which mailbox or number is
+   * "connected". `null` is the honest state the screen exists to show: the
+   * wordings seed for every channel on first sight, connected or not.
+   */
+  private async sendsFrom(
+    tx: TenantTx,
+    organisationId: string,
+  ): Promise<LeadReplyTemplatesDto["sendsFrom"]> {
+    const mailbox = await this.mailboxes.resolveSendingMailbox(
+      tx,
+      organisationId,
+      "lead_follow_up",
+      {
+        organisationId,
+        emailAccountId: null,
+      },
+    );
+    const number = await this.numbers.resolveSendingNumber(tx, organisationId, "lead_follow_up");
+    return {
+      email: mailbox ? { from: mailbox.account.emailAddress } : null,
+      whatsapp: number ? { from: number.connection.displayName } : null,
+    };
   }
 
   /** POST .../lead-reply-templates — `leads:write`. */
@@ -429,7 +462,10 @@ function asReplyChannel(value: string): ReplyChannel {
   return value;
 }
 
-function toListDto(rows: TemplateRow[]): LeadReplyTemplatesDto {
+function toListDto(
+  rows: TemplateRow[],
+  sendsFrom: LeadReplyTemplatesDto["sendsFrom"],
+): LeadReplyTemplatesDto {
   /**
    * ⚠️ ONE ENTRY PER CHANNEL, ALWAYS, INCLUDING THE NULLS. A channel with no
    * automatic reply is a real and important state — it is what the screen's red
@@ -443,5 +479,5 @@ function toListDto(rows: TemplateRow[]): LeadReplyTemplatesDto {
     ]),
   ) as Record<ReplyChannel, string | null>;
 
-  return { templates: rows.map(toDto), automaticTemplateIds };
+  return { templates: rows.map(toDto), automaticTemplateIds, sendsFrom };
 }

@@ -131,7 +131,7 @@ export async function addReplyTemplate(
   }
 
   revalidatePath(REPLIES);
-  return { success: `Added “${name}”. You can send it by hand from any enquiry.` };
+  return { success: `Added “${name}”. Eva keeps sending whichever wording is marked automatic.` };
 }
 
 /**
@@ -202,7 +202,7 @@ export async function setAutomaticReply(
  *
  * ⚠️ THIS IS THE ONE CONTROL THAT MAKES THE PRODUCT DO LESS, so what it
  * costs is said in the confirmation before it happens — enquiries still arrive
- * and are still filed, and nobody hears back until a person sends one by hand
+ * and are still filed, and nobody hears back until a person replies themselves
  * — and the red banner at the top of the screen keeps saying it afterwards,
  * for as long as it is true. A one-off "saved" would be true and useless.
  */
