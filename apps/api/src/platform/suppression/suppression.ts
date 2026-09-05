@@ -27,8 +27,9 @@ import type { TenantTx } from "../permissions/permissions.js";
  *
  * ⚠️ EVERY READ GOES THROUGH THIS FILE. A query that asks "does a row exist"
  * was the right question until 0028 and is a bug after it: it reads a corrected
- * entry as live. `isSuppressed` and `suppressedValues` are the only two ways to
- * ask, and the bulk one exists so no caller is tempted to hand-roll it.
+ * entry as live. `isSuppressed`, `suppressedValues` and `personSuppressed` are
+ * the only ways to ask; the bulk one exists so no caller is tempted to
+ * hand-roll it, and the person one so "any handle" is decided once.
  */
 
 /** Channels carried by the schema now; whatsapp is added additively in Phase 3. */
@@ -183,6 +184,29 @@ export async function isSuppressed(
     select: { state: true },
   });
   return newest?.state === "opted_out";
+}
+
+/**
+ * True when ANY handle we hold for a person is on the list — the question the
+ * reply path and the correction reconcile both ask, so it is answered once.
+ *
+ * ⚠️ AN OPT-OUT IS FROM EVERYTHING (ruling 79), SO ONE SUPPRESSED HANDLE IS
+ * ENOUGH. `doNotContact` puts every address and number it holds on the list
+ * and a correction lifts one entry at a time, so a person whose address was
+ * corrected but whose number was not is still somebody who asked to be left
+ * alone. And a number on the list under `call` covers WhatsApp too — same
+ * number, same person, same request — which is why the reply gate asks about
+ * the person rather than about the channel it happens to be answering on.
+ */
+export async function personSuppressed(
+  tx: TenantTx,
+  organisationId: string,
+  handles: { email?: string | null; phone?: string | null },
+): Promise<boolean> {
+  if (handles.email && (await isSuppressed(tx, organisationId, "email", handles.email)))
+    return true;
+  if (handles.phone && (await isSuppressed(tx, organisationId, "call", handles.phone))) return true;
+  return false;
 }
 
 /**

@@ -2,13 +2,15 @@ import { createHmac, randomUUID } from "node:crypto";
 import type { INestApplication } from "@nestjs/common";
 import request from "supertest";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import type { EvaPrismaClient } from "@eva/database";
+import { withTenant, type EvaPrismaClient } from "@eva/database";
 import {
   ChannelUnusableError,
   MessageDeliveryDeferredError,
   type OutboundMessage,
   type OutboundMessageDelivery,
 } from "../src/capabilities/messaging/outbound-message.js";
+import { phoneFromWaId } from "../src/platform/people/handles.js";
+import { addSuppression } from "../src/platform/suppression/suppression.js";
 import {
   createOrgWithMembers,
   createOwnerClient,
@@ -377,6 +379,41 @@ describe("Eva answers a WhatsApp enquiry", () => {
       const lead = await leadFor(message.id);
       expect(lead).toBeTruthy();
       expect(lead!.firstRespondedAt).toBeNull();
+    });
+
+    /**
+     * 🚨 RULING 90 (2026-09-05), ON THE SECOND CHANNEL. A phone number only
+     * ever goes on the list under `call` — that is the vocabulary — and it
+     * covers a WhatsApp from that number: an opt-out is from everything
+     * (ruling 79). The entry is written the way `doNotContact` writes one, with
+     * the number in the shape the WhatsApp intake stores on the lead.
+     */
+    it("stays silent to a number that asked not to be contacted, and says why", async () => {
+      const from = freshNumber();
+      const phone = phoneFromWaId(from)!;
+      await withTenant(owner, { organisationId: org.id, userId: org.members[0]!.id }, (tx) =>
+        addSuppression(tx, {
+          organisationId: org.id,
+          channel: "call",
+          value: phone,
+          reason: "lead_requested",
+        }),
+      );
+
+      const message = textMessage("Can you come and look at my roof?", from);
+      await post(webhook([message])).expect(200);
+
+      expect(sent, "Eva wrote to a number that asked her not to").toHaveLength(0);
+      const lead = await leadFor(message.id);
+      expect(lead, "the enquiry was not filed").toBeTruthy();
+      expect(lead!.contactPhone, "the gate compared a different shape of number").toBe(phone);
+      expect(lead!.firstRespondedAt).toBeNull();
+      expect(await decisionFor(lead!.id)).toMatchObject({
+        verdict: "hold",
+        signal: "do_not_contact",
+        channel: "whatsapp",
+        status: "not_sent",
+      });
     });
   });
 

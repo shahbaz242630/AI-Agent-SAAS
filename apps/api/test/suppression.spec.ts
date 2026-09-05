@@ -6,6 +6,7 @@ import {
   correctSuppression,
   isSuppressed,
   listSuppressed,
+  personSuppressed,
   suppressedValues,
 } from "../src/platform/suppression/suppression.js";
 import { createOwnerClient } from "./support.js";
@@ -312,6 +313,49 @@ describe("Suppression list: add/check and permanence", () => {
         const single = await asOrgA((tx) => isSuppressed(tx, ORG_A, "email", value));
         expect(bulk.has(value), `bulk and single disagree about ${value}`).toBe(single);
       }
+    });
+
+    /**
+     * ⚠️ ONE SUPPRESSED HANDLE IS ENOUGH (ruling 79; ruling 90's gate asks this
+     * question). `doNotContact` puts every handle it holds on the list and a
+     * correction lifts one at a time, so "the address is clear" is not "the
+     * person is contactable" while their number is still on it.
+     */
+    it("calls a person suppressed while any handle is still on the list", async () => {
+      const email = "handles@example.com";
+      const phone = "+44 7700 900123";
+      await asOrgA((tx) =>
+        addSuppression(tx, { organisationId: ORG_A, channel: "email", value: email }),
+      );
+      await asOrgA((tx) =>
+        addSuppression(tx, { organisationId: ORG_A, channel: "call", value: phone }),
+      );
+      expect(await asOrgA((tx) => personSuppressed(tx, ORG_A, { email, phone }))).toBe(true);
+
+      await asOrgA((tx) =>
+        correctSuppression(tx, {
+          organisationId: ORG_A,
+          channel: "email",
+          value: email,
+          reason: "the address was a typo for somebody else's",
+        }),
+      );
+      expect(
+        await asOrgA((tx) => personSuppressed(tx, ORG_A, { email, phone })),
+        "a corrected address made a person contactable while their number was still listed",
+      ).toBe(true);
+      expect(await asOrgA((tx) => personSuppressed(tx, ORG_A, { email, phone: null }))).toBe(false);
+
+      await asOrgA((tx) =>
+        correctSuppression(tx, {
+          organisationId: ORG_A,
+          channel: "call",
+          value: phone,
+          reason: "the number was a typo for somebody else's",
+        }),
+      );
+      expect(await asOrgA((tx) => personSuppressed(tx, ORG_A, { email, phone }))).toBe(false);
+      expect(await asOrgA((tx) => personSuppressed(tx, ORG_A, {}))).toBe(false);
     });
   });
 
