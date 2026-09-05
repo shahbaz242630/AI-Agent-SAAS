@@ -18,11 +18,17 @@
  * AI update is a new class and one line in the module — not a rewrite of the
  * reply path.
  *
- * ⚠️ IT IS DELIBERATELY EMAIL-SHAPED TODAY. `headers` is an email idea. If the
+ * ⚠️ ONE PORT, ONE INPUT SHAPE PER CHANNEL, AND NO LOWEST COMMON DENOMINATOR
+ * (slice 3.4a). This file said, while email was the only channel: *"if the
  * product ever grows a second channel, the honest move is a second provider
  * behind this same port with its own signals, NOT a lowest-common-denominator
- * input that describes none of them well. Generalise when there is a second
- * implementation to generalise FROM.
+ * input that describes none of them well."* WhatsApp is that channel. Its
+ * signals are nothing like email's — there are no headers, no bounces, no
+ * mailing lists; there are message types, and Meta's own forwarded flags —
+ * so `ReplyDecisionInput` is a union on `channel`, each arm carrying exactly
+ * what its medium can say. The email arm is byte for byte what it was.
+ * A provider that cannot tell one from the other has a type error, not a
+ * silent default.
  */
 
 /** DI token for the active reply-decision provider. */
@@ -71,7 +77,7 @@ export interface ReplyDecision {
 }
 
 /**
- * Everything a provider may look at.
+ * Everything the email rules may look at.
  *
  * ⚠️ THE BODY IS HERE AND THE RULES DO NOT USE IT, DELIBERATELY. Today's
  * answer comes entirely from headers and the sender, which are cheap, precise
@@ -80,7 +86,8 @@ export interface ReplyDecision {
  * for every implementation. It is the one piece of speculative generality here
  * and it is one field.
  */
-export interface ReplyDecisionInput {
+export interface EmailReplyDecisionInput {
+  channel: "email";
   /** Lower-cased header names, as the intake path stores them. */
   headers: Record<string, string>;
   /** The address Eva would write back to. */
@@ -88,6 +95,34 @@ export interface ReplyDecisionInput {
   subject: string | null;
   body: string;
 }
+
+/**
+ * Everything the WhatsApp rules may look at (slice 3.4a).
+ *
+ * There is no header a machine sets about itself on WhatsApp, and Meta has
+ * already refused the spam it can see before a message reaches a business
+ * number. What the medium does say is WHAT KIND of message this is and
+ * whether it was passed along — and those are the only two signals a rule
+ * here reads. The words are passed for the same reason email's body is.
+ */
+export interface WhatsAppReplyDecisionInput {
+  channel: "whatsapp";
+  /**
+   * Meta's `type`: text | image | audio | video | document | sticker |
+   * location | contacts | interactive | button | order | reaction | system |
+   * unsupported | request_welcome | … Stored verbatim at intake; unknown values
+   * arrive here as they are.
+   */
+  messageType: string;
+  /** Meta's `context.forwarded` — the person passed somebody else's message on. */
+  forwarded: boolean;
+  /** Meta's `context.frequently_forwarded` — passed on many times: a chain message. */
+  frequentlyForwarded: boolean;
+  /** The words, if any. Null for a bare photo, a sticker or a location. */
+  text: string | null;
+}
+
+export type ReplyDecisionInput = EmailReplyDecisionInput | WhatsAppReplyDecisionInput;
 
 export interface ReplyDecisionProvider {
   decide(input: ReplyDecisionInput): ReplyDecision;

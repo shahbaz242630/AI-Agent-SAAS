@@ -4,16 +4,18 @@ import type { ProductManifest } from "../../platform/registry/product-manifest.j
  * Lead Follow-up — an enquiry arrives, Eva reads it, files it, and answers it
  * as the customer, from the customer's own account.
  *
- * ⚠️ THE NAME LOST "BY EMAIL" ON 2026-09-02 (founder ruling 62), AND THE CODE
- * HAS NOT CAUGHT UP YET — ON PURPOSE. Email is still the only channel Eva can
- * receive or answer on; WhatsApp, Messenger and Instagram are the next slices.
- * The rename came first because a product key is structural (a database CHECK,
- * a folder, a URL) and costs one migration today against one row, versus a
- * migration against live customer rows later.
+ * ⚠️ THE NAME LOST "BY EMAIL" ON 2026-09-02 (founder ruling 62), three days
+ * before the code caught up. The rename came first because a product key is
+ * structural (a database CHECK, a folder, a URL) and costs one migration
+ * against one row, versus a migration against live customer rows later. Since
+ * 3.4a (2026-09-05) Eva receives and answers on email AND WhatsApp; Messenger
+ * and Instagram are the next slices.
  *
- * **So every "mailbox" in this folder is still literally a mailbox.** When the
- * second channel lands, the thing to generalise is the PORT — the way this
- * product asks for somewhere to send from — not the word.
+ * **A "mailbox" in this folder is still literally a mailbox**, and a "number"
+ * is a WhatsApp number. What was generalised when the second channel landed
+ * was the PORT — `OUTBOUND_MAIL` gained a twin, `OUTBOUND_MESSAGE`, each in
+ * its own capability — not the word. The reply service asks "which medium?"
+ * once and then speaks to exactly one of them.
  *
  * ⚠️ THIS FOLDER DID NOT EXIST UNTIL SLICE 3.1c-1, AND ITS ABSENCE WAS CORRECT.
  * Everything the product did up to 3.1b was either the LEAD RECORD (platform —

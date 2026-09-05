@@ -1069,6 +1069,55 @@ describe("Schema conventions (BRD 10)", () => {
     });
   });
 
+  /**
+   * Migration 0044 (slice 3.4a): a wording and a decision may be for
+   * WhatsApp now, and still for nothing else. The vocabulary is the CHECK's,
+   * and `REPLY_CHANNELS` in `@eva/types` is its twin; the api's
+   * `lead-reply-templates.service.ts` throws if the two ever disagree.
+   */
+  describe("a wording belongs to a channel Eva can answer on (migrations 0039 and 0044)", () => {
+    const NAME_PREFIX = "0044-check-";
+    const attempt = (channel: string) =>
+      prisma.$executeRawUnsafe(
+        `INSERT INTO lead_reply_templates (id, organisation_id, channel, name, body, updated_at)
+         VALUES ('${randomUUID()}', '${DEMO_ORGANISATION_ID}', '${channel}', '${NAME_PREFIX}${channel}', 'A wording.', now())`,
+      );
+
+    afterAll(async () => {
+      await prisma.$executeRaw`DELETE FROM lead_reply_templates WHERE name LIKE ${`${NAME_PREFIX}%`}`;
+    });
+
+    it("admits email and WhatsApp (positive control)", async () => {
+      await expect(attempt("email")).resolves.toBe(1);
+      await expect(attempt("whatsapp")).resolves.toBe(1);
+    });
+
+    /** The case that must fail: the next channel is a migration, not a string. */
+    it("refuses a channel nothing can send on yet", async () => {
+      await expect(attempt("messenger")).rejects.toThrow(/lead_reply_templates_channel_check/);
+      await expect(attempt("Email")).rejects.toThrow(/lead_reply_templates_channel_check/);
+    });
+
+    /**
+     * The decision's CHECK moves in lockstep. Read from the catalogue rather
+     * than inserted, because a decision needs a lead and a lead needs a stage;
+     * `lead-reply-whatsapp.spec.ts` in the api writes the real row (status
+     * `sent`, channel `whatsapp`) and would fail against the old CHECK.
+     */
+    it("lets a decision name WhatsApp too, and nothing else", async () => {
+      const rows = await prisma.$queryRaw<{ definition: string }[]>`
+        SELECT pg_get_constraintdef(oid) AS definition
+        FROM pg_constraint
+        WHERE conname = 'lead_reply_decisions_channel_check'`;
+      expect(rows).toHaveLength(1);
+      const definition = rows[0]!.definition.replace(/\s+/g, " ");
+      expect(definition).toContain("'email'");
+      expect(definition).toContain("'whatsapp'");
+      expect(definition).not.toContain("'messenger'");
+      expect(definition).toMatch(/IS NULL/);
+    });
+  });
+
   it("stores timestamps as timestamptz (UTC, BRD 18.1)", async () => {
     const cols = await columnsOf("organisations");
     const createdAt = cols.find((c) => c.column_name === "created_at");

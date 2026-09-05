@@ -555,19 +555,23 @@ export function isModuleLive(moduleKey: ModuleKey): boolean {
  * on one channel and (ruling 62's "one feature") be answered on the same one
  * while the customer holds three others.
  *
- * ⚠️ ONE VALUE, AND ADDING ONE IS A MIGRATION. The database CHECK
- * (`lead_reply_templates_channel_check`) lists exactly this set. Listing
- * `whatsapp` here before the channel exists would let a customer save a wording
- * nothing can ever send — ruling 57's objection to shipping templates early,
- * one level down.
+ * ⚠️ ADDING ONE IS A MIGRATION. The database CHECKs
+ * (`lead_reply_templates_channel_check`, `lead_reply_decisions_channel_check`)
+ * list exactly this set. `whatsapp` joined on 2026-09-05 (slice 3.4a,
+ * migration 0044) — the same day Eva could first send on it, and not a day
+ * before: listing a channel here before anything can send on it would let a
+ * customer save a wording nothing can ever deliver, which is ruling 57's
+ * objection to shipping templates early, one level down. Messenger and
+ * Instagram join the same way, each with its own slice.
  */
-export const REPLY_CHANNELS = ["email"] as const;
+export const REPLY_CHANNELS = ["email", "whatsapp"] as const;
 
 export type ReplyChannel = (typeof REPLY_CHANNELS)[number];
 
 /** What a customer sees this channel called. */
 export const REPLY_CHANNEL_LABELS: Record<ReplyChannel, string> = {
   email: "Email",
+  whatsapp: "WhatsApp",
 };
 
 export function isReplyChannel(value: string): value is ReplyChannel {
@@ -585,7 +589,16 @@ export function isReplyChannel(value: string): value is ReplyChannel {
  * outcome ruling 32 asks for when Eva is unsure.
  */
 export function replyChannelForLeadSource(source: string): ReplyChannel | null {
-  return source === "email_enquiry" ? "email" : null;
+  switch (source) {
+    case "email_enquiry":
+      return "email";
+    case "whatsapp_enquiry":
+      return "whatsapp";
+    default:
+      // The three retired call-shaped sources, and anything a later door
+      // writes before this map learns it.
+      return null;
+  }
 }
 
 /** How a module came to be enabled. `subscription` is written by Paddle

@@ -323,14 +323,19 @@ describe("whether the enquiry was answered", () => {
   });
 
   /**
-   * ⚠️ THE OLD SENTENCE CLAIMED EVA COULD NOT REPLY AT ALL, TWO DAYS AFTER
-   * SHE COULD. The claim is now exact per channel: nothing about email, which
-   * she answers; the truth about WhatsApp, which she cannot yet.
+   * ⚠️ TWICE NOW A SENTENCE HERE CLAIMED EVA COULD NOT DO SOMETHING SHE
+   * COULD. "Cannot reply until the next two pieces are built" outlived 3.1c-3;
+   * "cannot reply on WhatsApp until a later piece is built" outlived 3.4a by
+   * the length of one PR. The line makes no claim about either channel now,
+   * and this test fails if a claim comes back.
    */
-  it("does not claim Eva cannot reply by email, and says exactly what she cannot do on WhatsApp", () => {
+  it("says only that no answer has gone yet, on either channel", () => {
     expect(answeredLine({ firstRespondedAt: null, source: "email_enquiry" }, TZ)).toBe("Not yet.");
-    const whatsapp = answeredLine({ firstRespondedAt: null, source: "whatsapp_enquiry" }, TZ);
-    expect(whatsapp).toContain("WhatsApp");
-    expect(whatsapp).not.toMatch(/next two pieces/);
+    expect(answeredLine({ firstRespondedAt: null, source: "whatsapp_enquiry" }, TZ)).toBe(
+      "Not yet.",
+    );
+    for (const source of ["email_enquiry", "whatsapp_enquiry"]) {
+      expect(answeredLine({ firstRespondedAt: null, source }, TZ)).not.toMatch(/cannot|until/i);
+    }
   });
 });

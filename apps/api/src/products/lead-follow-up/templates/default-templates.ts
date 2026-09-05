@@ -94,4 +94,47 @@ export const DEFAULT_LEAD_REPLY_TEMPLATES: Record<ReplyChannel, readonly Default
       isAutomatic: false,
     },
   ],
+  /**
+   * WhatsApp (slice 3.4a, ruling 63). Written for a chat, not pasted from the
+   * email set: shorter, no "reply to this email", and no talk of a signature —
+   * the customer's WhatsApp business profile already carries their name on
+   * every message, and a reply arrives in the same thread the person wrote in,
+   * so "reply here" needs no saying.
+   *
+   * ⚠️ THE AUTOMATIC ONE MAKES THE SAME PROMISE AS EMAIL'S AND NO MORE: a
+   * reply, not a quote, a price, a visit or a date. It goes out unread, in the
+   * customer's name, to a stranger who may be standing in a flooded kitchen.
+   */
+  whatsapp: [
+    {
+      name: "Standard reply",
+      body: [
+        "Thanks for your message — we've got it.",
+        "",
+        "We'll read it properly and come back to you here shortly.",
+      ].join("\n"),
+      isAutomatic: true,
+    },
+    {
+      name: "Out of hours",
+      body: [
+        "Thanks for your message — it's reached us outside our working hours.",
+        "",
+        "We'll pick it up first thing and reply here. If it can't wait, please call so it reaches somebody straight away.",
+      ].join("\n"),
+      isAutomatic: false,
+    },
+    {
+      name: "Asking for more detail",
+      body: [
+        "Thanks for your message. To give you a proper answer rather than a guess, could you tell us:",
+        "",
+        "- Where the work is, and roughly when you need it",
+        "- What's there now, and what you'd like instead",
+        "",
+        "A couple of photos here help more than anything.",
+      ].join("\n"),
+      isAutomatic: false,
+    },
+  ],
 };

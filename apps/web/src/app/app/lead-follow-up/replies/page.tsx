@@ -186,12 +186,19 @@ export default async function ReplyTemplatesPage() {
         />
       )}
 
+      {/**
+       * ⚠️ ONE SENTENCE PER CHANNEL, BECAUSE THEY LEAVE FROM DIFFERENT PLACES
+       * (3.4a). Email replies leave the mailbox on the mailbox screen; WhatsApp
+       * replies leave the WhatsApp number connected to the product, which has
+       * no screen of its own yet — the connect screen is a later slice — so
+       * the sentence names the fact and links nowhere.
+       */}
       <p className="w-full text-sm text-muted-foreground">
-        Replies leave your own mailbox —{" "}
+        Email replies leave your own mailbox —{" "}
         <Link href={MAILBOX} className="font-medium text-link hover:underline">
           the address Eva replies from
         </Link>
-        . Or go{" "}
+        . WhatsApp replies leave the WhatsApp number connected to Eva. Or go{" "}
         <Link href={BOOK} className="font-medium text-link hover:underline">
           back to enquiries
         </Link>

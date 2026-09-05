@@ -1178,8 +1178,9 @@ model InboundChannelMessage {
 model LeadReplyTemplate {
   id             String       @id @default(uuid()) @db.Uuid
   organisationId String       @map("organisation_id") @db.Uuid
-  /// Which medium this wording is for (slice 3.2b, migration 0039). `email` is
-  /// the only value the CHECK permits today; adding a channel is a migration.
+  /// Which medium this wording is for (slice 3.2b, migration 0039). The CHECK
+  /// permits `email` and, since 0044 (slice 3.4a), `whatsapp`; adding a
+  /// channel is a migration.
   ///
   /// ⚠️ NOT THE SAME VOCABULARY AS `leads.source`, ON PURPOSE. That says
   /// `email_enquiry` and describes how an enquiry ARRIVED; this describes the
@@ -1235,9 +1236,10 @@ model LeadReplyDecision {
   id             String    @id @default(uuid()) @db.Uuid
   organisationId String    @map("organisation_id") @db.Uuid
   leadId         String    @map("lead_id") @db.Uuid
-  /// Which medium Eva answered on, or would have (slice 3.2b, migration 0039).
-  /// Stored for the same reason the body is: this is the record of what a
-  /// stranger actually received, and "by which means" is part of that.
+  /// Which medium Eva answered on, or would have (slice 3.2b, migration 0039;
+  /// `whatsapp` admitted by 0044, slice 3.4a). Stored for the same reason the
+  /// body is: this is the record of what a stranger actually received, and
+  /// "by which means" is part of that.
   ///
   /// ⚠️ NULLABLE, UNLIKE `LeadReplyTemplate.channel`. A template always has a
   /// channel; a decision may not. `leads.source` still legally holds the three

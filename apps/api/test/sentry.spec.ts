@@ -38,6 +38,7 @@ const baseEnv: ApiEnv = {
   META_APP_ID: "",
   META_APP_SECRET: "",
   WHATSAPP_VERIFY_TOKEN: "",
+  WHATSAPP_ACCESS_TOKEN: "",
 };
 
 describe("initSentry (BRD 14)", () => {

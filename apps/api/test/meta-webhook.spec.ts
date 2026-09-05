@@ -512,10 +512,12 @@ describe("Meta webhook: a WhatsApp message is written down", () => {
      * ⚠️ THE HAND-OFF, THROUGH THE REAL WIRING. The reply product's handler is
      * registered at the composition root and must be reached from THIS door
      * too — the `@Global()` lesson: a port that silently has no listeners
-     * looks exactly like one that does. It finds no channel to reply on and
-     * writes a held decision; that is 3.4's job to change.
+     * looks exactly like one that does. Since 3.4a it knows the channel is
+     * WhatsApp and would reply; this organisation has never opened the
+     * Replies screen, so it has no WhatsApp wording, and the decision says
+     * so. The reply itself is proved in `lead-reply-whatsapp.spec.ts`.
      */
-    it("hands the enquiry to the products, which hold it because nothing can reply on WhatsApp yet", async () => {
+    it("hands the enquiry to the products, which record why nothing was sent", async () => {
       const from = freshNumber();
       const message = textMessage("Are you open Saturday?", from);
       await post(app, webhook([message])).expect(200);
@@ -526,11 +528,37 @@ describe("Meta webhook: a WhatsApp message is written down", () => {
       });
       expect(decision, "the reply handler must have run through the Nest wiring").not.toBeNull();
       expect(decision).toMatchObject({
-        verdict: "hold",
-        channel: null,
-        signal: "unmapped_lead_source",
+        verdict: "reply",
+        channel: "whatsapp",
+        signal: "no-refusal",
         status: "not_sent",
       });
+      expect(decision!.failureReason).toContain("no automatic reply");
+    });
+
+    /**
+     * A receipt for a message WE sent that did not arrive (3.4a). Acknowledged
+     * and logged — Meta must not retry it — and nothing is stored, because
+     * nothing yet has a place to put it.
+     */
+    it("acknowledges a failed delivery receipt without storing anything", async () => {
+      const before = await owner.inboundChannelMessage.count();
+      const response = await post(
+        app,
+        webhook([], {
+          statuses: [
+            {
+              id: "wamid.sent-by-us",
+              status: "failed",
+              timestamp: "1725370800",
+              recipient_id: "447911123456",
+              errors: [{ code: 131047, title: "Re-engagement message" }],
+            },
+          ],
+        }),
+      ).expect(200);
+      expect(response.body).toMatchObject({ status: "not-applicable", statusUpdates: 1 });
+      expect(await owner.inboundChannelMessage.count()).toBe(before);
     });
 
     it("files a second message from the same number on the same enquiry, not a new one (ruling 76)", async () => {

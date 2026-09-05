@@ -400,13 +400,19 @@ describe("the screen says what Eva can and cannot do, and both halves are checke
  * the per-channel warnings actually read correctly, THEN update this. The
  * alternative — building the two-channel UI now — is machinery for a state that
  * cannot occur, which is ruling 57's objection one level down.
+ *
+ * It fired once, on 2026-09-05 (slice 3.4a), and the screen was walked before
+ * the list below grew: the founder opened it on localhost with email and
+ * WhatsApp seeded — two groups under their headings, a pill per channel, a
+ * different hint under each wording box, the footer naming where each
+ * channel's replies leave from. Messenger and Instagram will fire it again.
  */
 describe("adding a channel is a deliberate act, not a silent one", () => {
   it("fails when REPLY_CHANNELS grows, so the screen is re-walked", () => {
     expect(
       REPLY_CHANNELS,
-      "a channel was added — walk the Replies screen with both connected before updating this",
-    ).toEqual(["email"]);
+      "a channel was added — walk the Replies screen with all of them connected before updating this",
+    ).toEqual(["email", "whatsapp"]);
   });
 
   /**

@@ -153,6 +153,19 @@ export class MetaInboundIntakeService {
         "Meta webhook carried messages that could not be read — acknowledged, not stored",
       );
     }
+    /**
+     * ⚠️ A FAILED RECEIPT IS THE ONLY WAY WE HEAR THAT A REPLY DID NOT ARRIVE
+     * (3.4a). Meta accepts a send with a 200 and reports the closed window,
+     * the unpaid account and the blocked number afterwards, here. Logged
+     * with the code so the walk can see one; stored nowhere yet — see the
+     * payload module's header for why that waits for 3.5.
+     */
+    for (const failed of parsed.failedStatuses) {
+      this.logger.warn(
+        { providerMessageId: failed.providerMessageId, code: failed.code, title: failed.title },
+        "Meta reported that a message we sent was not delivered",
+      );
+    }
 
     // One routing lookup per number per webhook, not per message.
     const byNumber = new Map<string, WhatsAppDelivery[]>();

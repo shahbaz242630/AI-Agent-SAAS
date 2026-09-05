@@ -40,6 +40,22 @@ import {
 const MAX_NAME = 80;
 const MAX_BODY = 4000;
 
+/**
+ * What the wording box says about where the words end up (3.4a). An email
+ * leaves the customer's mailbox and picks up their signature; a WhatsApp
+ * message leaves their business number and picks up their profile name. The
+ * hint was one sentence about a mailbox until there was a second channel, and
+ * that sentence was wrong on the WhatsApp card.
+ */
+function bodyHint(channel: ReplyChannel): string {
+  switch (channel) {
+    case "email":
+      return "Plain text — it is sent from your own mailbox, so your usual signature goes on the end.";
+    case "whatsapp":
+      return "Plain text — it is sent from your WhatsApp number, under your business name, as a reply in the same chat.";
+  }
+}
+
 export function ReplyTemplateList({
   organisationId,
   templates,
@@ -159,7 +175,7 @@ function ReplyTemplateCard({
             defaultValue={template.body}
             maxLength={MAX_BODY}
             required
-            hint="Plain text — it is sent from your own mailbox, so your usual signature goes on the end."
+            hint={bodyHint(template.channel)}
           />
           <div className="flex flex-wrap items-center gap-3">
             <PrimarySubmit disabled={pending}>{pending ? "Saving…" : "Save"}</PrimarySubmit>
