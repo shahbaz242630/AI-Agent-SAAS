@@ -1,17 +1,16 @@
 "use client";
 
 import { useActionState, useState } from "react";
+import { PrimarySubmit } from "@/components/ui";
 import {
   answerForwardingRequest,
   startForwardingSetup,
   type ForwardingActionState,
-} from "./actions";
+} from "./forwarding-actions";
 import { unexpectedRequestSentence } from "@/capabilities/mailbox/forwarding-guide";
 
 const INITIAL_STATE: ForwardingActionState = {};
 
-const BUTTON_CLASS =
-  "rounded-[var(--radius-card)] bg-primary px-4 py-2 text-sm font-medium text-primary-foreground disabled:opacity-60";
 const SMALL_BUTTON_CLASS =
   "rounded-[var(--radius-card)] bg-muted px-3 py-1.5 text-xs font-medium hover:opacity-80 disabled:opacity-60";
 const DANGER_BUTTON_CLASS =
@@ -28,7 +27,13 @@ export interface ForwardingRequestRow {
   requestedAt: string;
 }
 
-/** The button that opens the window in which Eva answers Google for them. */
+/**
+ * The button that opens the window in which Eva answers Google for them.
+ *
+ * On the kit's `PrimarySubmit` since the move to the Mailbox tab (2026-09-05);
+ * it was a hand-rolled primary before, the shape #126 and #127 removed
+ * everywhere the scan could see.
+ */
 export function StartSetupButton({ organisationId }: { organisationId: string }) {
   const [state, action, pending] = useActionState(startForwardingSetup, INITIAL_STATE);
 
@@ -36,9 +41,9 @@ export function StartSetupButton({ organisationId }: { organisationId: string })
     <div className="flex flex-col gap-2">
       <form action={action}>
         <input type="hidden" name="organisationId" value={organisationId} />
-        <button type="submit" disabled={pending} className={BUTTON_CLASS}>
+        <PrimarySubmit disabled={pending}>
           {pending ? "Getting ready…" : "I'm setting this up now"}
-        </button>
+        </PrimarySubmit>
       </form>
       {state.error && <p className="text-sm text-danger">{state.error}</p>}
       {state.success && <p className="text-sm text-muted-foreground">{state.success}</p>}

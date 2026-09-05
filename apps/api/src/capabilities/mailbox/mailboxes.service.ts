@@ -12,10 +12,11 @@ import {
 // eslint-disable-next-line @typescript-eslint/consistent-type-imports
 import { PinoLogger } from "nestjs-pino";
 import { withTenant } from "@eva/database";
-import { moduleHref } from "@eva/types";
+import { EMAIL_ACCOUNT_PROVIDERS, moduleHref } from "@eva/types";
 import type {
   ModuleKey,
   EmailAccountHealthStatus,
+  EmailAccountProvider,
   MailboxAdminConsentDto,
   MailboxConnectDto,
   MailboxDisconnectResultDto,
@@ -51,6 +52,7 @@ import {
   MAIL_PROVIDERS,
   providerFor,
   SendPermissionNotGrantedError,
+  UnknownMailProviderError,
   type MailProvider,
   type MailProviderKey,
   type MailProviderRegistry,
@@ -177,10 +179,26 @@ class SeatLimitReachedError extends Error {
  *  backfill so it can never look like a downgrade. */
 const DEFAULT_SEATS = 1;
 
+/**
+ * ⚠️ THE DTO SAID `"microsoft"` FOR EVERY MAILBOX UNTIL 2026-09-05 — a Gmail
+ * mailbox listed as Microsoft from 3.1b on. Nothing in the web read the
+ * field, so nothing noticed; the first reader, the Mailbox tab choosing
+ * between the Gmail and the Outlook forwarding guide, would have shown every
+ * Gmail customer the Outlook steps. A stored value outside the catalogue is
+ * a defect in a write path, not a customer state, so it throws rather than
+ * picking a default and lying quietly again.
+ */
+function emailAccountProvider(stored: string): EmailAccountProvider {
+  if ((EMAIL_ACCOUNT_PROVIDERS as readonly string[]).includes(stored)) {
+    return stored as EmailAccountProvider;
+  }
+  throw new UnknownMailProviderError(stored);
+}
+
 function toMailboxDto(account: ConnectedAccount, allocatedClientCount = 0): MailboxDto {
   return {
     id: account.id,
-    provider: "microsoft",
+    provider: emailAccountProvider(account.provider),
     emailAddress: account.emailAddress,
     displayName: account.displayName,
     healthStatus: account.healthStatus as EmailAccountHealthStatus,

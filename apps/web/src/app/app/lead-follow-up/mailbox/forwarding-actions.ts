@@ -14,10 +14,13 @@ import { createClient } from "@/lib/supabase/server";
  * is decided by the API, from the armed window on their own address row. This
  * layer moves a form to it and turns what comes back into a sentence — the same
  * rule the enquiry actions follow.
+ *
+ * Moved from the Forwarding page to the Mailbox tab on 2026-09-05, when the
+ * receiving half of email set-up joined the sending half on one screen.
  */
 
 /** Built from the catalogue, never written out — see `app-links.spec.ts`. */
-const FORWARDING = moduleHref("lead_follow_up", "forwarding");
+const MAILBOX = moduleHref("lead_follow_up", "mailbox");
 
 export interface ForwardingActionState {
   error?: string;
@@ -62,8 +65,8 @@ export async function startForwardingSetup(
     };
   }
 
-  revalidatePath(FORWARDING);
-  return { success: "Ready — now follow the steps in Gmail. Eva is watching for Google's email." };
+  revalidatePath(MAILBOX);
+  return { success: "Ready — now follow the steps below. Eva is watching for Google's email." };
 }
 
 /**
@@ -112,7 +115,7 @@ export async function answerForwardingRequest(
     };
   }
 
-  revalidatePath(FORWARDING);
+  revalidatePath(MAILBOX);
 
   if (status === "declined") {
     return {

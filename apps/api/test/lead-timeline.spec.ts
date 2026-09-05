@@ -217,18 +217,20 @@ describe("Lead timeline: everything exchanged with the person", () => {
       .get(`/organisations/${orgId}/leads/${leadId}/timeline`)
       .set("Authorization", `Bearer ${token}`);
 
-  it("lists every message and activity for the person, oldest first, on every channel", async () => {
+  it("lists every message and activity for the person, newest first, on every channel", async () => {
     const { lead, emailThread, waThread } = await personWithHistory(org);
     const response = await get(org.id, lead.id, tokens.get("owner")!).expect(200);
 
-    const items = response.body as Array<Record<string, unknown>>;
+    // Newest first since ruling 81 (2026-09-05); 3.3c read it oldest first.
+    const items = response.body.items as Array<Record<string, unknown>>;
+    expect(response.body.hasEarlier).toBe(false);
     expect(items.map((i) => i.happenedAt)).toEqual([
-      T0.toISOString(),
-      T1.toISOString(),
-      T2.toISOString(),
       T3.toISOString(),
+      T2.toISOString(),
+      T1.toISOString(),
+      T0.toISOString(),
     ]);
-    expect(items[0]).toMatchObject({
+    expect(items[3]).toMatchObject({
       type: "message",
       channel: "email",
       detail: "inbound",
@@ -238,7 +240,7 @@ describe("Lead timeline: everything exchanged with the person", () => {
       conversationId: emailThread.id,
       leadId: null,
     });
-    expect(items[1]).toMatchObject({
+    expect(items[2]).toMatchObject({
       type: "message",
       channel: "email",
       detail: "outbound",
@@ -246,7 +248,7 @@ describe("Lead timeline: everything exchanged with the person", () => {
       subject: "Re: Leaking roof",
       summary: "Thanks for getting in touch.",
     });
-    expect(items[2]).toMatchObject({
+    expect(items[1]).toMatchObject({
       type: "activity",
       channel: null,
       detail: "note",
@@ -257,7 +259,7 @@ describe("Lead timeline: everything exchanged with the person", () => {
       leadId: lead.id,
     });
     // A WhatsApp from the same person, on its own thread, is on the same timeline.
-    expect(items[3]).toMatchObject({
+    expect(items[0]).toMatchObject({
       type: "message",
       channel: "whatsapp",
       detail: "inbound",
@@ -272,6 +274,31 @@ describe("Lead timeline: everything exchanged with the person", () => {
    * of control, so 3.3b gave it no person on purpose; the screen must say
    * "nothing yet", not "that enquiry is not here".
    */
+  /**
+   * ⚠️ THE CURSOR IS THE PAIR THE PAGE ENDS ON, not a timestamp — WhatsApp
+   * stamps to the second, and a timestamp-only cursor skips whichever of two
+   * same-second items falls on the boundary. Two pages of two must hand over
+   * every one of the four, in order, and say when there is nothing earlier.
+   */
+  it("pages back through the conversation without losing an item", async () => {
+    const { lead } = await personWithHistory(org);
+    const first = await get(org.id, lead.id, tokens.get("owner")!).query({ limit: 2 }).expect(200);
+    const firstItems = first.body.items as Array<{ id: string; happenedAt: string }>;
+    expect(firstItems.map((i) => i.happenedAt)).toEqual([T3.toISOString(), T2.toISOString()]);
+    expect(first.body.hasEarlier).toBe(true);
+
+    const last = firstItems[1]!;
+    const second = await get(org.id, lead.id, tokens.get("owner")!)
+      .query({ limit: 2, before: last.happenedAt, beforeId: last.id })
+      .expect(200);
+    const secondItems = second.body.items as Array<{ happenedAt: string }>;
+    expect(secondItems.map((i) => i.happenedAt)).toEqual([T1.toISOString(), T0.toISOString()]);
+    expect(second.body.hasEarlier).toBe(false);
+
+    // Half a cursor is a request the api refuses rather than guesses at.
+    await get(org.id, lead.id, tokens.get("owner")!).query({ before: last.happenedAt }).expect(400);
+  });
+
   it("is empty for an enquiry with no person, and that is not an error", async () => {
     const created = await request(app.getHttpServer())
       .post(`/organisations/${org.id}/leads`)
@@ -283,7 +310,7 @@ describe("Lead timeline: everything exchanged with the person", () => {
       })
       .expect(201);
     const response = await get(org.id, created.body.id, tokens.get("owner")!).expect(200);
-    expect(response.body).toEqual([]);
+    expect(response.body).toEqual({ items: [], hasEarlier: false });
   });
 
   /**
@@ -305,7 +332,7 @@ describe("Lead timeline: everything exchanged with the person", () => {
     const mine = await personWithHistory(org);
     await personWithHistory(otherOrg);
     const response = await get(org.id, mine.lead.id, tokens.get("owner")!).expect(200);
-    const items = response.body as Array<{ conversationId: string | null }>;
+    const items = response.body.items as Array<{ conversationId: string | null }>;
     expect(items).toHaveLength(4);
     const threads = new Set(items.map((i) => i.conversationId).filter(Boolean));
     expect(threads).toEqual(new Set([mine.emailThread.id, mine.waThread.id]));

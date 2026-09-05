@@ -108,7 +108,7 @@ export const PRODUCT_NAV: Partial<Record<ModuleKey, readonly NavItem[]>> = {
     {
       href: moduleHref("lead_follow_up", "mailbox"),
       label: "Mailbox",
-      description: "The address Eva replies from",
+      description: "Where enquiries come in, and where Eva replies from",
     },
   ],
 };

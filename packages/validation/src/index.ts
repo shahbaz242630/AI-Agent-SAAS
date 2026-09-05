@@ -1,9 +1,13 @@
 import { z } from "zod";
 import {
+  LEAD_BOOK_PAGE_SIZE,
+  LEAD_BOOK_PAGE_SIZE_MAX,
+  LEAD_TIMELINE_PAGE_SIZE,
   MAX_CLIENTS_PER_ALLOCATION,
   MODULE_KEYS,
   ORGANISATION_ROLES,
   PERMISSION_KEYS,
+  PIPELINE_SYSTEM_STAGE_KEYS,
   REPLY_CHANNELS,
   type HealthResponse,
   type ReadinessResponse,
@@ -1119,3 +1123,44 @@ export const updateLeadReplyTemplateSchema = z
   );
 
 export type UpdateLeadReplyTemplateInput = z.infer<typeof updateLeadReplyTemplateSchema>;
+
+/**
+ * The enquiry book's filters, search and paging (ruling 81, 2026-09-05).
+ * Everything is optional; a page of fifty, newest first, is the default.
+ *
+ * ⚠️ `search` REFUSES AN EMPTY STRING rather than treating it as no search,
+ * so a screen that sends `?search=` by mistake hears about it instead of
+ * silently showing everything under a search that did nothing.
+ */
+export const leadListQuerySchema = z.object({
+  stage: z.enum(PIPELINE_SYSTEM_STAGE_KEYS).optional(),
+  channel: z.enum(REPLY_CHANNELS).optional(),
+  answered: z.enum(["yes", "no"]).optional(),
+  search: z.string().trim().min(1).max(200).optional(),
+  limit: z.coerce.number().int().min(1).max(LEAD_BOOK_PAGE_SIZE_MAX).default(LEAD_BOOK_PAGE_SIZE),
+  offset: z.coerce.number().int().min(0).max(1_000_000).default(0),
+});
+
+export type LeadListQuery = z.infer<typeof leadListQuerySchema>;
+
+/** The same filters for the CSV — every matching row, so no paging. */
+export const leadExportQuerySchema = leadListQuerySchema.omit({ limit: true, offset: true });
+
+export type LeadExportQuery = z.infer<typeof leadExportQuerySchema>;
+
+/**
+ * A page of the conversation, newest first, and where the earlier page
+ * starts. The cursor is the pair the api sorts on, because WhatsApp stamps
+ * messages to the second and two items can share an instant.
+ */
+export const leadTimelineQuerySchema = z
+  .object({
+    limit: z.coerce.number().int().min(1).max(200).default(LEAD_TIMELINE_PAGE_SIZE),
+    before: z.iso.datetime().optional(),
+    beforeId: z.uuid().optional(),
+  })
+  .refine((query) => (query.before === undefined) === (query.beforeId === undefined), {
+    message: "before and beforeId travel together",
+  });
+
+export type LeadTimelineQuery = z.infer<typeof leadTimelineQuerySchema>;

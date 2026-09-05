@@ -25,7 +25,8 @@ const COPY = {
     submit: "Sign in",
     pending: "Signing in…",
     switchPrompt: "New to Eva?",
-    switchLabel: "Create an account",
+    // The word a new visitor looks for (founder, 2026-09-05), not a synonym.
+    switchLabel: "Sign up",
     switchHref: "/sign-up",
   },
   "sign-up": {

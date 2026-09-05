@@ -9,6 +9,14 @@
  * worth getting right lives in this file instead, where a test can reach it.
  */
 
+import {
+  LEAD_BOOK_PAGE_SIZE,
+  PIPELINE_SYSTEM_STAGE_KEYS,
+  REPLY_CHANNEL_LABELS,
+  REPLY_CHANNELS,
+  replyChannelForLeadSource,
+  type ReplyChannel,
+} from "@eva/types";
 import { describeMoment } from "@/lib/today";
 
 /**
@@ -281,4 +289,194 @@ export function answeredLine(
    * for either, and the reason lives on the decision, not here.
    */
   return "Not yet.";
+}
+
+// ---------------------------------------------------------------------
+// The book at volume (ruling 81, 2026-09-05)
+// ---------------------------------------------------------------------
+
+/** One row of the book, as `GET …/leads` returns it — dates as ISO strings. */
+export interface LeadBookRow {
+  id: string;
+  source: string;
+  contactName: string | null;
+  contactEmail: string | null;
+  contactPhone: string | null;
+  enquiry: string | null;
+  status: string;
+  receivedAt: string;
+  firstRespondedAt: string | null;
+  hasEvidence: boolean;
+  stage: { key: string | null; name: string };
+}
+
+export interface LeadBookStage {
+  id: string;
+  key: string | null;
+  name: string;
+  position: number;
+  count: number;
+}
+
+/** A page of the book, and the counts its tabs need. */
+export interface LeadBook {
+  rows: LeadBookRow[];
+  totalCount: number;
+  stages: LeadBookStage[];
+}
+
+/** A page of the conversation, newest first. */
+export interface TimelinePage {
+  items: TimelineItem[];
+  hasEarlier: boolean;
+}
+
+/** The four things the book can be narrowed by. All optional. */
+export interface LeadBookFilters {
+  stage?: string | undefined;
+  channel?: ReplyChannel | undefined;
+  answered?: "yes" | "no" | undefined;
+  search?: string | undefined;
+}
+
+/**
+ * The address, read back into filters and a page.
+ *
+ * ⚠️ JUNK IS DROPPED, NOT PASSED ON. A stage the catalogue does not know, a
+ * channel Eva cannot answer on, a page of "abc": each becomes "no filter"
+ * here rather than a 400 from the api on a screen the customer only
+ * opened. The api still refuses junk of its own — this is the screen being
+ * forgiving about an address somebody typed.
+ */
+export function parseBookFilters(params: Record<string, string | string[] | undefined>): {
+  filters: LeadBookFilters;
+  page: number;
+} {
+  const single = (key: string): string | undefined => {
+    const value = params[key];
+    return typeof value === "string" && value.trim() !== "" ? value.trim() : undefined;
+  };
+  const stage = single("stage");
+  const channel = single("channel");
+  const answered = single("answered");
+  const search = single("search");
+  const page = Math.trunc(Number(single("page") ?? "1"));
+  return {
+    filters: {
+      ...(stage && (PIPELINE_SYSTEM_STAGE_KEYS as readonly string[]).includes(stage)
+        ? { stage }
+        : {}),
+      ...(channel && (REPLY_CHANNELS as readonly string[]).includes(channel)
+        ? { channel: channel as ReplyChannel }
+        : {}),
+      ...(answered === "yes" || answered === "no" ? { answered } : {}),
+      ...(search ? { search: search.slice(0, 200) } : {}),
+    },
+    page: Number.isFinite(page) && page >= 1 ? page : 1,
+  };
+}
+
+function filterParams(filters: LeadBookFilters): URLSearchParams {
+  const params = new URLSearchParams();
+  if (filters.stage) params.set("stage", filters.stage);
+  if (filters.channel) params.set("channel", filters.channel);
+  if (filters.answered) params.set("answered", filters.answered);
+  if (filters.search) params.set("search", filters.search);
+  return params;
+}
+
+/** What the api is asked for: the filters plus a page as limit and offset. */
+export function bookQueryString(
+  filters: LeadBookFilters,
+  page: number,
+  pageSize = LEAD_BOOK_PAGE_SIZE,
+): string {
+  const params = filterParams(filters);
+  params.set("limit", String(pageSize));
+  params.set("offset", String(Math.max(0, page - 1) * pageSize));
+  return params.toString();
+}
+
+/** What the CSV is asked for: the filters alone, every matching row. */
+export function bookExportQueryString(filters: LeadBookFilters): string {
+  return filterParams(filters).toString();
+}
+
+/**
+ * The address of a view of the book — what a tab links to and what the
+ * pager pushes into history. Page one carries no page parameter, so the
+ * plain book address and "page one of the plain book" are the same link.
+ */
+export function bookHref(base: string, filters: LeadBookFilters, page: number): string {
+  const params = filterParams(filters);
+  if (page > 1) params.set("page", String(page));
+  const query = params.toString();
+  return query ? `${base}?${query}` : base;
+}
+
+/**
+ * The line above the table, saying exactly what is on the screen.
+ *
+ * "Showing 51–100 of 212 unanswered new enquiries by WhatsApp matching
+ * “boiler”, newest first." Every filter that is on is named, so the count
+ * can never be read as the whole book when it is not.
+ */
+export function bookFilterLine(input: {
+  totalCount: number;
+  showing: number;
+  page: number;
+  pageSize: number;
+  filters: LeadBookFilters;
+  /** The selected stage's name, when a stage filter is on. */
+  stageName: string | null;
+}): string {
+  const { totalCount, showing, page, pageSize, filters, stageName } = input;
+  const any = Boolean(filters.stage || filters.channel || filters.answered || filters.search);
+  if (totalCount === 0) return any ? "No enquiries match." : "No enquiries yet.";
+
+  const words: string[] = [];
+  if (filters.answered === "no") words.push("unanswered");
+  if (filters.answered === "yes") words.push("answered");
+  if (stageName) words.push(stageName.toLowerCase());
+  const noun = totalCount === 1 ? "enquiry" : "enquiries";
+  const tail = [
+    filters.channel ? `by ${REPLY_CHANNEL_LABELS[filters.channel]}` : null,
+    filters.search ? `matching “${filters.search}”` : null,
+  ]
+    .filter((part): part is string => part !== null)
+    .join(" ");
+
+  const from = (page - 1) * pageSize + 1;
+  const to = from + showing - 1;
+  const range = totalCount > pageSize ? `${from}–${to} of ${totalCount}` : `${totalCount}`;
+  const what = [...words, noun].join(" ");
+  return `Showing ${range} ${what}${tail ? ` ${tail}` : ""}, newest first.`;
+}
+
+/** The channel an enquiry came in on, as a column reads it. */
+export function leadChannelLabel(source: string): string {
+  const channel = replyChannelForLeadSource(source);
+  return channel ? REPLY_CHANNEL_LABELS[channel] : leadSourceLabel(source);
+}
+
+/**
+ * How quickly Eva answered, said as a person would — "3 seconds later" is
+ * the product's whole promise in one cell. Past a day it is the moment
+ * itself, because "9 days later" hides which day.
+ */
+export function answeredLabel(
+  receivedAt: string,
+  firstRespondedAt: string | null,
+  timezone: string,
+): string {
+  if (!firstRespondedAt) return "Not yet";
+  const ms = Date.parse(firstRespondedAt) - Date.parse(receivedAt);
+  if (!Number.isFinite(ms) || ms < 0) return describeMoment(firstRespondedAt, timezone);
+  const seconds = Math.round(ms / 1000);
+  if (seconds < 60) return `${seconds} ${seconds === 1 ? "second" : "seconds"} later`;
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `${minutes} ${minutes === 1 ? "minute" : "minutes"} later`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours} ${hours === 1 ? "hour" : "hours"} later`;
+  return describeMoment(firstRespondedAt, timezone);
 }

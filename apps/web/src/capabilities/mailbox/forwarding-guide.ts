@@ -56,6 +56,14 @@ export const GMAIL_FORWARDING_STEPS: ForwardingStep[] = [
   },
 ];
 
+/**
+ * Gmail's forwarding settings, opened directly (the Mailbox tab, 2026-09-05).
+ * The `#settings/fwdandpop` anchor is the tab the steps describe; if Google
+ * ever drops it, Gmail opens on its general settings and step 1 still says
+ * where to go.
+ */
+export const GMAIL_FORWARDING_SETTINGS_URL = "https://mail.google.com/mail/u/0/#settings/fwdandpop";
+
 /** How long the customer has, said the way a person would say it. */
 export function armedWindowSentence(minutes: number): string {
   return `For the next ${minutes} minutes, Eva will confirm Google's request for you automatically. After that she will ask you first.`;

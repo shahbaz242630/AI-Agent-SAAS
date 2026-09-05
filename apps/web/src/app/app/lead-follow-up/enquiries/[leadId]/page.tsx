@@ -7,19 +7,21 @@ import { createClient } from "@/lib/supabase/server";
 import { BackChip, StatusPill } from "@/components/ui";
 import {
   alsoAffectsLine,
+  answeredLabel,
   answeredLine,
   contactLine,
   evidenceSummary,
+  leadChannelLabel,
   leadName,
   leadSourceLabel,
   leadStatusLabel,
   leadStatusTone,
-  timelineEmptyLine,
-  timelineEntry,
   type AlsoAffected,
-  type TimelineItem,
+  type TimelinePage,
 } from "@/products/lead-follow-up/lead-book";
 import { describeMoment } from "@/lib/today";
+import { loadEarlierConversation } from "../actions";
+import { Conversation } from "./conversation";
 import { StopContactingControl } from "./stop-contacting-control";
 
 /**
@@ -58,6 +60,7 @@ interface LeadDetail {
   status: string;
   receivedAt: string;
   firstRespondedAt: string | null;
+  stage: { key: string | null; name: string };
   /** Clients who share this person's details and would be silenced too. */
   alsoAffects: AlsoAffected[];
   evidence: {
@@ -157,12 +160,12 @@ export default async function EnquiryDetailPage({
    * renders — a compliance record hidden behind a timeline outage would be
    * the wrong trade.
    */
-  let timeline: TimelineItem[] = [];
+  let timeline: TimelinePage = { items: [], hasEarlier: false };
   let timelineUnavailable = false;
   try {
     timeline = (await (
       await apiFetch(`/organisations/${organisation.id}/leads/${leadId}/timeline`, accessToken)
-    ).json()) as TimelineItem[];
+    ).json()) as TimelinePage;
   } catch (error) {
     if (error instanceof ApiError && error.status === 401) redirect("/sign-in");
     else if (error instanceof ApiError) timelineUnavailable = true;
@@ -179,6 +182,30 @@ export default async function EnquiryDetailPage({
         <p className="text-sm text-muted-foreground">
           {`${leadSourceLabel(lead.source)} · ${describeMoment(lead.receivedAt, timezone)}`}
         </p>
+      </section>
+
+      {/**
+       * THE SUMMARY STRIP (ruling 81, 2026-09-05): the four things somebody
+       * opens an enquiry to know, before the record and the conversation.
+       * Nothing here is computed — the stage, the channel and the answer
+       * come off the record, and the last message is the top of the
+       * conversation below.
+       */}
+      <section className="grid w-full gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <Summary label="Stage" value={lead.stage.name} />
+        <Summary label="Came in by" value={leadChannelLabel(lead.source)} />
+        <Summary
+          label="Answered"
+          value={answeredLabel(lead.receivedAt, lead.firstRespondedAt, timezone)}
+        />
+        <Summary
+          label="Last message"
+          value={
+            timeline.items[0]
+              ? describeMoment(timeline.items[0].happenedAt, timezone)
+              : "Nothing yet"
+          }
+        />
       </section>
 
       <section className="flex w-full flex-col gap-3 rounded-[var(--radius-card)] border border-border bg-surface px-6 py-5">
@@ -248,49 +275,22 @@ export default async function EnquiryDetailPage({
       </section>
 
       {/**
-       * THE CONVERSATION (slice 3.3c). Per PERSON, not per enquiry — the
-       * 360's whole point (ruling 67): a repeat customer's earlier enquiries
-       * and Eva's earlier replies sit in the same stream as today's message.
-       * Oldest first, because a conversation is read top-down; the person's
-       * own messages are set apart on the page's background so a glance
-       * tells who said what.
+       * THE CONVERSATION (slice 3.3c; paged and newest first since ruling
+       * 81). Per PERSON, not per enquiry — the 360's whole point (ruling 67):
+       * a repeat customer's earlier enquiries and Eva's earlier replies sit
+       * in the same stream as today's message. `conversation.tsx` holds the
+       * rendering and the "Show earlier" loading; the loader is handed in
+       * as a server action.
        */}
-      <section className="flex w-full flex-col gap-3 rounded-[var(--radius-card)] border border-border bg-surface px-6 py-5">
-        <h2 className="text-sm font-semibold">Everything exchanged with {who}</h2>
-        <p className="text-xs text-muted-foreground">
-          Every message to or from this person on any channel, oldest first — including earlier
-          enquiries from the same person, and Eva&apos;s replies.
-        </p>
-        {timelineUnavailable ? (
-          <p className="text-sm text-muted-foreground">
-            The conversation could not be loaded just now. The enquiry above is unaffected.
-          </p>
-        ) : timeline.length === 0 ? (
-          <p className="text-sm text-muted-foreground">{timelineEmptyLine(who)}</p>
-        ) : (
-          <ol className="flex flex-col gap-3">
-            {timeline.map((item) => {
-              const entry = timelineEntry(item, who, timezone);
-              return (
-                <li
-                  key={item.id}
-                  className={`flex flex-col gap-1 rounded-[var(--radius-card)] px-4 py-3 ${
-                    entry.fromThem ? "bg-background" : "border border-border"
-                  }`}
-                >
-                  <div className="flex flex-wrap items-baseline gap-2">
-                    <span className="text-sm font-semibold">{entry.who}</span>
-                    <span className="text-[11.5px] tracking-[0.04em] text-faint">{entry.meta}</span>
-                  </div>
-                  {entry.subject && <span className="text-sm font-medium">{entry.subject}</span>}
-                  {/* Their words, as written — the same rule as the enquiry above. */}
-                  <p className="text-sm whitespace-pre-wrap">{entry.body}</p>
-                </li>
-              );
-            })}
-          </ol>
-        )}
-      </section>
+      <Conversation
+        organisationId={organisation.id}
+        leadId={leadId}
+        who={who}
+        timezone={timezone}
+        initial={timeline}
+        unavailable={timelineUnavailable}
+        loadEarlier={loadEarlierConversation}
+      />
 
       {/**
        * ⚠️ THIS IS A COMPLIANCE ACTION AND HAS NO UNDO, so it sits apart from
@@ -368,6 +368,16 @@ function Field({ label, value }: { label: string; value: string }) {
     <div className="flex flex-col gap-0.5">
       <span className="text-[11.5px] font-semibold tracking-[0.04em] text-faint">{label}</span>
       <span className="text-sm">{value}</span>
+    </div>
+  );
+}
+
+/** One tile of the summary strip: a label, and the one thing under it. */
+function Summary({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex flex-col gap-1 rounded-[var(--radius-card)] border border-border bg-surface px-4 py-3">
+      <span className="text-[11.5px] font-semibold tracking-[0.04em] text-faint">{label}</span>
+      <span className="text-sm font-medium">{value}</span>
     </div>
   );
 }

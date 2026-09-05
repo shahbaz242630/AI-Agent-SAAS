@@ -383,12 +383,28 @@ describe("Module entitlements (Slice 1.6a)", () => {
      * buying the lead agent required buying voice credit control first, which
      * is exactly what made "Lead Assistant" unsellable.
      *
-     * The refusal must still happen, because the lead agent is not built yet.
-     * What changed is the REASON, and the reason is the whole point: "we have
-     * not finished it" is a wait, "buy two other products first" is a wall.
+     * Until 2026-09-05 the request was refused for being unbuilt, and the test
+     * checked the REASON: "we have not finished it" is a wait, "buy two other
+     * products first" is a wall. Lead Follow-up is built now, so the same
+     * ruling is proved the stronger way — the switch simply works, with no
+     * prerequisite named anywhere.
      */
-    it("refuses lead follow-up for being unbuilt, NOT for a prerequisite", async () => {
-      const response = await put(entitled, "lead_follow_up").send({ enabled: true }).expect(400);
+    it("sells lead follow-up with no prerequisite, now that it is built", async () => {
+      const response = await put(entitled, "lead_follow_up").send({ enabled: true }).expect(200);
+      const leadFollowUp = response.body.find(
+        (row: { moduleKey: string }) => row.moduleKey === "lead_follow_up",
+      );
+      expect(leadFollowUp.enabled).toBe(true);
+      expect(leadFollowUp.missingDependencies).toEqual([]);
+
+      // Restore the baseline the rest of this file expects of `entitled`.
+      await put(entitled, "lead_follow_up").send({ enabled: false }).expect(200);
+    });
+
+    /** The refusal for an unbuilt product still exists — on a product that is
+     *  still unbuilt, and still with no other product named in the reason. */
+    it("refuses an unbuilt product for being unbuilt, NOT for a prerequisite", async () => {
+      const response = await put(entitled, "ai_receptionist").send({ enabled: true }).expect(400);
       expect(response.body.message).toContain("isn't built yet");
       expect(response.body.message).not.toContain("voice_credit_controller");
       expect(response.body.message).not.toContain("Voice Credit Control");
@@ -517,9 +533,9 @@ describe("Module entitlements (Slice 1.6a)", () => {
      * `mailbox:read` belonged to `email_credit_controller` alone until
      * 2026-08-19, so an organisation holding ONLY the lead agent could not
      * reach its own mailbox — the single thing that product needs. The row is
-     * seeded directly because the lead agent is not built yet and the API
-     * rightly refuses to enable it; the permission rule under test is
-     * independent of that.
+     * seeded directly (the only way in while the product was unbuilt, before
+     * 2026-09-05) so the permission rule under test stays independent of the
+     * enable path.
      */
     it("lets an organisation holding ONLY lead follow-up by email reach the mailbox", async () => {
       const leadOnly = await createOrgWithMembers(
