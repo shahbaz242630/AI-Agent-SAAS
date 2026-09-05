@@ -88,6 +88,19 @@ describe("the enquiry book", () => {
     );
   });
 
+  it("clamps the enquiry to two lines, and nothing on the same element undoes it", () => {
+    const html = render();
+    const attrs = html.match(/class="[^"]*line-clamp-2[^"]*"/g) ?? [];
+    expect(attrs).toHaveLength(3);
+    for (const attr of attrs) {
+      // line-clamp-2 is display:-webkit-box. A block, flex or inline-* beside
+      // it wins the cascade and the clamp never engages — which is how
+      // production showed a 27-line enquiry on 2026-09-05. A node test cannot
+      // measure lines, so it guards the one way the class is known to break.
+      expect(attr).not.toMatch(/(block|inline|inline-block|flex|grid|contents|hidden)/);
+    }
+  });
+
   it("draws the eight columns and a row per enquiry, each linking into the enquiry", () => {
     const html = render();
     for (const heading of [
