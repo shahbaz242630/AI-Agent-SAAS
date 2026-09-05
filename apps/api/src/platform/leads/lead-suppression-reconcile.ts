@@ -1,8 +1,8 @@
 import type { TenantTx } from "../permissions/permissions.js";
 import { writeAuditLog } from "../audit/audit-log.js";
 import {
-  isSuppressed,
   normaliseSuppressionValue,
+  personSuppressed,
   type SuppressionChannel,
 } from "../suppression/suppression.js";
 
@@ -61,13 +61,10 @@ export async function revertLeadsAfterCorrection(
   for (const lead of candidates) {
     // Every channel we hold for them has to be clear, not just the one that
     // was corrected.
-    const stillSuppressed =
-      (lead.contactEmail
-        ? await isSuppressed(tx, input.organisationId, "email", lead.contactEmail)
-        : false) ||
-      (lead.contactPhone
-        ? await isSuppressed(tx, input.organisationId, "call", lead.contactPhone)
-        : false);
+    const stillSuppressed = await personSuppressed(tx, input.organisationId, {
+      email: lead.contactEmail,
+      phone: lead.contactPhone,
+    });
     if (stillSuppressed) continue;
 
     await tx.lead.update({ where: { id: lead.id }, data: { status: "new" } });

@@ -27,6 +27,7 @@ import type { SendingNumberResolution } from "../../../capabilities/messaging/wh
 import { phoneFromWaId } from "../../../platform/people/handles.js";
 import type { TenantTx } from "../../../platform/permissions/permissions.js";
 import { recordOutboundMessage } from "../../../platform/people/spine.js";
+import { personSuppressed } from "../../../platform/suppression/suppression.js";
 import {
   REPLY_DECISION_PROVIDER,
   type ReplyDecision,
@@ -229,6 +230,46 @@ export class LeadReplyService {
             verdict: "hold",
             reason: "this enquiry arrived by a route Eva cannot reply on yet",
             signal: "unmapped_lead_source",
+            status: "not_sent",
+          },
+        });
+        return { kind: "done", outcome: { status: "not_sent", verdict: "hold" } };
+      }
+
+      /**
+       * 🚨 SOMEBODY WHO ASKED NOT TO BE CONTACTED GETS SILENCE, EVEN WHEN THEY
+       * WRITE IN (ruling 90, 2026-09-05). The settings screen promises "people
+       * Eva will never write to or ring", and Invoice Chasing asks the list
+       * before every chaser; until today this path never asked, so a person
+       * suppressed through the other product — or whose old enquiry had
+       * closed — who sent a new enquiry was answered in the customer's name,
+       * over their own request. The enquiry is still filed, with its evidence,
+       * for a human to read; only the automatic answer is withheld, and the
+       * record says why.
+       *
+       * ⚠️ ASKED ABOUT THE PERSON, NOT THE CHANNEL. A number on the list covers
+       * a WhatsApp from that number (ruling 79: an opt-out is from everything),
+       * and one suppressed handle is enough — see `personSuppressed`.
+       *
+       * ⚠️ AND ASKED BEFORE THE DECISION PROVIDER. The provider reads headers
+       * and message kinds; this reads a request the person made. A request
+       * beats a classification, and the reason on the record should be the
+       * true one.
+       */
+      if (
+        await personSuppressed(tx, organisationId, {
+          email: lead.contactEmail,
+          phone: lead.contactPhone,
+        })
+      ) {
+        await tx.leadReplyDecision.create({
+          data: {
+            organisationId,
+            leadId,
+            channel,
+            verdict: "hold",
+            reason: "this person asked not to be contacted, so nothing was sent",
+            signal: "do_not_contact",
             status: "not_sent",
           },
         });

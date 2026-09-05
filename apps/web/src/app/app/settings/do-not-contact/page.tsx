@@ -94,8 +94,8 @@ export default async function DoNotContactPage() {
       */}
       <Card className="flex flex-col gap-2 px-6 py-5">
         <p className="text-sm">
-          When somebody asks not to be contacted, that holds forever and across everything — email
-          and phone, enquiries and invoices alike.
+          When somebody asks not to be contacted, that holds forever and across everything — email,
+          phone and WhatsApp, enquiries and invoices alike.
         </p>
         <p className="text-sm text-muted-foreground">
           The only thing you can change here is an entry that should never have been made. Nothing
@@ -152,8 +152,8 @@ function Frame({ name, children }: { name?: string; children: React.ReactNode })
       title="Do not contact"
       subtitle={
         name
-          ? `People Eva will never write to or ring for ${name}, whichever product they came from.`
-          : "People Eva will never write to or ring, whichever product they came from."
+          ? `People Eva will never write to, message or ring for ${name}, whichever product they came from.`
+          : "People Eva will never write to, message or ring, whichever product they came from."
       }
       current="do-not-contact"
     >

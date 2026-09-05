@@ -1,7 +1,7 @@
 import type { INestApplication } from "@nestjs/common";
 import request from "supertest";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import type { EvaPrismaClient } from "@eva/database";
+import { withTenant, type EvaPrismaClient } from "@eva/database";
 import { signForTest } from "../src/capabilities/mailbox/inbound/resend-webhook-signature.js";
 import type { ReceivedMail } from "../src/capabilities/mailbox/inbound/received-mail.js";
 import type {
@@ -12,6 +12,11 @@ import {
   MailboxUnusableError,
   MailDeliveryDeferredError,
 } from "../src/capabilities/mailbox/outbound-mail.js";
+import {
+  addSuppression,
+  correctSuppression,
+  type SuppressionChannel,
+} from "../src/platform/suppression/suppression.js";
 import {
   createOrgWithMembers,
   createOwnerClient,
@@ -328,6 +333,62 @@ describe("Eva answers an enquiry", () => {
       const lead = await leadFrom(sender);
       expect(lead).toBeTruthy();
       expect(lead!.firstRespondedAt).toBeNull();
+    });
+
+    /**
+     * 🚨 RULING 90 (2026-09-05). Somebody on the do-not-contact list who writes
+     * in gets silence: the enquiry is filed for a human, the automatic answer
+     * is withheld, and the record says why. Before this the reply path never
+     * asked the list, so the settings screen's "people Eva will never write
+     * to" was untrue for this product.
+     *
+     * The entry is written the way a product writes one — `addSuppression`
+     * inside the tenant — because that is the realistic case: a person who
+     * asked Invoice Chasing to leave them alone, then sent an enquiry.
+     */
+    const suppress = (channel: SuppressionChannel, value: string) =>
+      withTenant(owner, { organisationId: org.id, userId: org.members[0]!.id }, (tx) =>
+        addSuppression(tx, { organisationId: org.id, channel, value, reason: "lead_requested" }),
+      );
+    const correct = (channel: SuppressionChannel, value: string) =>
+      withTenant(owner, { organisationId: org.id, userId: org.members[0]!.id }, (tx) =>
+        correctSuppression(tx, {
+          organisationId: org.id,
+          channel,
+          value,
+          reason: "added against the wrong person during a test",
+        }),
+      );
+
+    it("stays silent to somebody who asked not to be contacted, and says why", async () => {
+      await suppress("email", sender);
+      await post(enquiry()).expect(200);
+
+      expect(sent, "Eva wrote to somebody who asked her not to").toHaveLength(0);
+      const lead = await leadFrom(sender);
+      expect(lead, "the enquiry was not filed").toBeTruthy();
+      expect(lead!.firstRespondedAt).toBeNull();
+      const decision = await decisionFor(lead!.id);
+      expect(decision).toMatchObject({
+        verdict: "hold",
+        signal: "do_not_contact",
+        channel: "email",
+        status: "not_sent",
+      });
+      expect(decision!.reason).toContain("asked not to be contacted");
+    });
+
+    /**
+     * ⚠️ THE GATE READS THE NEWEST STATE, NOT "A ROW EXISTS". A corrected entry
+     * is not a request, and a gate that counted rows would silence everyone
+     * whose entry was ever made by mistake — the 0028 bug, on a new path.
+     */
+    it("answers somebody whose entry was corrected", async () => {
+      await suppress("email", sender);
+      await correct("email", sender);
+      await post(enquiry()).expect(200);
+
+      expect(sent, "a corrected entry still silenced Eva").toHaveLength(1);
     });
   });
 
