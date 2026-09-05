@@ -84,3 +84,6 @@ apps/studio/
 # accessibility dumps of whatever page was open — which, on a walk, is the app
 # while signed in. `git add -A` would have swept them in.
 .playwright-mcp/
+
+# Claude Code local permission file — holds approved command lines, which can embed secrets
+.claude/settings.local.json

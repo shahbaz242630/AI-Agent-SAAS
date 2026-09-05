@@ -6,16 +6,19 @@ import {
   REPLY_CHANNEL_LABELS,
   REPLY_CHANNELS,
   type LeadReplyTemplatesDto,
+  type ReplyChannel,
 } from "@eva/types";
 import { ApiError, apiFetch } from "@/lib/api";
 import { fetchOrganisations } from "@/lib/organisations";
 import { createClient } from "@/lib/supabase/server";
 import { can } from "@/lib/permissions";
-import { Card, EmptyState, Notice, PageHeader, PageShell, PrimaryLink } from "@/components/ui";
-import { ReplyTemplateList } from "./reply-controls";
+import { Card, Notice, PageHeader, PageShell, PrimaryLink } from "@/components/ui";
+import { sendsFromLine } from "@/products/lead-follow-up/replies-screen";
+import { ChannelWordings } from "./reply-controls";
 
 /**
- * The words Eva replies to an enquiry with (slice 3.1c-1).
+ * The words Eva replies to an enquiry with (slice 3.1c-1; reshaped under
+ * ruling 89, 2026-09-05).
  *
  * ⚠️ THIS IS THE FIRST SCREEN THE LEAD PRODUCT OWNS. Everything before it —
  * the enquiry book, the forwarding guide, the mailbox — reads platform records
@@ -23,12 +26,18 @@ import { ReplyTemplateList } from "./reply-controls";
  * what finally makes `products/lead-follow-up/` a folder rather than a
  * gesture.
  *
- * ⚠️ THE AUTOMATIC REPLY NOW SENDS (3.1c-3); SENDING ONE BY HAND DOES NOT
- * (3.1c-4). This comment said "it cannot send anything yet" for one slice too
- * long — see the note on the `Notice` below, which is where that cost something.
- * Letting the page imply more than is built would be the same defect as Voice
- * Credit Control's blurb: copy describing a product we have not built, on the
- * screen that shows it off.
+ * ⚠️ TWO PANELS, EMAIL THEN WHATSAPP, EACH SAYING WHERE ITS REPLIES LEAVE
+ * FROM (ruling 89). The founder wanted email on top and WhatsApp under it,
+ * visible together — so no tabs — and a channel with nothing connected has to
+ * say so on the screen that edits its wordings, because the wordings seed for
+ * every channel on first sight whether or not the channel can send.
+ *
+ * ⚠️ NOTHING HERE PROMISES A SEND BY HAND. That screen (3.1c-4) was never
+ * built, and four sentences promised it for four days on production. Ruling
+ * 89 dropped it: a person replies from their own mailbox or WhatsApp, and the
+ * wordings that are not automatic are kept for when Eva can choose between
+ * them (3.5). `reply-templates.spec.ts` refuses the words "by hand" in this
+ * screen's three files.
  *
  * ⚠️ ON THE KIT, NOT HAND-ROLLED. `PageShell`, `PageHeader` and `Card` exist
  * and fourteen screens still retype them; a NEW screen adding a fifteenth copy
@@ -36,7 +45,6 @@ import { ReplyTemplateList } from "./reply-controls";
  */
 
 const BOOK = moduleHref("lead_follow_up", "enquiries");
-const MAILBOX = moduleHref("lead_follow_up", "mailbox");
 
 interface OrganisationSummary {
   id: string;
@@ -115,10 +123,11 @@ export default async function ReplyTemplatesPage() {
 
   /**
    * ⚠️ OWNER ONLY (founder ruling 2026-09-01), NOT `leads:write`. Sales and
-   * reception can READ these — they need to, to send one by hand from an
-   * enquiry — but the wording Eva sends unread to every stranger is the
-   * owner's. Hiding the controls is not enforcement; the API refuses either
-   * way. This is so nobody is offered a button that can only fail.
+   * reception can READ these — the wording Eva sends in the business's name
+   * is worth knowing when you answer the phone about it — but the wording Eva
+   * sends unread to every stranger is the owner's. Hiding the controls is not
+   * enforcement; the API refuses either way. This is so nobody is offered a
+   * button that can only fail.
    */
   const canEdit = can(organisation, "lead_templates:manage");
 
@@ -130,81 +139,113 @@ export default async function ReplyTemplatesPage() {
       />
 
       {/**
-       * ⚠️ THE HONEST STATE, AT THE TOP, IN BOTH DIRECTIONS — AND IT WENT STALE
-       * ONCE ALREADY. This said "sending these replies is the next thing being
-       * built" from 3.1c-1. Slice 3.1c-3 built it and deployed it, and this
-       * sentence stayed, so the screen spent its first hours live telling
-       * customers Eva could not do the thing she had just started doing.
-       *
-       * 🚨 THE GUARD THAT WAS SUPPOSED TO CATCH THAT POINTED THE WRONG WAY.
-       * `reply-templates.spec.ts` asserted the words "being built" were
-       * PRESENT, so it fired when somebody deleted the sentence — never when
-       * the sentence became false. A tripwire on removal is not a tripwire on
-       * staleness. It now names what is true and what is not, so each half
-       * fails when its own half changes.
-       *
-       * The by-hand half (3.1c-4) genuinely is unbuilt, which is why the second
-       * sentence stays.
+       * ⚠️ THE HONEST STATE, AT THE TOP — AND IT WENT STALE TWICE ALREADY.
+       * From 3.1c-1 this said "sending these replies is the next thing being
+       * built"; 3.1c-3 built it and the sentence stayed. Then it said "the
+       * screen for sending one by hand is the next thing being built"; that
+       * screen was dropped (ruling 89) and the sentence stayed four days on
+       * production. `reply-templates.spec.ts` now asserts the CLAIM — Eva
+       * sends the automatic wording; nothing promises a send by hand — so it
+       * fails when reality moves, not when the prose does.
        */}
       <Notice tone="muted">
-        Eva sends the automatic reply on her own, as soon as an enquiry arrives. The other wordings
-        are saved for you — the screen for sending one by hand is the next thing being built.
+        Eva sends the wording marked automatic, on her own, the moment an enquiry arrives. The other
+        wordings are kept for when Eva can choose between them.
       </Notice>
 
       {/**
-       * ⚠️ ONE WARNING PER CHANNEL, AND ONLY FOR CHANNELS THE CUSTOMER ACTUALLY
-       * HAS (slice 3.2b). A single warning could only ever describe one channel,
-       * so a customer answering on email but silent on WhatsApp would see either
-       * nothing wrong or a warning that looked already-fixed. Both are worse
-       * than saying which.
-       *
-       * `templates.some(...)` is what keeps it honest: a channel nobody has
-       * connected has no wordings, and warning about silence on a medium the
-       * customer does not use would be noise they cannot act on.
+       * ⚠️ ONE WARNING PER CHANNEL, AND ONLY FOR A CHANNEL THAT CAN SEND. A
+       * single warning could only ever describe one channel, so a customer
+       * answering on email but silent on WhatsApp would see either nothing
+       * wrong or a warning that looked already-fixed. And a channel with
+       * nothing connected cannot send at all, so "nobody hears back" on it is
+       * noise the customer cannot act on here — its panel says what is
+       * actually wrong. Until ruling 89 the proxy for "can send" was "has
+       * wordings", which every channel has from first sight.
        */}
       {REPLY_CHANNELS.filter(
         (channel) =>
-          data.automaticTemplateIds[channel] === null &&
-          data.templates.some((template) => template.channel === channel),
+          data.automaticTemplateIds[channel] === null && data.sendsFrom[channel] !== null,
       ).map((channel) => (
         <Notice key={channel} tone="danger">
           {`No automatic ${REPLY_CHANNEL_LABELS[channel]} reply is switched on, so nobody hears back on their own. Choose “Eva sends this one” on whichever wording should go out.`}
         </Notice>
       ))}
 
-      {data.templates.length === 0 ? (
-        <EmptyState
-          headline="No replies yet"
-          detail="Eva starts you off with three wordings you can rewrite. If this is empty, somebody has deleted them all — add one and mark it as the automatic reply."
-        />
-      ) : (
-        <ReplyTemplateList
+      {/**
+       * ⚠️ A PANEL PER CHANNEL, ALWAYS, IN THE CATALOGUE'S ORDER — not only
+       * the channels that hold a wording. A customer who emptied a channel's
+       * list still needs the place to add one back, and the panel's own line
+       * is where "nothing is connected" gets said.
+       */}
+      {REPLY_CHANNELS.map((channel) => (
+        <ChannelPanel
+          key={channel}
+          channel={channel}
+          data={data}
           organisationId={organisation.id}
-          templates={data.templates}
-          automaticTemplateIds={data.automaticTemplateIds}
           canEdit={canEdit}
         />
-      )}
+      ))}
 
-      {/**
-       * ⚠️ ONE SENTENCE PER CHANNEL, BECAUSE THEY LEAVE FROM DIFFERENT PLACES
-       * (3.4a). Email replies leave the mailbox on the mailbox screen; WhatsApp
-       * replies leave the WhatsApp number connected to the product, which has
-       * no screen of its own yet — the connect screen is a later slice — so
-       * the sentence names the fact and links nowhere.
-       */}
       <p className="w-full text-sm text-muted-foreground">
-        Email replies leave your own mailbox —{" "}
-        <Link href={MAILBOX} className="font-medium text-link hover:underline">
-          the address Eva replies from
-        </Link>
-        . WhatsApp replies leave the WhatsApp number connected to Eva. Or go{" "}
+        Or go{" "}
         <Link href={BOOK} className="font-medium text-link hover:underline">
           back to enquiries
         </Link>
         .
       </p>
     </Shell>
+  );
+}
+
+/**
+ * One channel: its name, where its replies leave from, and its wordings as a
+ * list that opens one editor at a time (ruling 89).
+ *
+ * The line under the heading is the connection state, asked of the api the
+ * same way the sender asks it — so this screen and the send can never
+ * disagree about which mailbox or number is "connected".
+ */
+function ChannelPanel({
+  channel,
+  data,
+  organisationId,
+  canEdit,
+}: {
+  channel: ReplyChannel;
+  data: LeadReplyTemplatesDto;
+  organisationId: string;
+  canEdit: boolean;
+}) {
+  const sendsFrom = data.sendsFrom[channel];
+  const line = sendsFromLine(channel, sendsFrom);
+
+  return (
+    <Card className="flex w-full flex-col gap-4 px-6 py-5">
+      <div className="flex flex-col gap-1">
+        <h2 className="text-sm font-bold">{REPLY_CHANNEL_LABELS[channel]}</h2>
+        <p className="text-[12.5px] text-muted-foreground">
+          {line.text}
+          {line.action && (
+            <>
+              {" "}
+              <Link href={line.action.href} className="font-medium text-link hover:underline">
+                {line.action.label}
+              </Link>
+            </>
+          )}
+        </p>
+      </div>
+      <ChannelWordings
+        organisationId={organisationId}
+        channel={channel}
+        templates={data.templates.filter((template) => template.channel === channel)}
+        automaticTemplateId={data.automaticTemplateIds[channel]}
+        canEdit={canEdit}
+        connected={sendsFrom !== null}
+      />
+    </Card>
   );
 }
 

@@ -1432,6 +1432,15 @@ export interface LeadReplyTemplateDto {
 export interface LeadReplyTemplatesDto {
   templates: LeadReplyTemplateDto[];
   automaticTemplateIds: Record<ReplyChannel, string | null>;
+  /**
+   * Where each channel's replies leave from (ruling 89): the connected
+   * mailbox's address, the connected WhatsApp number's display name, or
+   * `null` when nothing is connected for the product on that channel — the
+   * state the screen has to be honest about, because wordings seed for every
+   * channel on first sight whether or not the channel can send. `{ from: null }`
+   * is connected-but-unnamed, a different thing from not connected.
+   */
+  sendsFrom: Record<ReplyChannel, { from: string | null } | null>;
 }
 
 /**

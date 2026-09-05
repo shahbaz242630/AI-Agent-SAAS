@@ -4,11 +4,11 @@ import { useActionState, useState } from "react";
 import {
   MAX_LEAD_REPLY_TEMPLATES,
   REPLY_CHANNEL_LABELS,
-  REPLY_CHANNELS,
   type LeadReplyTemplateDto,
   type ReplyChannel,
 } from "@eva/types";
 import { GhostButton, PrimarySubmit, StatusPill, TextArea, TextField } from "@/components/ui";
+import { firstLine } from "@/products/lead-follow-up/replies-screen";
 import {
   addReplyTemplate,
   deleteReplyTemplate,
@@ -21,10 +21,13 @@ import {
 /**
  * Editing the words Eva replies with (slice 3.1c-1).
  *
- * ⚠️ THE WHOLE FEATURE IS "THESE ARE YOURS TO REWRITE", so the editor is open
- * on the page rather than behind a modal or a second screen. Three wordings
- * arrive written; a customer who changes nothing still sends something
- * sensible, and a customer who wants their own voice types over ours in place.
+ * ⚠️ THE WHOLE FEATURE IS "THESE ARE YOURS TO REWRITE", so the editor opens
+ * in place, on the page, rather than behind a modal or a second screen — one
+ * at a time since ruling 89, because six open editors (twenty at the cap)
+ * buried the one fact the screen exists for: which wording Eva sends. Three
+ * wordings arrive written; a customer who changes nothing still sends
+ * something sensible, and a customer who wants their own voice types over
+ * ours in place.
  *
  * ⚠️ ONE FORM PER TEMPLATE, NOT ONE "SAVE ALL" — the `step-controls.tsx`
  * precedent. Each save is its own PATCH, so a single button would fire four of
@@ -56,69 +59,91 @@ function bodyHint(channel: ReplyChannel): string {
   }
 }
 
-export function ReplyTemplateList({
+/**
+ * One channel's wordings, as a list that opens one editor at a time (ruling
+ * 89). A row per wording — its name, its first line, the pill on the one Eva
+ * sends — puts the whole channel in one view, and a click opens the editor
+ * in place under the row.
+ *
+ * ⚠️ THE ROW IS A BUTTON, NOT A FORM. Each editor owns a `<form>`, and the
+ * confirm controls own theirs; the row that opens them must not be one, or
+ * the nesting guard in `reply-templates.spec.ts` is the only thing that would
+ * notice.
+ *
+ * ⚠️ `connected` ONLY GREYS THE LIST. The panel's own line says why, and the
+ * wordings stay editable: an owner may well write them before the mailbox or
+ * the number is connected.
+ */
+export function ChannelWordings({
   organisationId,
+  channel,
   templates,
-  automaticTemplateIds,
+  automaticTemplateId,
   canEdit,
+  connected,
 }: {
   organisationId: string;
+  channel: ReplyChannel;
   templates: LeadReplyTemplateDto[];
-  automaticTemplateIds: Record<ReplyChannel, string | null>;
+  automaticTemplateId: string | null;
   canEdit: boolean;
+  connected: boolean;
 }) {
-  /**
-   * ⚠️ GROUPED BY CHANNEL BECAUSE THE ADD BUTTON HAS TO KNOW ITS OWN CHANNEL
-   * (slice 3.2b), not for decoration. A single flat list would leave "Add
-   * another reply" unable to say what it is adding — and the cap is per channel
-   * too, so a flat count would refuse a customer's first WhatsApp wording
-   * because they had ten for email.
-   */
-  const groups = REPLY_CHANNELS.map((channel) => ({
-    channel,
-    rows: templates.filter((template) => template.channel === channel),
-  })).filter((group) => group.rows.length > 0);
-
-  /**
-   * ⚠️ NO HEADINGS WHILE THERE IS ONLY ONE CHANNEL. Labelling a single group
-   * "Email" is noise a customer has to read past to reach the thing they came
-   * for. The moment a second channel exists the headings appear on their own.
-   */
-  const showChannelHeadings = groups.length > 1;
+  const [openId, setOpenId] = useState<string | null>(null);
+  const automaticName = templates.find((template) => template.id === automaticTemplateId)?.name;
 
   return (
-    <div className="flex flex-col gap-8">
-      {groups.map(({ channel, rows }) => {
-        const automaticName = rows.find(
-          (template) => template.id === automaticTemplateIds[channel],
-        )?.name;
-
-        return (
-          <section key={channel} className="flex flex-col gap-4">
-            {showChannelHeadings && (
-              <h2 className="text-[13.5px] font-semibold">{REPLY_CHANNEL_LABELS[channel]}</h2>
-            )}
-            {rows.map((template) => (
-              <ReplyTemplateCard
-                key={template.id}
-                organisationId={organisationId}
-                template={template}
-                previousAutomaticName={
-                  /* Only meaningful when promoting a DIFFERENT one — the message
-                     that names what stepped down would otherwise name this
-                     template. Scoped to the channel, because promoting a
-                     WhatsApp wording steps down a WhatsApp one. */
-                  template.isAutomatic ? undefined : automaticName
-                }
-                canEdit={canEdit}
-              />
-            ))}
-            {canEdit && rows.length < MAX_LEAD_REPLY_TEMPLATES && (
-              <AddReplyTemplate organisationId={organisationId} channel={channel} />
-            )}
-          </section>
-        );
-      })}
+    <div className="flex flex-col gap-4">
+      {templates.length === 0 ? (
+        <p className="text-sm text-muted-foreground">
+          {`No ${REPLY_CHANNEL_LABELS[channel]} wordings yet.`}
+        </p>
+      ) : (
+        <ul
+          className={`flex flex-col divide-y divide-hairline border-t border-hairline ${
+            connected ? "" : "opacity-60"
+          }`}
+        >
+          {templates.map((template) => {
+            const open = template.id === openId;
+            return (
+              <li key={template.id} className="flex flex-col">
+                <button
+                  type="button"
+                  aria-expanded={open}
+                  onClick={() => setOpenId(open ? null : template.id)}
+                  className="flex w-full cursor-pointer flex-wrap items-center gap-x-3 gap-y-1 py-3 text-left hover:bg-chip-hover"
+                >
+                  <span className="text-[13.5px] font-semibold">{template.name}</span>
+                  {template.isAutomatic && <StatusPill tone="good">Eva sends this one</StatusPill>}
+                  <span className="basis-full truncate text-[12.5px] text-muted-foreground">
+                    {firstLine(template.body)}
+                  </span>
+                </button>
+                {open && (
+                  <div className="pb-5">
+                    <ReplyTemplateCard
+                      organisationId={organisationId}
+                      template={template}
+                      previousAutomaticName={
+                        /* Only meaningful when promoting a DIFFERENT one — the
+                           message that names what stepped down would otherwise
+                           name this template. Scoped to the channel, because
+                           promoting a WhatsApp wording steps down a WhatsApp one. */
+                        template.isAutomatic ? undefined : automaticName
+                      }
+                      canEdit={canEdit}
+                    />
+                  </div>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+      {canEdit && templates.length < MAX_LEAD_REPLY_TEMPLATES && (
+        <AddReplyTemplate organisationId={organisationId} channel={channel} />
+      )}
     </div>
   );
 }
@@ -140,12 +165,7 @@ function ReplyTemplateCard({
   );
 
   return (
-    <section className="flex flex-col gap-4 rounded-[var(--radius-card)] border border-border bg-surface px-6 py-5">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <h2 className="text-[13.5px] font-semibold">{template.name}</h2>
-        {template.isAutomatic && <StatusPill tone="good">Eva sends this one</StatusPill>}
-      </div>
-
+    <section className="flex flex-col gap-4">
       {/**
        * ⚠️ SAID ON THE AUTOMATIC CARD, EVERY TIME, NOT ONCE AT THE TOP OF THE
        * PAGE. This is the only wording that leaves the building without anybody
@@ -187,8 +207,7 @@ function ReplyTemplateCard({
         <>
           <p className="text-sm whitespace-pre-wrap">{template.body}</p>
           <p className="text-[12.5px] text-muted-foreground">
-            Only an owner can change these wordings. You can still send any of them by hand from an
-            enquiry.
+            Only an owner can change these wordings.
           </p>
         </>
       )}
@@ -314,7 +333,7 @@ function TurnOffAutomatic({
     <div className="flex w-full flex-col gap-2">
       <p className="text-sm font-medium">
         Stop replying to enquiries automatically? They will still arrive in the book, and nobody
-        hears back until somebody sends a reply by hand.
+        hears back until somebody replies themselves.
       </p>
       <ConfirmRow
         organisationId={organisationId}
@@ -436,7 +455,7 @@ function AddReplyTemplate({
   }
 
   return (
-    <section className="flex flex-col gap-4 rounded-[var(--radius-card)] border border-border bg-surface px-6 py-5">
+    <section className="flex flex-col gap-4 border-t border-hairline pt-4">
       <h2 className="text-[13.5px] font-semibold">A new reply</h2>
       <form action={formAction} className="flex flex-col gap-4">
         <input type="hidden" name="organisationId" value={organisationId} />
@@ -460,7 +479,7 @@ function AddReplyTemplate({
           label="What it says"
           maxLength={MAX_BODY}
           required
-          hint="Saved for you to send by hand. Eva keeps replying automatically with whichever wording is marked above."
+          hint="Kept for when Eva can choose between wordings. She keeps sending whichever one is marked automatic."
         />
         <div className="flex flex-wrap items-center gap-3">
           <PrimarySubmit disabled={pending}>{pending ? "Adding…" : "Add this reply"}</PrimarySubmit>
