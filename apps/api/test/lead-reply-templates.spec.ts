@@ -1,5 +1,3 @@
-import { readFileSync } from "node:fs";
-import path from "node:path";
 import type { INestApplication } from "@nestjs/common";
 import request from "supertest";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -120,14 +118,25 @@ describe("Lead reply templates: what Eva writes back", () => {
   };
 
   describe("the three a customer starts with", () => {
-    it("creates them on the very first read, with exactly one automatic", async () => {
+    it("creates them on the very first read, with exactly one automatic per channel", async () => {
       const body = await read();
 
-      expect(body.templates).toHaveLength(DEFAULT_LEAD_REPLY_TEMPLATES.email.length);
-      expect(body.templates.filter((template) => template.isAutomatic)).toHaveLength(1);
-      expect(body.automaticTemplateIds.email).not.toBeNull();
+      const expected = REPLY_CHANNELS.reduce(
+        (sum, channel) => sum + DEFAULT_LEAD_REPLY_TEMPLATES[channel].length,
+        0,
+      );
+      expect(body.templates).toHaveLength(expected);
+      for (const channel of REPLY_CHANNELS) {
+        expect(
+          body.templates.filter((template) => template.channel === channel && template.isAutomatic),
+          `${channel} must seed exactly one automatic wording`,
+        ).toHaveLength(1);
+        expect(body.automaticTemplateIds[channel]).not.toBeNull();
+      }
 
-      // The automatic one comes first — it is what somebody came to check.
+      // The automatic one comes first within its channel — it is what somebody
+      // came to check — and email's group comes first of all.
+      expect(body.templates[0]!.channel).toBe("email");
       expect(body.templates[0]!.isAutomatic).toBe(true);
       expect(body.templates[0]!.id).toBe(body.automaticTemplateIds.email);
     });
@@ -199,19 +208,25 @@ describe("Lead reply templates: what Eva writes back", () => {
         .set("Authorization", `Bearer ${token}`);
       expect(seeded.status).toBe(200);
       const templates = (seeded.body as LeadReplyTemplatesDto).templates;
-      expect(templates).toHaveLength(DEFAULT_LEAD_REPLY_TEMPLATES.email.length);
+      expect(templates).toHaveLength(
+        REPLY_CHANNELS.reduce(
+          (sum, channel) => sum + DEFAULT_LEAD_REPLY_TEMPLATES[channel].length,
+          0,
+        ),
+      );
 
-      // The automatic one cannot be deleted while it is automatic, so it is
-      // switched off first — which is exactly the route a customer would take.
-      const automatic = templates.find((template) => template.isAutomatic)!;
-      expect(
-        (
-          await request(app.getHttpServer())
-            .patch(`${url}/${automatic.id}`)
-            .set("Authorization", `Bearer ${token}`)
-            .send({ isAutomatic: false })
-        ).status,
-      ).toBe(200);
+      // An automatic one cannot be deleted while it is automatic, so each
+      // channel's is switched off first — exactly the route a customer takes.
+      for (const automatic of templates.filter((template) => template.isAutomatic)) {
+        expect(
+          (
+            await request(app.getHttpServer())
+              .patch(`${url}/${automatic.id}`)
+              .set("Authorization", `Bearer ${token}`)
+              .send({ isAutomatic: false })
+          ).status,
+        ).toBe(200);
+      }
 
       for (const template of templates) {
         expect(
@@ -229,9 +244,11 @@ describe("Lead reply templates: what Eva writes back", () => {
       expect(afterEmptying.status).toBe(200);
       const body = afterEmptying.body as LeadReplyTemplatesDto;
 
-      // ⚠️ THE ASSERTION THE WRONG RULE FAILS: three templates would be back.
+      // ⚠️ THE ASSERTION THE WRONG RULE FAILS: the defaults would be back.
       expect(body.templates).toHaveLength(0);
-      expect(body.automaticTemplateIds.email).toBeNull();
+      for (const channel of REPLY_CHANNELS) {
+        expect(body.automaticTemplateIds[channel]).toBeNull();
+      }
     });
   });
 
@@ -309,9 +326,10 @@ describe("Lead reply templates: what Eva writes back", () => {
       expect(accepted.status).toBe(201);
     });
 
+    /** `whatsapp` was the refused value here until 3.4a; Messenger is the next one. */
     it("refuses a channel nothing can send on", async () => {
       const response = await rawAdd(tokens.get("owner")!, {
-        channel: "whatsapp",
+        channel: "messenger",
         name: "Too early",
         body: "Words.",
       });
@@ -384,7 +402,9 @@ describe("Lead reply templates: what Eva writes back", () => {
 
       const after = await read();
       expect(after.automaticTemplateIds.email).toBe(promote.id);
-      expect(after.templates.filter((template) => template.isAutomatic)).toHaveLength(1);
+      expect(
+        after.templates.filter((template) => template.channel === "email" && template.isAutomatic),
+      ).toHaveLength(1);
       // The old one is still there to send by hand — demoted, not deleted.
       expect(after.templates.map((t) => t.id)).toContain(wasAutomatic);
       expect(after.templates.find((t) => t.id === wasAutomatic)!.isAutomatic).toBe(false);
@@ -405,13 +425,77 @@ describe("Lead reply templates: what Eva writes back", () => {
 
       const after = await read();
       expect(after.automaticTemplateIds.email).toBeNull();
-      expect(after.templates.filter((template) => template.isAutomatic)).toHaveLength(0);
+      expect(
+        after.templates.filter((template) => template.channel === "email" && template.isAutomatic),
+      ).toHaveLength(0);
+      // Switching email off says nothing about WhatsApp.
+      expect(after.automaticTemplateIds.whatsapp).toBe(before.automaticTemplateIds.whatsapp);
 
       // Put it back, so the tests below start from a normal organisation.
       expect((await patch(tokens.get("owner")!, automatic, { isAutomatic: true })).status).toBe(
         200,
       );
       expect((await read()).automaticTemplateIds.email).toBe(automatic);
+    });
+
+    /**
+     * 🔑 THE TEST THE SOURCE SCAN ASKED FOR (slice 3.2b → 3.4a).
+     *
+     * `demoteAutomatic` filters by channel. With one channel that filter was
+     * a no-op, so 3.2b guarded it by reading the service's source for the
+     * word `channel,` and said: *"When a second channel exists, replace this
+     * with a real test: promote on one channel, assert the other channel's
+     * automatic reply survives."* This is that test, in both directions.
+     *
+     * ⚠️ IT IS THE CASE THAT MUST FAIL. Remove the filter and promoting a
+     * WhatsApp wording silently switches OFF the email automatic reply — no
+     * error, no constraint violation, one screen showing exactly what was
+     * asked for, and email enquiries quietly stop being answered. The
+     * database cannot catch it: the unique index refuses a SECOND automatic
+     * per channel and has nothing to say about clearing one.
+     */
+    it("promoting a wording on one channel leaves the other channel's automatic reply alone", async () => {
+      const before = await read();
+      const emailAutomatic = before.automaticTemplateIds.email!;
+      const whatsappAutomatic = before.automaticTemplateIds.whatsapp!;
+      expect(emailAutomatic).not.toBe(whatsappAutomatic);
+
+      // Promote a WhatsApp wording: WhatsApp's automatic changes, email's does not.
+      const whatsappSpare = before.templates.find(
+        (template) => template.channel === "whatsapp" && !template.isAutomatic,
+      )!;
+      expect(
+        (await patch(tokens.get("owner")!, whatsappSpare.id, { isAutomatic: true })).status,
+      ).toBe(200);
+      const afterWhatsApp = await read();
+      expect(afterWhatsApp.automaticTemplateIds.whatsapp).toBe(whatsappSpare.id);
+      expect(afterWhatsApp.automaticTemplateIds.email).toBe(emailAutomatic);
+      expect(
+        afterWhatsApp.templates.filter((template) => template.isAutomatic).map((t) => t.channel),
+      ).toEqual(["email", "whatsapp"]);
+
+      // And the reverse: promote an email wording, WhatsApp's survives.
+      const emailSpare = afterWhatsApp.templates.find(
+        (template) => template.channel === "email" && !template.isAutomatic,
+      )!;
+      expect((await patch(tokens.get("owner")!, emailSpare.id, { isAutomatic: true })).status).toBe(
+        200,
+      );
+      const afterEmail = await read();
+      expect(afterEmail.automaticTemplateIds.email).toBe(emailSpare.id);
+      expect(afterEmail.automaticTemplateIds.whatsapp).toBe(whatsappSpare.id);
+
+      // Adding a new automatic wording demotes only its own channel's, too.
+      const added = await add(tokens.get("owner")!, {
+        channel: "whatsapp",
+        name: "Booked up this month",
+        body: "Thanks — we're booked up this month, but tell us the job and we'll fit you in.",
+        isAutomatic: true,
+      });
+      expect(added.status).toBe(201);
+      const afterAdd = await read();
+      expect(afterAdd.automaticTemplateIds.whatsapp).toBe(added.body.id);
+      expect(afterAdd.automaticTemplateIds.email).toBe(emailSpare.id);
     });
   });
 
@@ -542,16 +626,24 @@ describe("Lead reply templates: what Eva writes back", () => {
   });
 
   describe("the cap", () => {
-    it(`refuses the ${MAX_LEAD_REPLY_TEMPLATES + 1}th template`, async () => {
+    /**
+     * ⚠️ PER CHANNEL (slice 3.2b), and since 3.4a there are two to count. A
+     * cap across channels would let a customer's email wordings use up the
+     * budget for their WhatsApp ones; the twin assertion at the end is the
+     * case that must fail if the count is ever made organisation-wide.
+     */
+    it(`refuses the ${MAX_LEAD_REPLY_TEMPLATES + 1}th template on a channel`, async () => {
+      const onEmail = (dto: LeadReplyTemplatesDto) =>
+        dto.templates.filter((template) => template.channel === "email");
       const before = await read();
-      for (let i = before.templates.length; i < MAX_LEAD_REPLY_TEMPLATES; i += 1) {
+      for (let i = onEmail(before).length; i < MAX_LEAD_REPLY_TEMPLATES; i += 1) {
         const response = await add(tokens.get("owner")!, {
           name: `Filler ${i}`,
           body: `Filler body ${i}.`,
         });
         expect(response.status).toBe(201);
       }
-      expect((await read()).templates).toHaveLength(MAX_LEAD_REPLY_TEMPLATES);
+      expect(onEmail(await read())).toHaveLength(MAX_LEAD_REPLY_TEMPLATES);
 
       const overflow = await add(tokens.get("owner")!, {
         name: "One too many",
@@ -559,6 +651,15 @@ describe("Lead reply templates: what Eva writes back", () => {
       });
       expect(overflow.status).toBe(409);
       expect(overflow.body.message).toContain(String(MAX_LEAD_REPLY_TEMPLATES));
+      expect(overflow.body.message).toContain("Email");
+
+      // A full email list says nothing about WhatsApp's.
+      const elsewhere = await add(tokens.get("owner")!, {
+        channel: "whatsapp",
+        name: "Still room here",
+        body: "There is room on WhatsApp.",
+      });
+      expect(elsewhere.status).toBe(201);
     });
   });
 
@@ -589,55 +690,5 @@ describe("Lead reply templates: what Eva writes back", () => {
       expect(serialised).not.toContain("Cheers for the message");
       expect(serialised).not.toContain("we are full until October");
     });
-  });
-});
-
-/**
- * 🚨 THE ONE RULE IN SLICE 3.2b THAT NO BEHAVIOURAL TEST CAN REACH.
- *
- * `demoteAutomatic` filters by channel. With a single channel that filter is a
- * no-op — every query returns the same rows with or without it — so removing it
- * breaks nothing, fails nothing, and looks like tidying. It stays harmless right
- * up until the day WhatsApp ships, and then promoting a WhatsApp wording
- * silently switches OFF the customer's email automatic reply: no error, no
- * constraint violation, one screen showing exactly what was asked for, and
- * email enquiries quietly stop being answered.
- *
- * The database cannot help. `lead_reply_templates_single_automatic_key` refuses
- * a SECOND automatic reply on a channel; it has nothing to say about clearing
- * one that should have been left alone.
- *
- * So this is a source scan, in the tradition of `settings-consistency.spec.ts`
- * — a rule enforced by reading the file, because the alternative is not
- * enforcing it at all. **When a second channel exists, replace this with a real
- * test**: promote on one channel, assert the other channel's automatic reply
- * survives. That test is worth more than this one and cannot be written yet.
- */
-describe("the channel scoping that only matters after the next slice", () => {
-  const SERVICE = path.resolve(
-    __dirname,
-    "../src/products/lead-follow-up/templates/lead-reply-templates.service.ts",
-  );
-
-  it("demotes only the automatic reply on the same channel", () => {
-    const source = readFileSync(SERVICE, "utf8");
-    const body = source.slice(source.indexOf("async function demoteAutomatic"));
-    const updateMany = body.slice(0, body.indexOf("});"));
-
-    expect(
-      updateMany,
-      "demoteAutomatic must filter by channel — without it, promoting a wording on one channel turns off another channel's automatic reply",
-    ).toContain("channel,");
-  });
-
-  /** The case that must fail: a scan that finds nothing would pass forever. */
-  it("would catch the filter being removed", () => {
-    const withoutFilter = `async function demoteAutomatic(tx, channel) {
-      await tx.leadReplyTemplate.updateMany({
-        where: { isAutomatic: true, deletedAt: null },
-        data: { isAutomatic: false },
-      });`;
-    const updateMany = withoutFilter.slice(0, withoutFilter.indexOf("});"));
-    expect(updateMany).not.toContain("channel,");
   });
 });

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  forwardingOf,
   parseWhatsAppWebhook,
   textOf,
   toJsonValue,
@@ -115,6 +116,46 @@ describe("parseWhatsAppWebhook: what it refuses to invent", () => {
     );
     expect(parsed.deliveries).toEqual([]);
     expect(parsed.statusUpdates).toBe(2);
+    expect(parsed.failedStatuses).toEqual([]);
+  });
+
+  /**
+   * A receipt that says our message did not arrive (3.4a): the id and the
+   * code are read for the log; the free text is not.
+   */
+  it("reads a failed receipt's id and error code, and nothing a person wrote", () => {
+    const parsed = parseWhatsAppWebhook(
+      envelope({
+        metadata,
+        statuses: [
+          { id: "wamid.sent1", status: "sent", timestamp: "1725370800", recipient_id: "1" },
+          {
+            id: "wamid.sent2",
+            status: "failed",
+            timestamp: "1725370801",
+            recipient_id: "1",
+            errors: [
+              {
+                code: 131047,
+                title: "Re-engagement message",
+                message: "Message failed to send because more than 24 hours have passed",
+                error_data: { details: "the person's number, quoted back" },
+              },
+            ],
+          },
+          // Failed with no error array at all — still reported, with nulls.
+          { id: "wamid.sent3", status: "failed", timestamp: "1725370802", recipient_id: "1" },
+          // No id: nothing to name, so nothing to report.
+          { status: "failed", timestamp: "1725370803", recipient_id: "1" },
+        ],
+      }),
+    );
+    expect(parsed.statusUpdates).toBe(4);
+    expect(parsed.failedStatuses).toEqual([
+      { providerMessageId: "wamid.sent2", code: 131047, title: "Re-engagement message" },
+      { providerMessageId: "wamid.sent3", code: null, title: null },
+    ]);
+    expect(JSON.stringify(parsed.failedStatuses)).not.toContain("quoted back");
   });
 
   it("counts a message with no id or no sender as malformed rather than guessing", () => {
@@ -228,6 +269,39 @@ describe("textOf: the words in a message, whatever its type", () => {
   it("keeps non-ASCII text exactly", () => {
     const body = "مرحبا، أحتاج سباكاً 🔧 Zoë";
     expect(textOf({ type: "text", text: { body } })).toBe(body);
+  });
+});
+
+/** Meta's `context` flags, read off the stored message for the reply rules (3.4a). */
+describe("forwardingOf: was this passed along?", () => {
+  it("reads both flags, and a frequently forwarded message counts as forwarded too", () => {
+    expect(forwardingOf({ ...textMessage })).toEqual({
+      forwarded: false,
+      frequentlyForwarded: false,
+    });
+    expect(forwardingOf({ ...textMessage, context: { forwarded: true } })).toEqual({
+      forwarded: true,
+      frequentlyForwarded: false,
+    });
+    expect(forwardingOf({ ...textMessage, context: { frequently_forwarded: true } })).toEqual({
+      forwarded: true,
+      frequentlyForwarded: true,
+    });
+  });
+
+  /** A context that is a reply (`context.id`) or malformed says nothing about forwarding. */
+  it("does not invent a flag from a context that carries none", () => {
+    expect(
+      forwardingOf({ ...textMessage, context: { from: "1", id: "wamid.replied-to" } }),
+    ).toEqual({ forwarded: false, frequentlyForwarded: false });
+    expect(forwardingOf({ ...textMessage, context: "yes" })).toEqual({
+      forwarded: false,
+      frequentlyForwarded: false,
+    });
+    expect(forwardingOf({ ...textMessage, context: { forwarded: "true" } })).toEqual({
+      forwarded: false,
+      frequentlyForwarded: false,
+    });
   });
 });
 

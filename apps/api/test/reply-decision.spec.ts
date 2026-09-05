@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { RuleBasedReplyDecisionProvider } from "../src/products/lead-follow-up/decision/rule-based-reply-decision.provider.js";
-import type { ReplyDecisionInput } from "../src/products/lead-follow-up/decision/reply-decision.js";
+import type {
+  EmailReplyDecisionInput,
+  ReplyDecisionInput,
+  WhatsAppReplyDecisionInput,
+} from "../src/products/lead-follow-up/decision/reply-decision.js";
 
 /**
  * Which enquiries Eva answers on her own (slice 3.1c-2, founder rulings 32 and 54).
@@ -17,9 +21,24 @@ import type { ReplyDecisionInput } from "../src/products/lead-follow-up/decision
  * finds out about. So the false-positive cases are tested as hard as the true
  * ones — see "the ordinary enquiry" below.
  */
+/** A WhatsApp input with the ordinary enquiry's values, overridden per case. */
+function whatsapp(
+  input: Partial<Omit<WhatsAppReplyDecisionInput, "channel">>,
+): WhatsAppReplyDecisionInput {
+  return {
+    channel: "whatsapp",
+    messageType: "text",
+    forwarded: false,
+    frequentlyForwarded: false,
+    text: "Hi, can you quote for a new bathroom?",
+    ...input,
+  };
+}
+
 describe("Which enquiries Eva answers on her own", () => {
-  const decide = (input: Partial<ReplyDecisionInput> = {}) =>
+  const decide = (input: Partial<Omit<EmailReplyDecisionInput, "channel">> = {}) =>
     new RuleBasedReplyDecisionProvider().decide({
+      channel: "email",
       headers: { "x-ses-spam-verdict": "PASS" },
       fromAddress: "jane@example.com",
       subject: "Leaking tap",
@@ -191,6 +210,106 @@ describe("Which enquiries Eva answers on her own", () => {
     });
   });
 
+  /**
+   * 🔑 THE WHATSAPP ARM (slice 3.4a) — its own signals, not email's squinted
+   * at. There is no loop to prevent and no spam verdict to read; what can go
+   * wrong is answering something that was never a request.
+   */
+  describe("on WhatsApp — a different medium, a different list", () => {
+    const decideWhatsApp = (input: Partial<Omit<WhatsAppReplyDecisionInput, "channel">> = {}) =>
+      new RuleBasedReplyDecisionProvider().decide(whatsapp(input));
+
+    it("replies to a text, a photo, a location, a contact card, a tapped button and an ad's welcome", () => {
+      for (const messageType of [
+        "text",
+        "image",
+        "audio",
+        "video",
+        "document",
+        "sticker",
+        "location",
+        "contacts",
+        "interactive",
+        "button",
+        "order",
+        "request_welcome",
+      ]) {
+        const decision = decideWhatsApp({
+          messageType,
+          text: messageType === "text" ? "Hi" : null,
+        });
+        expect(decision.verdict, messageType).toBe("reply");
+        expect(decision.signal).toBe("no-refusal");
+      }
+    });
+
+    /** A type Meta adds tomorrow is still a person reaching out. */
+    it("replies to a message type it has never heard of", () => {
+      expect(decideWhatsApp({ messageType: "hologram" }).verdict).toBe("reply");
+    });
+
+    it("never answers a reaction — a thumbs-up is not a message", () => {
+      const decision = decideWhatsApp({ messageType: "reaction", text: null });
+      expect(decision.verdict).toBe("never");
+      expect(decision.signal).toBe("reaction");
+    });
+
+    it("never answers a system notice about the account", () => {
+      const decision = decideWhatsApp({ messageType: "system", text: "changed their number" });
+      expect(decision.verdict).toBe("never");
+      expect(decision.signal).toBe("system-notice");
+    });
+
+    it("holds content WhatsApp could not pass on, for a person to look at", () => {
+      const decision = decideWhatsApp({ messageType: "unsupported", text: null });
+      expect(decision.verdict).toBe("hold");
+      expect(decision.signal).toBe("unsupported-content");
+    });
+
+    /**
+     * ⚠️ `frequently_forwarded`, NOT `forwarded`. A person passing on their
+     * partner's photo of the leak is an enquiry; a chain message is not. The
+     * two flags are tested apart so a "tidy" merge of them fails here.
+     */
+    it("holds a chain message, and still replies to an ordinary forward", () => {
+      const chain = decideWhatsApp({ forwarded: true, frequentlyForwarded: true });
+      expect(chain.verdict).toBe("hold");
+      expect(chain.signal).toBe("chain-message");
+
+      const forward = decideWhatsApp({ forwarded: true, frequentlyForwarded: false });
+      expect(forward.verdict).toBe("reply");
+    });
+
+    /**
+     * ⚠️ THE WORDS ARE NOT READ, AND THIS IS THE TEST THAT KEEPS IT THAT WAY.
+     * "STOP" is the engine's business (3.5): it cancels nudges and writes a
+     * consent event. An acknowledgement of a fresh enquiry is not a nudge, and
+     * a rule that read the text here would be the wrong place to grow opt-out
+     * handling — half of it, silently, on one channel.
+     */
+    it("does not decide by the words", () => {
+      for (const text of ["STOP", "unsubscribe", "out of office", "auto-reply"]) {
+        expect(decideWhatsApp({ text }).verdict, text).toBe("reply");
+      }
+    });
+
+    /** The email rules must not have quietly started applying to WhatsApp, or the reverse. */
+    it("keeps the two lists apart", () => {
+      // An email-only signal cannot arise from a WhatsApp input at all — the
+      // type forbids it — so the check is the other way: every WhatsApp
+      // signal names a WhatsApp thing.
+      for (const input of [
+        whatsapp({ messageType: "reaction" }),
+        whatsapp({ messageType: "system" }),
+        whatsapp({ messageType: "unsupported" }),
+        whatsapp({ frequentlyForwarded: true }),
+      ]) {
+        const decision = new RuleBasedReplyDecisionProvider().decide(input);
+        expect(decision.signal).not.toMatch(/auto-submitted|bounce|mailing-list|spam-verdict/);
+      }
+    });
+  });
+
   describe("the header reading itself", () => {
     /**
      * ⚠️ CASING MUST NOT DISABLE A RULE. Intake lower-cases header names today;
@@ -219,19 +338,26 @@ describe("Which enquiries Eva answers on her own", () => {
    */
   describe("what it tells the customer", () => {
     const cases: ReplyDecisionInput[] = [
-      { headers: {}, fromAddress: "jane@example.com", subject: null, body: "" },
+      { channel: "email", headers: {}, fromAddress: "jane@example.com", subject: null, body: "" },
       {
+        channel: "email",
         headers: { "x-ses-spam-verdict": "PASS", "auto-submitted": "auto-replied" },
         fromAddress: "jane@example.com",
         subject: null,
         body: "",
       },
       {
+        channel: "email",
         headers: { "x-ses-spam-verdict": "PASS" },
         fromAddress: "noreply@example.com",
         subject: null,
         body: "",
       },
+      // The WhatsApp arm (3.4a): one of each verdict.
+      whatsapp({}),
+      whatsapp({ messageType: "reaction" }),
+      whatsapp({ frequentlyForwarded: true }),
+      whatsapp({ messageType: "unsupported" }),
     ];
 
     it("explains itself in words, not in codes", () => {

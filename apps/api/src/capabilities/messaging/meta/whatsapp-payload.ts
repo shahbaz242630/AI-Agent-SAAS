@@ -18,8 +18,12 @@
  *                  messages: [{ id, from, timestamp, type, <type>: {...} }],
  *                  statuses: [...] } }] }] }
  *
- * `statuses` are delivery receipts for messages WE sent; they arrive on the
- * same field and are counted, not stored — nothing sends yet (3.4).
+ * `statuses` are delivery receipts for messages WE sent (3.4a sends); they
+ * arrive on the same field. They are counted, and a `failed` one is read for
+ * its message id and error so the intake can log it — Meta reports the closed
+ * 24-hour window, a payment problem on the account and a blocked number this
+ * way, after the send was accepted. Nothing stores them yet: that needs a
+ * place the capability may write, and comes with the engine (3.5).
  */
 
 /** A JSON value we are willing to store. Built by `toJsonValue`, never cast. */
@@ -49,12 +53,24 @@ export interface WhatsAppDelivery {
   payload: { [key: string]: StoredJsonValue };
 }
 
+/** A receipt saying a message WE sent did not get through (3.4a). */
+export interface FailedStatus {
+  /** The `wamid` of what we sent — the id `OutboundMessage.deliver` returned. */
+  providerMessageId: string;
+  /** Meta's error code (131047 = the 24-hour window had closed), if given. */
+  code: number | null;
+  /** Meta's short title for it, if given. Never the free-text message. */
+  title: string | null;
+}
+
 export interface ParsedWhatsAppWebhook {
   /** The object Meta named. Only `whatsapp_business_account` is ours today. */
   object: string | null;
   deliveries: WhatsAppDelivery[];
   /** Delivery receipts seen and deliberately not stored. */
   statusUpdates: number;
+  /** The receipts that report a failure, read for the log. */
+  failedStatuses: FailedStatus[];
   /** Message entries missing an id, a sender, or their number — not storable. */
   malformed: number;
 }
@@ -72,6 +88,7 @@ export function parseWhatsAppWebhook(payload: unknown): ParsedWhatsAppWebhook {
     object: null,
     deliveries: [],
     statusUpdates: 0,
+    failedStatuses: [],
     malformed: 0,
   };
   if (!isRecord(payload)) return result;
@@ -88,7 +105,12 @@ export function parseWhatsAppWebhook(payload: unknown): ParsedWhatsAppWebhook {
       const metadata = isRecord(value.metadata) ? value.metadata : null;
       const phoneNumberId = metadata ? text(metadata.phone_number_id) : null;
 
-      result.statusUpdates += asArray(value.statuses).length;
+      const statuses = asArray(value.statuses);
+      result.statusUpdates += statuses.length;
+      for (const status of statuses) {
+        const failed = failedStatusOf(status);
+        if (failed) result.failedStatuses.push(failed);
+      }
 
       const messages = asArray(value.messages);
       if (messages.length === 0) continue;
@@ -133,6 +155,40 @@ export function parseWhatsAppWebhook(payload: unknown): ParsedWhatsAppWebhook {
     }
   }
   return result;
+}
+
+/**
+ * A `statuses` entry that says our message failed, or null for every other
+ * receipt. Meta's shape: `{ id, status: "failed", recipient_id, errors: [{
+ * code, title, message, error_data: { details } }] }`. The code and the
+ * title are kept; `message` and `details` are free text and stay out.
+ */
+function failedStatusOf(status: unknown): FailedStatus | null {
+  if (!isRecord(status) || status.status !== "failed") return null;
+  const providerMessageId = text(status.id);
+  if (!providerMessageId) return null;
+  const first = asArray(status.errors).find(isRecord) ?? null;
+  return {
+    providerMessageId,
+    code: first && typeof first.code === "number" ? first.code : null,
+    title: first ? text(first.title) : null,
+  };
+}
+
+/**
+ * Was this message passed along? Meta's `context.forwarded` and
+ * `context.frequently_forwarded`, read off the stored message object so the
+ * decision rules (3.4a) see what the person's phone said about it.
+ */
+export function forwardingOf(message: Record<string, unknown>): {
+  forwarded: boolean;
+  frequentlyForwarded: boolean;
+} {
+  const context = isRecord(message.context) ? message.context : null;
+  return {
+    forwarded: context?.forwarded === true || context?.frequently_forwarded === true,
+    frequentlyForwarded: context?.frequently_forwarded === true,
+  };
 }
 
 /**

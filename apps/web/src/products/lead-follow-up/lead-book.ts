@@ -273,8 +273,12 @@ export function answeredLine(
   timezone: string,
 ): string {
   if (lead.firstRespondedAt) return describeMoment(lead.firstRespondedAt, timezone);
-  if (lead.source === "whatsapp_enquiry") {
-    return "Not yet — Eva cannot reply on WhatsApp until a later piece is built.";
-  }
+  /**
+   * ⚠️ NO CLAIM ABOUT WHAT EVA CANNOT DO. Until 3.4a this said "Eva cannot
+   * reply on WhatsApp until a later piece is built", which was true for one
+   * day and false from the next deploy — the same defect as the sentence it
+   * replaced. Eva answers on both channels now; "Not yet." is the whole truth
+   * for either, and the reason lives on the decision, not here.
+   */
   return "Not yet.";
 }

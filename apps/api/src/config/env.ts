@@ -104,6 +104,22 @@ export const apiEnvSchema = z.object({
   META_APP_ID: z.string().default(""),
   META_APP_SECRET: z.string().default(""),
   WHATSAPP_VERIFY_TOKEN: z.string().default(""),
+  /**
+   * Slice 3.4a — sending on WhatsApp. A System User access token from OUR
+   * business portfolio, with `whatsapp_business_messaging`; it is what Meta's
+   * Get Started prescribes for a test number, and it is a secret like the app
+   * secret above. Optional at boot, refused at use: with it empty the sender
+   * records every reply as deferred ("not configured") rather than failing
+   * the enquiry, and nothing reaches Meta.
+   *
+   * ⚠️ ONE TOKEN FOR EVERY CONNECTION IS THE TEST-NUMBER SHAPE, NOT THE
+   * CUSTOMER SHAPE. Meta's partner guide has a Tech Provider send with a
+   * BUSINESS token per onboarded customer, exchanged from the code Embedded
+   * Signup returns. That token belongs on the customer's connection row,
+   * encrypted, exactly as a mailbox's does — and the connect screen slice
+   * puts it there. Until then this is the only credential the sender has.
+   */
+  WHATSAPP_ACCESS_TOKEN: z.string().default(""),
 });
 
 export type ApiEnv = z.infer<typeof apiEnvSchema>;

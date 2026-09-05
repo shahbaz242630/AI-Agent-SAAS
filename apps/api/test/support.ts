@@ -2,6 +2,10 @@ import { createHash, randomUUID } from "node:crypto";
 import type { INestApplication } from "@nestjs/common";
 import { Test } from "@nestjs/testing";
 import { OUTBOUND_MAIL, type OutboundMail } from "../src/capabilities/mailbox/outbound-mail.js";
+import {
+  OUTBOUND_MESSAGE,
+  type OutboundMessage,
+} from "../src/capabilities/messaging/outbound-message.js";
 import { createLocalJWKSet, exportJWK, generateKeyPair, SignJWT, type JWTVerifyGetKey } from "jose";
 import { createPrismaClient, seed, type EvaPrismaClient } from "@eva/database";
 import { AppModule } from "../src/app.module.js";
@@ -89,6 +93,9 @@ const testEnv: ApiEnv = {
   META_APP_ID: "",
   META_APP_SECRET: "",
   WHATSAPP_VERIFY_TOKEN: "",
+  // Slice 3.4a. Empty on purpose too: the real sender must record a reply
+  // as deferred ("not set up yet") rather than reach Meta from a test.
+  WHATSAPP_ACCESS_TOKEN: "",
 };
 
 interface TestKeys {
@@ -244,6 +251,14 @@ export async function createTestApp(
      * would otherwise quietly weaken.
      */
     outboundMail?: OutboundMail;
+    /**
+     * The WhatsApp send seam (3.4a) — `OUTBOUND_MAIL`'s twin, with the same
+     * rule: not stubbed by default. The real sender refuses to send with no
+     * token configured (the test env carries none) and records the reply as
+     * deferred, so a spec that reaches it without meaning to proves that
+     * path rather than posting to Meta.
+     */
+    outboundMessage?: OutboundMessage;
   } = {},
 ): Promise<INestApplication> {
   const { getKey } = await testKeys();
@@ -269,6 +284,9 @@ export async function createTestApp(
   }
   if (options.outboundMail) {
     builder = builder.overrideProvider(OUTBOUND_MAIL).useValue(options.outboundMail);
+  }
+  if (options.outboundMessage) {
+    builder = builder.overrideProvider(OUTBOUND_MESSAGE).useValue(options.outboundMessage);
   }
   builder = builder.overrideProvider(FORWARDING_CONFIRMER).useValue(
     options.forwardingConfirmer ?? {

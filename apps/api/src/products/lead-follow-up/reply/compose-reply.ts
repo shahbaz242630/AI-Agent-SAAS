@@ -155,3 +155,29 @@ export function composeReply(enquiry: EnquiryToAnswer, templateBody: string): Co
     reply: { to, subject: replySubject(enquiry.originalSubject), bodyText },
   };
 }
+
+/**
+ * The WhatsApp reply (slice 3.4a): the customer's wording, verbatim, and
+ * nothing else. No subject exists to derive; the recipient is the thread's
+ * own handle and is not this function's to check; and the reply quotes the
+ * person's message by id at the send, not by pasting it here.
+ *
+ * ⚠️ 4,096 IS META'S LIMIT ON A TEXT BODY and the template cap is 4,000, so
+ * the wording always fits; the check is here so the day the cap moves, the
+ * failure is a sentence on the enquiry screen rather than a Meta error code.
+ */
+export const MAX_WHATSAPP_BODY = 4096;
+
+export type ComposeWhatsAppResult =
+  { composed: true; bodyText: string } | { composed: false; reason: string };
+
+export function composeWhatsAppReply(templateBody: string): ComposeWhatsAppResult {
+  const bodyText = templateBody.trim();
+  if (bodyText === "") {
+    return { composed: false, reason: "the reply wording is empty" };
+  }
+  if (bodyText.length > MAX_WHATSAPP_BODY) {
+    return { composed: false, reason: "the reply wording is too long for a WhatsApp message" };
+  }
+  return { composed: true, bodyText };
+}
