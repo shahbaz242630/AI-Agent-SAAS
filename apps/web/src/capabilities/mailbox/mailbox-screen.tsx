@@ -12,7 +12,7 @@ import {
 } from "@/capabilities/mailbox/mailbox-errors";
 import { disconnectMessage } from "@/capabilities/mailbox/mailbox-messages";
 import { createClient } from "@/lib/supabase/server";
-import { Card, Notice, PageHeader, PageShell, PrimaryLink } from "@/components/ui";
+import { Card, Notice, PageHeader, PageShell, PrimaryLink, SectionHeading } from "@/components/ui";
 import { ConnectMailboxForm, MailboxActions } from "./mailbox-controls";
 
 /**
@@ -44,6 +44,18 @@ interface OrganisationSummary {
   id: string;
   name: string;
   roleKey: string;
+  permissions: string[];
+  timezone?: string | undefined;
+}
+
+/**
+ * What a product gets when it fills the `after` slot below: enough to fetch
+ * and draw its own section without a second organisation or mailbox call.
+ */
+export interface MailboxScreenContext {
+  organisation: OrganisationSummary;
+  accessToken: string;
+  mailboxes: MailboxSummary[];
 }
 
 interface MailboxList {
@@ -61,9 +73,26 @@ interface AdminConsent {
 export async function MailboxScreen({
   moduleKey,
   searchParams,
+  subtitle,
+  heading,
+  after,
 }: {
   moduleKey: ModuleKey;
   searchParams: Promise<Record<string, string | string[] | undefined>>;
+  /** The page subtitle, when the product's tab is about more than sending. */
+  subtitle?: string;
+  /** A heading over the connect card, when something else follows it. */
+  heading?: string;
+  /**
+   * ⚠️ A SLOT, NOT A SWITCH (2026-09-05). Lead Follow-up's tab has a second
+   * half — where enquiries come in — that no other product has. The
+   * capability draws whatever the product hands it here, after the connect
+   * card and only when the mailbox list could be read, and knows nothing
+   * about what it is. A `moduleKey === "lead_follow_up"` branch in this file
+   * would be the capability reaching into a product, which the architecture
+   * forbids in both directions.
+   */
+  after?: (context: MailboxScreenContext) => React.ReactNode;
 }) {
   const params = await searchParams;
   const supabase = await createClient();
@@ -146,7 +175,10 @@ export async function MailboxScreen({
           connect Gmail here and expect their invoice chasers to use it. */}
       <PageHeader
         title="Mailbox"
-        subtitle={`Connect the mailbox ${productName} sends from — Outlook, Microsoft 365 or Gmail.`}
+        subtitle={
+          subtitle ??
+          `Connect the mailbox ${productName} sends from — Outlook, Microsoft 365 or Gmail.`
+        }
       />
       {/* ONE message, three endings. `test_email` only ever arrives alongside
           `connected=1`, so a separate box for the failure printed "Mailbox
@@ -232,67 +264,74 @@ export async function MailboxScreen({
           </div>
         </Card>
       ) : status ? (
-        <Card className="flex flex-col gap-4 px-6 py-5">
-          {status.mailboxes.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No mailbox connected yet.</p>
-          ) : (
-            <>
-              <p className="text-sm text-muted-foreground">
-                {status.mailboxes.length} of {status.seats} {status.seats === 1 ? "seat" : "seats"}{" "}
-                in use
-              </p>
-              {status.mailboxes.map((mailbox) => (
-                <MailboxCard
-                  key={mailbox.id}
-                  mailbox={mailbox}
-                  showPrimary={status!.mailboxes.length > 1}
-                  // Through to this mailbox's own book, where adding a client
-                  // files it here automatically (slice 1.6b).
-                  clientsHref={`/app/clients?mailbox=${mailbox.id}`}
-                  // Ruling 6: is there anywhere healthy left to stand in for
-                  // this one? Decides between "chasing continues elsewhere"
-                  // and "chasing has stopped" — see the card.
-                  hasHealthyAlternative={status!.mailboxes.some(
-                    (other) => other.id !== mailbox.id && other.healthStatus === "active",
-                  )}
-                  actions={
-                    <MailboxActions
-                      organisationId={organisation.id}
-                      moduleKey={moduleKey}
-                      mailbox={mailbox}
-                      canPromote={status!.mailboxes.length > 1}
-                    />
-                  }
-                />
-              ))}
-            </>
-          )}
+        <>
+          {heading && <SectionHeading title={heading} />}
+          <Card className="flex flex-col gap-4 px-6 py-5">
+            {status.mailboxes.length === 0 ? (
+              <p className="text-sm text-muted-foreground">No mailbox connected yet.</p>
+            ) : (
+              <>
+                <p className="text-sm text-muted-foreground">
+                  {status.mailboxes.length} of {status.seats}{" "}
+                  {status.seats === 1 ? "seat" : "seats"} in use
+                </p>
+                {status.mailboxes.map((mailbox) => (
+                  <MailboxCard
+                    key={mailbox.id}
+                    mailbox={mailbox}
+                    showPrimary={status!.mailboxes.length > 1}
+                    // Through to this mailbox's own book, where adding a client
+                    // files it here automatically (slice 1.6b).
+                    clientsHref={`/app/clients?mailbox=${mailbox.id}`}
+                    // Ruling 6: is there anywhere healthy left to stand in for
+                    // this one? Decides between "chasing continues elsewhere"
+                    // and "chasing has stopped" — see the card.
+                    hasHealthyAlternative={status!.mailboxes.some(
+                      (other) => other.id !== mailbox.id && other.healthStatus === "active",
+                    )}
+                    actions={
+                      <MailboxActions
+                        organisationId={organisation.id}
+                        moduleKey={moduleKey}
+                        mailbox={mailbox}
+                        canPromote={status!.mailboxes.length > 1}
+                      />
+                    }
+                  />
+                ))}
+              </>
+            )}
 
-          {/* Hidden entirely at the limit rather than shown-and-refused: the
+            {/* Hidden entirely at the limit rather than shown-and-refused: the
               seat check the API does here is a pre-check for exactly this
               reason — nobody should consent at Microsoft for nothing. */}
-          {status.seatLimitReached ? (
-            <p className="text-sm text-muted-foreground">
-              Every seat is in use. Disconnect one, or add a seat on{" "}
-              <Link href="/app/settings/modules" className="font-medium text-link hover:underline">
-                your products
-              </Link>
-              , to connect another.
-            </p>
-          ) : (
-            <ConnectMailboxForm
-              organisationId={organisation.id}
-              moduleKey={moduleKey}
-              defaultAddress={attemptedAddress}
-              /* ⚠️ NO LABEL ON THE FIRST CONNECT SINCE 3.1b. It used to read
+            {status.seatLimitReached ? (
+              <p className="text-sm text-muted-foreground">
+                Every seat is in use. Disconnect one, or add a seat on{" "}
+                <Link
+                  href="/app/settings/modules"
+                  className="font-medium text-link hover:underline"
+                >
+                  your products
+                </Link>
+                , to connect another.
+              </p>
+            ) : (
+              <ConnectMailboxForm
+                organisationId={organisation.id}
+                moduleKey={moduleKey}
+                defaultAddress={attemptedAddress}
+                /* ⚠️ NO LABEL ON THE FIRST CONNECT SINCE 3.1b. It used to read
                  "Connect Outlook mailbox", which stopped being true the moment
                  Gmail became selectable — so the form names whichever provider
                  the customer actually picked. The SECOND-mailbox wording is
                  still fixed, because "another" is true of either. */
-              {...(status.mailboxes.length === 0 ? {} : { label: "Connect another mailbox" })}
-            />
-          )}
-        </Card>
+                {...(status.mailboxes.length === 0 ? {} : { label: "Connect another mailbox" })}
+              />
+            )}
+          </Card>
+          {after?.({ organisation, accessToken, mailboxes: status.mailboxes })}
+        </>
       ) : null}
 
       {/* Back into the product this mailbox belongs to, rather than to

@@ -148,6 +148,8 @@ describe("startableProducts", () => {
 describe("canStartProduct", () => {
   it("allows a real, built product", () => {
     expect(canStartProduct("email_credit_controller")).toBe(true);
+    // Built and switch-on-able since 2026-09-05 — the founder's hub card.
+    expect(canStartProduct("lead_follow_up")).toBe(true);
   });
 
   /**
@@ -156,7 +158,8 @@ describe("canStartProduct", () => {
    * control has never been enforcement in this codebase.
    */
   it("refuses a real product we have not built yet", () => {
-    expect(canStartProduct("lead_follow_up")).toBe(false);
+    // `lead_follow_up` was the example here until it went live (2026-09-05).
+    expect(canStartProduct("ai_receptionist")).toBe(false);
   });
 
   it("refuses a key that is not a product at all", () => {

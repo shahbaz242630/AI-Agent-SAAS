@@ -81,11 +81,14 @@ function MarketingBar() {
           >
             Sign in
           </Link>
+          {/* "Sign up", not "Get started" — the founder, walking it on
+              2026-09-05: a new visitor looks for the word and it was nowhere
+              on the page. The hero keeps its own "Get started free". */}
           <Link
             href="/sign-up"
             className="rounded-[var(--radius-control)] bg-primary px-4.5 py-2.5 text-[13px] font-semibold text-primary-foreground shadow-[var(--shadow-primary)]"
           >
-            Get started
+            Sign up
           </Link>
         </nav>
       </div>

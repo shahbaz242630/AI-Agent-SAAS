@@ -64,9 +64,12 @@ function realRoutes(): string[] {
     // ⚠️ THE BASENAME, NOT A SUFFIX — `endsWith` would take `add-row-page.tsx`
     // for a route and invent a screen that does not exist, which makes the
     // guard permissive in the one direction that hides a dead link.
-    if (basename(file) !== "page.tsx") return;
+    // A `route.ts` is an address too (the CSV download, 2026-09-05): a link
+    // to it resolves, and the guard must not call it dead.
+    const name = basename(file);
+    if (name !== "page.tsx" && name !== "route.ts") return;
     const segments = file
-      .slice(APP_DIR.length, -"page.tsx".length)
+      .slice(APP_DIR.length, -name.length)
       .split(/[/\\]/)
       .filter((segment) => segment !== "" && !segment.startsWith("("));
     routes.push(`/${segments.join("/")}`.replace(/\/$/, "") || "/");
@@ -166,6 +169,7 @@ describe("in-app links", () => {
     expect(routes).toContain("/app");
     expect(routes).toContain("/app/invoice-chasing/invoices");
     expect(routes).toContain("/app/clients/[customerId]/invoices");
+    expect(routes).toContain("/app/lead-follow-up/enquiries/export");
     expect(routes).not.toContain("/app/invoices");
   });
 

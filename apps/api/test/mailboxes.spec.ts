@@ -225,6 +225,49 @@ describe("Mailboxes (Slice 1.6)", () => {
       expect(listed).not.toHaveProperty("accessTokenEncrypted");
       expect(listed).not.toHaveProperty("refreshTokenEncrypted");
     });
+
+    /**
+     * ⚠️ THE PROVIDER WAS HARD-CODED TO "microsoft" UNTIL 2026-09-05, so a
+     * Gmail mailbox listed as Microsoft from 3.1b on. No screen read the
+     * field, so nothing noticed until the Mailbox tab needed it to choose
+     * between the Gmail and the Outlook forwarding guide.
+     */
+    it("names the provider each mailbox was connected through, Gmail included", async () => {
+      // Both rows are this test's own, so the assertion never leans on what a
+      // neighbouring spec left behind (its first run did, and went red). The
+      // helper soft-deletes every live row before it inserts, so the second
+      // row is created directly (its second run leaned on that, and went red).
+      const gmail = await insertConnectedMailbox(owner, org.id, {
+        provider: "google",
+        emailAddress: "gmail-fixture@example.com",
+      });
+      const outlook = await owner.emailAccount.create({
+        data: {
+          organisationId: org.id,
+          moduleKey: "email_credit_controller",
+          provider: "microsoft",
+          emailAddress: "outlook-fixture@example.com",
+          displayName: "Outlook Fixture",
+          accessTokenEncrypted: encryptToken("fixture-access-token", TEST_TOKEN_ENCRYPTION_KEY),
+          refreshTokenEncrypted: encryptToken("fixture-refresh-token", TEST_TOKEN_ENCRYPTION_KEY),
+          tokenExpiresAt: new Date(Date.now() + 3_600_000),
+          scopes: ["Mail.Send"],
+          healthStatus: "active",
+        },
+      });
+      const response = await request(app.getHttpServer())
+        .get(`/organisations/${org.id}/mailboxes?module=email_credit_controller`)
+        .set("Authorization", `Bearer ${tokenFor("owner")}`)
+        .expect(200);
+      const rows = response.body.mailboxes as { id: string; provider: string }[];
+      expect(rows.find((row) => row.id === gmail.id)?.provider).toBe("google");
+      expect(rows.find((row) => row.id === outlook.id)?.provider).toBe("microsoft");
+      // Leave the organisation as the specs below expect to find it.
+      await owner.emailAccount.updateMany({
+        where: { id: { in: [gmail.id, outlook.id] } },
+        data: { deletedAt: new Date() },
+      });
+    });
   });
 
   /**

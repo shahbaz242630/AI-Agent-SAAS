@@ -1,14 +1,35 @@
-import { Body, Controller, Get, Param, ParseUUIDPipe, Post } from "@nestjs/common";
-import { createLeadRequestSchema, type CreateLeadRequest } from "@eva/validation";
+import {
+  Body,
+  Controller,
+  Get,
+  Header,
+  Param,
+  ParseUUIDPipe,
+  Post,
+  Query,
+  Res,
+} from "@nestjs/common";
+import type { Response } from "express";
+import {
+  createLeadRequestSchema,
+  leadExportQuerySchema,
+  leadListQuerySchema,
+  leadTimelineQuerySchema,
+  type CreateLeadRequest,
+  type LeadExportQuery,
+  type LeadListQuery,
+  type LeadTimelineQuery,
+} from "@eva/validation";
 import { ZodValidationPipe } from "../../common/validation/zod-validation.pipe.js";
 import { OwnedBy } from "../../common/monitoring/owner.js";
 import { CurrentAuthUser, type AuthUser } from "../authentication/current-auth-user.decorator.js";
 // eslint-disable-next-line @typescript-eslint/consistent-type-imports
 import {
   LeadsService,
+  type LeadBook,
   type LeadDetail,
   type LeadSummary,
-  type TimelineItem,
+  type TimelinePage,
 } from "./leads.service.js";
 
 /**
@@ -33,12 +54,35 @@ import {
 export class LeadsController {
   constructor(private readonly leadsService: LeadsService) {}
 
+  /** The book: a page, filtered and searched, with the counts its tabs need. */
   @Get()
   list(
     @CurrentAuthUser() authUser: AuthUser,
     @Param("organisationId", ParseUUIDPipe) organisationId: string,
-  ): Promise<LeadSummary[]> {
-    return this.leadsService.list(authUser, organisationId);
+    @Query(new ZodValidationPipe(leadListQuerySchema)) query: LeadListQuery,
+  ): Promise<LeadBook> {
+    return this.leadsService.list(authUser, organisationId, query);
+  }
+
+  /**
+   * The same book as a file (founder, 2026-09-05).
+   *
+   * ⚠️ DECLARED BEFORE `:leadId`. Nest matches routes in declaration order,
+   * and "export.csv" would otherwise reach `getById`, whose UUID pipe would
+   * answer 400 — a download that fails with "leadId must be a UUID".
+   */
+  @Get("export.csv")
+  @Header("Content-Type", "text/csv; charset=utf-8")
+  @Header("Cache-Control", "no-store")
+  async exportCsv(
+    @CurrentAuthUser() authUser: AuthUser,
+    @Param("organisationId", ParseUUIDPipe) organisationId: string,
+    @Query(new ZodValidationPipe(leadExportQuerySchema)) query: LeadExportQuery,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<string> {
+    const { csv, filename } = await this.leadsService.exportCsv(authUser, organisationId, query);
+    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+    return csv;
   }
 
   @Post()
@@ -60,16 +104,18 @@ export class LeadsController {
   }
 
   /**
-   * Everything exchanged with the person behind this enquiry, oldest first
-   * (slice 3.3c) — the `person_timeline` view, through the lead.
+   * Everything exchanged with the person behind this enquiry, newest first,
+   * a page at a time (slice 3.3c; paged since ruling 81) — the
+   * `person_timeline` view, through the lead.
    */
   @Get(":leadId/timeline")
   timeline(
     @CurrentAuthUser() authUser: AuthUser,
     @Param("organisationId", ParseUUIDPipe) organisationId: string,
     @Param("leadId", ParseUUIDPipe) leadId: string,
-  ): Promise<TimelineItem[]> {
-    return this.leadsService.timeline(authUser, organisationId, leadId);
+    @Query(new ZodValidationPipe(leadTimelineQuerySchema)) query: LeadTimelineQuery,
+  ): Promise<TimelinePage> {
+    return this.leadsService.timeline(authUser, organisationId, leadId, query);
   }
 
   /** BRD 4.3: actioned immediately and permanently, across every channel. */

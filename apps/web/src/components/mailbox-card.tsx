@@ -25,6 +25,13 @@ export interface MailboxSummary {
   /** Slice 1.6b. Optional so the onboarding flow, which renders this card from
    *  a freshly connected mailbox, need not care. */
   allocatedClientCount?: number;
+  /**
+   * Which provider the mailbox was connected through (mirrors the api's
+   * `EmailAccountProvider`). Optional because the onboarding flow renders
+   * this card from a freshly connected mailbox and need not care; the
+   * Mailbox tab reads it to pick the forwarding guide.
+   */
+  provider?: "microsoft" | "google";
 }
 
 export function MailboxCard({

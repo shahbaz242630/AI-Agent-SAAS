@@ -131,8 +131,20 @@ export default async function ClientsPage({
   let mailboxAccess = true;
   if (!forbidden && !notEntitled) {
     try {
+      /**
+       * ⚠️ THE PRODUCT IS NOT OPTIONAL (slice 3.1c-0), AND THIS CALL LEFT IT
+       * OUT FOR FOUR DAYS. A mailbox belongs to one product, so the api
+       * refuses a list with no `module` — a 400, which the catch below
+       * rightly rethrows, so this whole screen fell over on production from
+       * 2026-09-01 until the founder opened it on 2026-09-05. Every test was
+       * green: nothing here calls the api, and a URL is a string.
+       * `mailbox-list-callers.spec.ts` now reads every caller for the product.
+       */
       const list = (await (
-        await apiFetch(`/organisations/${organisation.id}/mailboxes`, accessToken)
+        await apiFetch(
+          `/organisations/${organisation.id}/mailboxes?module=email_credit_controller`,
+          accessToken,
+        )
       ).json()) as MailboxList;
       mailboxes = list.mailboxes;
       allocation = (await (

@@ -1,6 +1,13 @@
 import { Injectable, NotFoundException } from "@nestjs/common";
 import { withTenant } from "@eva/database";
-import type { CreateLeadRequest } from "@eva/validation";
+import { LEAD_SOURCES_BY_CHANNEL } from "@eva/types";
+import type {
+  CreateLeadRequest,
+  LeadExportQuery,
+  LeadListQuery,
+  LeadTimelineQuery,
+} from "@eva/validation";
+import { leadBookCsv } from "./lead-book-csv.js";
 // eslint-disable-next-line @typescript-eslint/consistent-type-imports
 import { PrismaService } from "../../common/database/prisma.service.js";
 // eslint-disable-next-line @typescript-eslint/consistent-type-imports
@@ -36,6 +43,33 @@ export interface LeadSummary {
   customerId: string | null;
   hasEvidence: boolean;
   createdAt: Date;
+  /** Where it sits in the pipeline: a system stage's key, or null for a custom one. */
+  stage: { key: string | null; name: string };
+}
+
+/** One pipeline stage as the book's tabs show it, with how many match. */
+export interface LeadBookStage {
+  id: string;
+  key: string | null;
+  name: string;
+  position: number;
+  count: number;
+}
+
+/** A page of the book, and the counts its tabs need (ruling 81). */
+export interface LeadBook {
+  rows: LeadSummary[];
+  totalCount: number;
+  /** Every enquiry in the book, no filter — what the All tab says and clears to. */
+  bookCount: number;
+  stages: LeadBookStage[];
+}
+
+/** A page of the conversation, newest first. */
+export interface TimelinePage {
+  items: TimelineItem[];
+  /** True when older items exist before the last one here. */
+  hasEarlier: boolean;
 }
 
 /**
@@ -127,17 +161,89 @@ export class LeadsService {
     private readonly usersService: UsersService,
   ) {}
 
-  /** The lead book, newest enquiry first — leads:read. */
-  async list(authUser: AuthUser, organisationId: string): Promise<LeadSummary[]> {
+  /**
+   * The lead book: a page of enquiries, newest first, with the filters the
+   * screen offers and a count per stage for its tabs (ruling 81, 2026-09-05).
+   *
+   * ⚠️ ONE QUERY AT A TIME INSIDE THE TENANT TRANSACTION. Prisma's interactive
+   * transaction runs on one connection, so the four reads go in sequence
+   * rather than in a `Promise.all` that would interleave them on it.
+   *
+   * ⚠️ THE STAGE COUNTS IGNORE THE STAGE FILTER AND HONOUR THE OTHERS. A tab
+   * says how many of "the WhatsApp ones you searched for" sit in each stage;
+   * counting under the selected stage would zero every other tab the moment
+   * one was chosen.
+   */
+  async list(authUser: AuthUser, organisationId: string, query: LeadListQuery): Promise<LeadBook> {
     const user = await this.usersService.resolveOrProvision(authUser);
     return withTenant(this.prisma.db, { organisationId, userId: user.id }, async (tx) => {
       await requirePermission(tx, organisationId, user.id, "leads:read");
-      const leads = await tx.lead.findMany({
-        where: { deletedAt: null },
-        orderBy: { receivedAt: "desc" },
-        include: { evidence: { select: { id: true } } },
+      const where = leadBookWhere(query);
+      const rows = await tx.lead.findMany({
+        where,
+        orderBy: [{ receivedAt: "desc" }, { id: "asc" }],
+        take: query.limit,
+        skip: query.offset,
+        include: { evidence: { select: { id: true } }, pipelineStage: STAGE_SELECT },
       });
-      return leads.map((lead) => toSummary(lead));
+      const totalCount = await tx.lead.count({ where });
+      // The whole book, no filter: the All tab's number, because All clears
+      // every filter (founder, 2026-09-05), and a tab must say what a click does.
+      const bookCount = await tx.lead.count({ where: leadBookWhere({}) });
+      const perStage = await tx.lead.groupBy({
+        by: ["pipelineStageId"],
+        where: leadBookWhere({ ...query, stage: undefined }),
+        _count: { _all: true },
+      });
+      const stages = await tx.pipelineStage.findMany({
+        where: { deletedAt: null },
+        orderBy: { position: "asc" },
+        select: { id: true, systemKey: true, name: true, position: true },
+      });
+      const countByStage = new Map(perStage.map((row) => [row.pipelineStageId, row._count._all]));
+      return {
+        rows: rows.map((lead) => toSummary(lead)),
+        totalCount,
+        bookCount,
+        stages: stages.map((stage) => ({
+          id: stage.id,
+          key: stage.systemKey,
+          name: stage.name,
+          position: stage.position,
+          count: countByStage.get(stage.id) ?? 0,
+        })),
+      };
+    });
+  }
+
+  /**
+   * The book as a file, for the customer's own records (founder, 2026-09-05).
+   * Every row the filter selects, never a page — the All tab is one click
+   * away for somebody who wants the lot.
+   */
+  async exportCsv(
+    authUser: AuthUser,
+    organisationId: string,
+    query: LeadExportQuery,
+  ): Promise<{ csv: string; filename: string }> {
+    const user = await this.usersService.resolveOrProvision(authUser);
+    return withTenant(this.prisma.db, { organisationId, userId: user.id }, async (tx) => {
+      await requirePermission(tx, organisationId, user.id, "leads:read");
+      const settings = await tx.organisationSettings.findFirst({ select: { timezone: true } });
+      const timezone = settings?.timezone ?? "Europe/London";
+      const rows = await tx.lead.findMany({
+        where: leadBookWhere(query),
+        orderBy: [{ receivedAt: "desc" }, { id: "asc" }],
+        include: { evidence: { select: { id: true } }, pipelineStage: STAGE_SELECT },
+      });
+      const day = new Date().toISOString().slice(0, 10);
+      return {
+        csv: leadBookCsv(
+          rows.map((lead) => toSummary(lead)),
+          timezone,
+        ),
+        filename: `enquiries-${day}.csv`,
+      };
     });
   }
 
@@ -148,7 +254,7 @@ export class LeadsService {
       await requirePermission(tx, organisationId, user.id, "leads:read");
       const lead = await tx.lead.findFirst({
         where: { id: leadId, deletedAt: null },
-        include: { evidence: true },
+        include: { evidence: true, pipelineStage: STAGE_SELECT },
       });
       if (!lead) throw new NotFoundException("Lead not found");
       return {
@@ -186,11 +292,26 @@ export class LeadsService {
    * deliberately gave it no person. The screen says "nothing yet"; a 404 here
    * would read as the enquiry itself being missing.
    */
+  /**
+   * Everything exchanged with the person behind this enquiry, NEWEST first,
+   * a page at a time (ruling 81) — the `person_timeline` view, through the
+   * lead. Oldest-first was 3.3c's choice for a conversation read top-down;
+   * at three hundred enquiries the latest message is what somebody opens
+   * the page for, and the rest is a click away.
+   *
+   * ⚠️ THE CURSOR IS A PAIR, NOT A TIMESTAMP. WhatsApp stamps messages to
+   * the second, so two items can share a `happened_at`; paging on the
+   * timestamp alone would skip whichever of them fell on the boundary.
+   * `(happened_at, item_id)` is what the ORDER BY sorts on, so it is what a
+   * page ends on. One row more than asked for is fetched to know whether an
+   * earlier page exists, and never returned.
+   */
   async timeline(
     authUser: AuthUser,
     organisationId: string,
     leadId: string,
-  ): Promise<TimelineItem[]> {
+    query: LeadTimelineQuery,
+  ): Promise<TimelinePage> {
     const user = await this.usersService.resolveOrProvision(authUser);
     return withTenant(this.prisma.db, { organisationId, userId: user.id }, async (tx) => {
       await requirePermission(tx, organisationId, user.id, "leads:read");
@@ -199,27 +320,36 @@ export class LeadsService {
         select: { personId: true },
       });
       if (!lead) throw new NotFoundException("Lead not found");
-      if (!lead.personId) return [];
+      if (!lead.personId) return { items: [], hasEarlier: false };
 
+      const before = query.before ?? null;
+      const beforeId = query.beforeId ?? null;
       const rows = await tx.$queryRaw<TimelineRow[]>`
         SELECT "item_type", "item_id", "channel", "detail", "actor_kind", "subject",
                "summary", "conversation_id", "lead_id", "happened_at"
         FROM "person_timeline"
         WHERE "person_id" = ${lead.personId}::uuid
-        ORDER BY "happened_at" ASC, "item_id" ASC`;
+          AND (${before}::timestamptz IS NULL
+               OR ("happened_at", "item_id") < (${before}::timestamptz, ${beforeId}::uuid))
+        ORDER BY "happened_at" DESC, "item_id" DESC
+        LIMIT ${query.limit + 1}`;
 
-      return rows.map((row) => ({
-        id: row.item_id,
-        type: row.item_type,
-        channel: row.channel,
-        detail: row.detail,
-        actorKind: row.actor_kind,
-        subject: row.subject,
-        summary: row.summary,
-        conversationId: row.conversation_id,
-        leadId: row.lead_id,
-        happenedAt: row.happened_at,
-      }));
+      const page = rows.slice(0, query.limit);
+      return {
+        items: page.map((row) => ({
+          id: row.item_id,
+          type: row.item_type,
+          channel: row.channel,
+          detail: row.detail,
+          actorKind: row.actor_kind,
+          subject: row.subject,
+          summary: row.summary,
+          conversationId: row.conversation_id,
+          leadId: row.lead_id,
+          happenedAt: row.happened_at,
+        })),
+        hasEarlier: rows.length > query.limit,
+      };
     });
   }
 
@@ -285,7 +415,7 @@ export class LeadsService {
             },
           },
         },
-        include: { evidence: true },
+        include: { evidence: true, pipelineStage: STAGE_SELECT },
       });
 
       await writeAuditLog(tx, {
@@ -374,7 +504,7 @@ export class LeadsService {
       const updated = await tx.lead.update({
         where: { id: lead.id },
         data: { status: "do_not_contact" },
-        include: { evidence: { select: { id: true } } },
+        include: { evidence: { select: { id: true } }, pipelineStage: STAGE_SELECT },
       });
 
       await writeAuditLog(tx, {
@@ -466,6 +596,33 @@ export class LeadsService {
 }
 
 /** One shape for the book and the detail screen, so they cannot disagree. */
+/** The stage columns every lead read carries, for `toSummary`. */
+const STAGE_SELECT = { select: { systemKey: true, name: true } } as const;
+
+type LeadWhere = NonNullable<NonNullable<Parameters<TenantTx["lead"]["findMany"]>[0]>["where"]>;
+
+/**
+ * The book's filters as one `where`, shared by the page, the count, the
+ * stage tabs and the CSV so the four can never disagree about what "the
+ * WhatsApp ones you searched for" means.
+ */
+function leadBookWhere(query: Omit<LeadListQuery, "limit" | "offset">): LeadWhere {
+  const where: LeadWhere = { deletedAt: null };
+  if (query.stage) where.pipelineStage = { systemKey: query.stage };
+  if (query.channel) where.source = { in: [...LEAD_SOURCES_BY_CHANNEL[query.channel]] };
+  if (query.answered === "yes") where.firstRespondedAt = { not: null };
+  if (query.answered === "no") where.firstRespondedAt = null;
+  if (query.search) {
+    where.OR = [
+      { contactName: { contains: query.search, mode: "insensitive" } },
+      { contactEmail: { contains: query.search, mode: "insensitive" } },
+      { contactPhone: { contains: query.search } },
+      { enquiry: { contains: query.search, mode: "insensitive" } },
+    ];
+  }
+  return where;
+}
+
 function toSummary(lead: {
   id: string;
   source: string;
@@ -479,6 +636,7 @@ function toSummary(lead: {
   customerId: string | null;
   createdAt: Date;
   evidence: { id: string } | null;
+  pipelineStage: { systemKey: string | null; name: string };
 }): LeadSummary {
   return {
     id: lead.id,
@@ -493,5 +651,6 @@ function toSummary(lead: {
     customerId: lead.customerId,
     hasEvidence: lead.evidence !== null,
     createdAt: lead.createdAt,
+    stage: { key: lead.pipelineStage.systemKey, name: lead.pipelineStage.name },
   };
 }

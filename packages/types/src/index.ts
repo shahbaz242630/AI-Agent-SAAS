@@ -411,7 +411,7 @@ export const MODULE_CAPABILITIES: Record<ModuleKey, readonly Capability[]> = {
  * two different products.
  *
  * ⚠️ `live` IS THE ONE THAT MATTERS, AND IT IS NOT COSMETIC. Three of these
- * four products are not built. `PERMISSION_MODULE` grants them nothing, so
+ * five products are not built. `PERMISSION_MODULE` grants them nothing, so
  * turning one on wrote an entitlement row, printed "On", and changed nothing
  * whatsoever — the screen reporting an outcome that had not happened, which is
  * the same failure as the money bug and the lying upload preview. The flag is
@@ -479,18 +479,24 @@ export const MODULE_CATALOGUE: Record<ModuleKey, ModuleDescriptor> = {
     name: "Lead Follow-up",
     slug: "lead-follow-up",
     /**
-     * 🚨 THE BLURB STILL SAYS MAILBOX, AND THAT IS DELIBERATE. Renaming the
-     * product is structural — a key, a folder, a URL — and costs nothing to do
-     * before the channels exist. Changing this sentence is a PROMISE, on the
-     * screen that sells it, and today the only channel Eva can answer on is
-     * email. This is the exact family of defect this file already carries two
-     * warnings about: the blurb describing a product we have not built.
-     *
-     * **Widen it in the slice that makes it true**, not in the slice that
-     * renames the folder.
+     * 🚨 THE BLURB STILL SAYS MAILBOX, AND THAT IS DELIBERATE. Eva has
+     * answered on WhatsApp since 3.4a (2026-09-05), but a customer cannot
+     * connect a WhatsApp number themselves yet — the one connection that
+     * exists was written by hand, and the connect screen is a later slice.
+     * A blurb naming WhatsApp on the screen that SELLS it would promise a
+     * door that is not there. Widen it in the slice that builds the door.
      */
     blurb: "Answers new enquiries from your mailbox, usually within minutes.",
-    live: false,
+    /**
+     * 🔑 LIVE SINCE 2026-09-05 (the founder, walking the hub: *"lead follow
+     * up card is not wired up with lead follow up dash board.. it is non
+     * clickable"*). The screens exist — the book, the enquiry, the replies,
+     * the mailbox, forwarding — and a reply has gone to a real person. `live`
+     * means BUILT: the hub links to it, the sidebar enters it, the Products
+     * screen offers the switch and the api accepts it. It says nothing about
+     * a price, and there is none yet — selling is Paddle's slice.
+     */
+    live: true,
   },
   lead_follow_up_voice: {
     name: "Lead Follow-up by Call",
@@ -600,6 +606,50 @@ export function replyChannelForLeadSource(source: string): ReplyChannel | null {
       return null;
   }
 }
+
+/**
+ * The sources a channel filter on the enquiry book selects (ruling 81,
+ * 2026-09-05).
+ *
+ * ⚠️ THE INVERSE OF `replyChannelForLeadSource`, AND HELD TO IT BY A TEST.
+ * Every source listed under a channel must map back to that channel, or a
+ * filter would show a customer "WhatsApp" enquiries Eva answers by email.
+ */
+export const LEAD_SOURCES_BY_CHANNEL: Record<ReplyChannel, readonly string[]> = {
+  email: ["email_enquiry"],
+  whatsapp: ["whatsapp_enquiry"],
+};
+
+/**
+ * The stages every organisation has — migration 0041's CHECK, verbatim.
+ * Names and positions live with the seeding in the api (`SYSTEM_STAGES`);
+ * the keys are here because a filter on the book names one in the URL.
+ */
+export const PIPELINE_SYSTEM_STAGE_KEYS = [
+  "new",
+  "contacted",
+  "qualified",
+  "quoted",
+  "booked",
+  "done",
+  "reviewed",
+  "lost",
+] as const;
+
+export type PipelineSystemStageKey = (typeof PIPELINE_SYSTEM_STAGE_KEYS)[number];
+
+/**
+ * How many enquiries the book shows per page, and the api's ceiling.
+ *
+ * ⚠️ TEN, NOT FIFTY (the founder, seeing fifty on 2026-09-05: *"it look so
+ * ugly ... at 50... cant we keep 10"*). A page is what fits on a laptop
+ * screen without the eye losing the header; the pager is what makes the
+ * rest cheap to reach.
+ */
+export const LEAD_BOOK_PAGE_SIZE = 10;
+export const LEAD_BOOK_PAGE_SIZE_MAX = 100;
+/** How much of a conversation loads at once (ruling 81). */
+export const LEAD_TIMELINE_PAGE_SIZE = 50;
 
 /** How a module came to be enabled. `subscription` is written by Paddle
  *  webhooks later; the table stays authoritative for ENFORCEMENT and Paddle
@@ -1108,7 +1158,13 @@ export interface HumanEscalationDto {
 // --- Slice 1.6: Outlook connection ---
 
 /** Mailbox providers (plan §3; CHECK constraint in migration 0013). */
-export const EMAIL_ACCOUNT_PROVIDERS = ["microsoft"] as const;
+/**
+ * ⚠️ `google` WAS MISSING UNTIL 2026-09-05, and the api's mailbox DTO was
+ * typed by this — so it hard-coded `"microsoft"` for every mailbox and a
+ * Gmail mailbox listed as Microsoft from 3.1b on. Nothing read the field
+ * until the Mailbox tab needed it to choose a forwarding guide.
+ */
+export const EMAIL_ACCOUNT_PROVIDERS = ["microsoft", "google"] as const;
 
 export type EmailAccountProvider = (typeof EMAIL_ACCOUNT_PROVIDERS)[number];
 

@@ -286,11 +286,34 @@ async function fetchMailboxConnected(
   accessToken: string,
 ): Promise<boolean | null> {
   try {
+    /**
+     * ⚠️ NAMED FOR THE PRODUCT (slice 3.1c-0), AND IT WAS NOT. Without
+     * `module` the api answers 400, and the bare `catch` this had turned
+     * that into "could not tell" — so the mailbox nag on this screen was
+     * silently off from 2026-09-01 to 2026-09-05, found only because the
+     * Clients screen makes the same call without the catch and fell over.
+     */
     const body = (await (
-      await apiFetch(`/organisations/${organisationId}/mailboxes`, accessToken)
+      await apiFetch(
+        `/organisations/${organisationId}/mailboxes?module=email_credit_controller`,
+        accessToken,
+      )
     ).json()) as { mailboxes: unknown[] };
     return body.mailboxes.length > 0;
-  } catch {
-    return null;
+  } catch (error) {
+    /**
+     * ⚠️ ONLY THE ANSWERS THAT MEAN "COULD NOT TELL" ARE SWALLOWED — no
+     * permission, no Invoice Chasing — and an idle session goes where the
+     * rest of the page sends it. Anything else (our own bad request, a 500)
+     * is a defect, and turning it into `null` is exactly how the one above
+     * hid for four days. It reaches the error boundary with its reference.
+     */
+    if (error instanceof ApiError && error.status === 401) {
+      redirect(sessionFailureDestination(error.code));
+    }
+    if (error instanceof ApiError && (error.status === 402 || error.status === 403)) {
+      return null;
+    }
+    throw error;
   }
 }

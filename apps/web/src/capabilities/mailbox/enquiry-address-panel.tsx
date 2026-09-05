@@ -14,19 +14,23 @@ import { PrimaryAction } from "@/components/ui";
  *
  * ⚠️ CLIENT COMPONENT ONLY BECAUSE OF THE COPY BUTTON. The address itself is
  * rendered by the server and passed in; nothing here fetches anything.
+ *
+ * ⚠️ IT LIVES ON THE MAILBOX TAB NOW, NOT THE ENQUIRY BOOK (founder,
+ * 2026-09-05). From 3.1b it sat on top of the book because the book was the
+ * only screen a customer had; it is a set-up step, and set-up has a home. The
+ * forwarding steps are drawn directly under it there, so the panel no longer
+ * carries a link to them.
  */
 export function EnquiryAddressPanel({
   address,
   /**
-   * ⚠️ OFF BY DEFAULT SO THE GUIDE NEVER LINKS TO ITSELF. This panel is drawn
-   * on the enquiry book AND at the top of the forwarding guide; a link that
-   * reads "set up forwarding" while you are standing on the forwarding page is
-   * the kind of small dishonesty that makes a screen feel broken.
+   * Where "what Eva replies" goes. Optional so the panel reads correctly with
+   * or without the link.
    */
-  forwardingHref,
+  repliesHref,
 }: {
   address: string;
-  forwardingHref?: string;
+  repliesHref?: string;
 }) {
   const [copied, setCopied] = useState(false);
 
@@ -53,7 +57,7 @@ export function EnquiryAddressPanel({
         <h2 className="text-[13.5px] font-semibold">Your enquiry address</h2>
         <p className="text-sm text-muted-foreground">
           Put this on your website and on your enquiry forms, or forward your existing enquiries to
-          it. Anything sent here becomes an enquiry below.
+          it. Anything sent here becomes an enquiry.
         </p>
       </div>
 
@@ -73,32 +77,34 @@ export function EnquiryAddressPanel({
       </div>
 
       {/**
-       * ⚠️ SAYS WHAT EVA DOES NOT DO YET, AND STAYS UNTIL SHE DOES. Enquiries
-       * now genuinely arrive here — but nothing is answered until 3.1c. A panel
-       * that only said "put this on your website" would let a customer believe
-       * their enquiries were being replied to, which is the money-bug family:
-       * a screen implying an outcome that does not happen.
+       * ⚠️ THIS SENTENCE WENT STALE ON PRODUCTION AND NOTHING CAUGHT IT. From
+       * 3.1b it told the customer that Eva did not answer enquiries yet and
+       * that the answering was unbuilt, under a comment promising the sentence
+       * would stay until she did. She did — 3.1c-3 shipped the automatic reply
+       * on 2026-09-01 — and the sentence stayed, telling every customer for
+       * four days that Eva could not do the thing she was doing. The founder
+       * read it on 2026-09-05. `enquiry-address-panel.spec.tsx` now asserts
+       * the CLAIM, not the words: this file may not say Eva stays silent —
+       * not even in a comment quoting the old line, which is how the first
+       * run of that spec went red.
+       *
+       * "The wording you have marked as automatic" is conditional by
+       * construction — a customer who has switched the automatic reply off has
+       * marked none, and the Replies screen says so in red.
        */}
       <p className="text-[12.5px] text-muted-foreground">
-        Eva records every enquiry that arrives here, with the proof of who sent it and when. She
-        does not reply to them yet — that part is still being built.
+        Eva records every enquiry that arrives here, with the proof of who sent it and when, and
+        answers it with the wording you have marked as automatic
+        {repliesHref ? (
+          <>
+            {" — "}
+            <a href={repliesHref} className="font-medium text-link hover:underline">
+              what Eva replies
+            </a>
+          </>
+        ) : null}
+        .
       </p>
-
-      {/**
-       * ⚠️ NAMES GMAIL, AND ONLY BECAUSE THE LINK GOES SOMEWHERE THAT IS ABOUT
-       * GMAIL (ruling 35). The panel itself stays provider-neutral: an Outlook
-       * customer reads the sentences above and is never sent into Google's
-       * world by accident.
-       */}
-      {forwardingHref && (
-        <p className="text-[12.5px] text-muted-foreground">
-          On Gmail?{" "}
-          <a href={forwardingHref} className="font-medium text-link hover:underline">
-            Set your enquiries to forward here
-          </a>{" "}
-          — Eva handles Google&apos;s confirmation, so you never need the code.
-        </p>
-      )}
     </section>
   );
 }

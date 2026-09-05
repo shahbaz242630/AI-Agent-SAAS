@@ -2,10 +2,17 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { moduleHref } from "@eva/types";
+import { LEAD_TIMELINE_PAGE_SIZE, moduleHref } from "@eva/types";
 import { ApiError, apiFetch } from "@/lib/api";
 import { humanRefusal } from "@/lib/permissions";
 import { createClient } from "@/lib/supabase/server";
+import {
+  bookQueryString,
+  parseBookFilters,
+  type LeadBook,
+  type LeadBookFilters,
+  type TimelinePage,
+} from "@/products/lead-follow-up/lead-book";
 
 /**
  * Recording a request never to be contacted again (Slice 3.1a).
@@ -85,4 +92,70 @@ export async function stopContacting(
       "Recorded. Eva will not contact them again on any channel. " +
       "If that was a mistake, an owner or administrator can correct it under Settings → Do not contact.",
   };
+}
+
+/**
+ * One page of the book, for the client half to swap in place (ruling 81).
+ *
+ * ⚠️ THE FILTERS ARE RE-PARSED, NOT TRUSTED. They arrive from the browser;
+ * `parseBookFilters` drops anything the book does not know before the api
+ * ever sees it. The organisation id is passed straight through — the api
+ * checks membership on every request and nothing here could do it better.
+ */
+export async function loadEnquiryBook(
+  organisationId: string,
+  filters: LeadBookFilters,
+  page: number,
+): Promise<{ ok: true; book: LeadBook } | { ok: false; error: string }> {
+  const accessToken = await getAccessToken();
+  if (!accessToken) redirect("/sign-in");
+  const clean = parseBookFilters({
+    stage: filters.stage,
+    channel: filters.channel,
+    answered: filters.answered,
+    search: filters.search,
+    page: String(page),
+  });
+  try {
+    const response = await apiFetch(
+      `/organisations/${organisationId}/leads?${bookQueryString(clean.filters, clean.page)}`,
+      accessToken,
+    );
+    return { ok: true, book: (await response.json()) as LeadBook };
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 401) redirect("/sign-in");
+    return {
+      ok: false,
+      error: error instanceof ApiError ? error.message : "Something went wrong. Please try again.",
+    };
+  }
+}
+
+/** The earlier part of a conversation, from the pair the last page ended on. */
+export async function loadEarlierConversation(
+  organisationId: string,
+  leadId: string,
+  before: string,
+  beforeId: string,
+): Promise<{ ok: true; page: TimelinePage } | { ok: false; error: string }> {
+  const accessToken = await getAccessToken();
+  if (!accessToken) redirect("/sign-in");
+  const query = new URLSearchParams({
+    limit: String(LEAD_TIMELINE_PAGE_SIZE),
+    before,
+    beforeId,
+  });
+  try {
+    const response = await apiFetch(
+      `/organisations/${organisationId}/leads/${leadId}/timeline?${query.toString()}`,
+      accessToken,
+    );
+    return { ok: true, page: (await response.json()) as TimelinePage };
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 401) redirect("/sign-in");
+    return {
+      ok: false,
+      error: error instanceof ApiError ? error.message : "Something went wrong. Please try again.",
+    };
+  }
 }

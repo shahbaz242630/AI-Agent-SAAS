@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { pageWindow } from "@/lib/pagination";
 
 /**
  * The pieces every screen is built from (2026-08-09 design handoff).
@@ -802,5 +803,97 @@ export function TextArea({
       />
       {hint && <span className="text-[12px] font-normal text-faint">{hint}</span>}
     </label>
+  );
+}
+
+/**
+ * Numbered pages with arrows (the enquiry book, 2026-09-05; the founder:
+ * *"the table has this 1,2,3 page below with arrows"*).
+ *
+ * ⚠️ BUTTONS, NOT LINKS, AND THE CALLER SWAPS THE ROWS IN PLACE. The other
+ * half of that sentence was *"instead of whole page going to next page ...
+ * it just moves to next on same window"*. A link here would be a full
+ * navigation; the caller loads the page and pushes the address itself.
+ * `busy` greys the pager while that load is in flight, so a double click
+ * cannot race two pages, and the current page is announced as such.
+ */
+export function Pagination({
+  page,
+  pageCount,
+  onSelect,
+  busy = false,
+}: {
+  page: number;
+  pageCount: number;
+  onSelect: (page: number) => void;
+  busy?: boolean;
+}) {
+  if (pageCount <= 1) return null;
+  const items = pageWindow(page, pageCount);
+  return (
+    <nav aria-label="Pages" className="flex flex-wrap items-center gap-1.5">
+      <PageButton
+        label="Previous page"
+        disabled={busy || page <= 1}
+        onClick={() => onSelect(page - 1)}
+      >
+        ‹
+      </PageButton>
+      {items.map((item, index) =>
+        item === "gap" ? (
+          <span key={`gap-${index}`} aria-hidden className="px-1 text-[12.5px] text-faint">
+            …
+          </span>
+        ) : (
+          <PageButton
+            key={item}
+            label={`Page ${item}`}
+            current={item === page}
+            disabled={busy}
+            onClick={() => onSelect(item)}
+          >
+            {item}
+          </PageButton>
+        ),
+      )}
+      <PageButton
+        label="Next page"
+        disabled={busy || page >= pageCount}
+        onClick={() => onSelect(page + 1)}
+      >
+        ›
+      </PageButton>
+    </nav>
+  );
+}
+
+function PageButton({
+  label,
+  current = false,
+  disabled = false,
+  onClick,
+  children,
+}: {
+  label: string;
+  current?: boolean;
+  disabled?: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      {...(current ? { "aria-current": "page" as const } : {})}
+      disabled={disabled}
+      onClick={onClick}
+      className={`flex h-8 min-w-8 cursor-pointer items-center justify-center rounded-[var(--radius-control)] px-2 text-[12.5px] font-semibold tabular-nums disabled:cursor-default ${
+        current
+          ? "bg-primary text-primary-foreground"
+          : "border border-input-border bg-surface hover:bg-chip-hover disabled:opacity-40"
+      }`}
+    >
+      {children}
+    </button>
   );
 }
