@@ -345,11 +345,12 @@ function BookRow({
           actually said is how a quote stops being one. The width lives on
           an inner block because a table cell ignores max-width, which is
           how a long message pushed the other columns out of the box
-          (the founder, 2026-09-05). */}
+          (the founder, 2026-09-05). No `block` beside the clamp: `line-clamp-2`
+          IS a display (-webkit-box), and a `block` on the same element wins
+          the cascade and switches the clamp off — production showed a
+          27-line enquiry that way on 2026-09-05, the day it shipped. */}
       <TableCell className="text-muted-foreground">
-        <span className="line-clamp-2 block max-w-[420px] whitespace-normal">
-          {lead.enquiry ?? "—"}
-        </span>
+        <span className="line-clamp-2 max-w-[420px] whitespace-normal">{lead.enquiry ?? "—"}</span>
       </TableCell>
       <TableCell>{leadChannelLabel(lead.source)}</TableCell>
       <TableCell className="whitespace-nowrap text-muted-foreground">

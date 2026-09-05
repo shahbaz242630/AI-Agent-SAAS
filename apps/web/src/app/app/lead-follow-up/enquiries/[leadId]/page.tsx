@@ -363,11 +363,18 @@ export default async function EnquiryDetailPage({
   );
 }
 
+/**
+ * A label and the one value under it. `wrap-anywhere` because a value can be
+ * one unbreakable token — a WhatsApp reference is sixty characters with no
+ * space in it — and without a break opportunity it ran across the next
+ * column on production (seen 2026-09-05, the evidence card of a WhatsApp
+ * enquiry: "Their reference" over "Recorded").
+ */
 function Field({ label, value }: { label: string; value: string }) {
   return (
-    <div className="flex flex-col gap-0.5">
+    <div className="flex min-w-0 flex-col gap-0.5">
       <span className="text-[11.5px] font-semibold tracking-[0.04em] text-faint">{label}</span>
-      <span className="text-sm">{value}</span>
+      <span className="wrap-anywhere text-sm">{value}</span>
     </div>
   );
 }
