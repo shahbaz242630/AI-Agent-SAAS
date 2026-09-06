@@ -90,7 +90,6 @@ export function SidebarBody({
         <span className="font-display text-2xl font-bold text-sidebar-foreground">eva</span>
         <span aria-hidden className="size-[7px] rounded-full bg-accent" />
       </Link>
-      <p className="px-2 pt-0.5 text-[11px] text-sidebar-faint">AI credit control</p>
 
       {/* Absent for a brand-new account, which has no organisation until
           onboarding creates one — an empty chip would be a hole in the chrome. */}
