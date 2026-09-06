@@ -2,40 +2,34 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
-import { MODULE_CATALOGUE, moduleHref, REPLY_CHANNELS } from "@eva/types";
+import { LEAD_PLAYBOOKS_BUILT, MODULE_CATALOGUE, moduleHref, REPLY_CHANNELS } from "@eva/types";
 import { PRODUCT_NAV } from "@/lib/navigation";
 
 /**
- * The replies screen (slice 3.1c-1) — the first screen the lead product owns.
+ * The Automations screen (slice 3.5a, ruling 93) — the Replies screen of
+ * 3.1c-1, reshaped into cards with switches. The guards of that screen's spec
+ * are kept whole, pointed at the new files.
  *
- * ⚠️ THE FIRST TEST HERE EXISTS BECAUSE I SHIPPED THE DEFECT IT CATCHES INTO
- * MY OWN WORKING TREE. The confirm buttons for "Eva sends this one", "Turn off
- * automatic replies" and "Delete" each own a `<form>`, and I first wrote them
- * INSIDE the editor's `<form>`. HTML forbids a nested form: React renders the
- * markup happily, the browser discards the inner one, and every confirm button
- * silently becomes a submit of the enclosing SAVE form — so "Yes, delete it"
- * would have saved the template instead of deleting it.
+ * ⚠️ THE FIRST TEST HERE EXISTS BECAUSE THE DEFECT IT CATCHES WAS SHIPPED
+ * INTO A WORKING TREE ONCE. Each confirm control owns a `<form>`, and the first
+ * Replies screen put them INSIDE the editor's `<form>`. HTML forbids a nested
+ * form: React renders the markup happily, the browser discards the inner one,
+ * and every confirm button silently becomes a submit of the enclosing form —
+ * "Yes, clear it" would save the box instead of emptying it.
  *
  * Typecheck passed. Lint passed. The build passed. Every test passed. **No test
- * in this repo can click**, and this is precisely the class of defect that
- * makes that sentence expensive — the same shape as #125's reminder timing,
- * which 607 green tests could not see.
- *
- * ⚠️ SO IT IS PARSED, NOT GREPPED, AND IT FOLLOWS COMPOSITION. The two forms
- * are never adjacent in the source: `ConfirmRow` renders the inner one, three
- * components render `ConfirmRow`, and `ReplyTemplateCard` renders those. A
- * scanner that only looked for `<form>` inside `<form>` in one JSX tree would
- * find nothing and pass forever.
+ * in this repo can click**, so it is parsed, not grepped, and it follows
+ * composition — the inner form is reached through components, never adjacent.
  */
 
 const CONTROLS = fileURLToPath(
-  new URL("../src/app/app/lead-follow-up/replies/reply-controls.tsx", import.meta.url),
+  new URL("../src/app/app/lead-follow-up/automations/playbook-controls.tsx", import.meta.url),
 );
 const ACTIONS = fileURLToPath(
-  new URL("../src/app/app/lead-follow-up/replies/actions.ts", import.meta.url),
+  new URL("../src/app/app/lead-follow-up/automations/actions.ts", import.meta.url),
 );
 const PAGE = fileURLToPath(
-  new URL("../src/app/app/lead-follow-up/replies/page.tsx", import.meta.url),
+  new URL("../src/app/app/lead-follow-up/automations/page.tsx", import.meta.url),
 );
 
 interface ComponentFacts {
@@ -142,39 +136,39 @@ function nestedForms(source: string, fileName: string): string[] {
   return violations.sort();
 }
 
-describe("the replies screen never nests a form", () => {
+describe("the automations screen never nests a form", () => {
   it("has no form inside a form, following composition", () => {
-    expect(nestedForms(readFileSync(CONTROLS, "utf8"), "reply-controls.tsx")).toEqual([]);
+    expect(nestedForms(readFileSync(CONTROLS, "utf8"), "playbook-controls.tsx")).toEqual([]);
   });
 
   /**
-   * ⚠️ THE CASE THAT MUST FAIL (habit 3), AND IT IS THE SHAPE I ACTUALLY WROTE
-   * — the inner form reached through TWO components, not sitting next to the
-   * outer one. Without this, the assertion above passes just as happily against
-   * a scanner that resolves nothing and finds nothing, forever.
+   * ⚠️ THE CASE THAT MUST FAIL (habit 3), AND IT IS THE SHAPE THAT WAS ACTUALLY
+   * WRITTEN ONCE — the inner form reached through TWO components, not sitting
+   * next to the outer one. Without this, the assertion above passes just as
+   * happily against a scanner that resolves nothing and finds nothing, forever.
    */
   it("catches the nesting when it is two components deep", () => {
     const relapsed = `
       function ConfirmRow() {
         return (
           <form action={formAction}>
-            <PrimarySubmit>Yes, delete it</PrimarySubmit>
+            <PrimarySubmit>Yes, clear it</PrimarySubmit>
           </form>
         );
       }
-      function DeleteTemplate() {
+      function ClearWording() {
         return <ConfirmRow />;
       }
-      function ReplyTemplateCard() {
+      function WordingBox() {
         return (
           <form action={save}>
-            <TextField name="name" />
-            <DeleteTemplate />
+            <TextArea name="body" />
+            <ClearWording />
           </form>
         );
       }`;
     expect(nestedForms(relapsed, "relapsed.tsx")).toEqual([
-      "ReplyTemplateCard renders <DeleteTemplate/>, which is a <form>, inside its own <form>",
+      "WordingBox renders <ClearWording/>, which is a <form>, inside its own <form>",
     ]);
   });
 
@@ -185,7 +179,7 @@ describe("the replies screen never nests a form", () => {
         return (
           <form action={save}>
             <form action={other}>
-              <button type="submit">Delete</button>
+              <button type="submit">Clear</button>
             </form>
           </form>
         );
@@ -205,43 +199,39 @@ describe("the replies screen never nests a form", () => {
       function Card() {
         return (
           <section>
-            <form action={save}><TextField name="name" /></form>
-            <div><DeleteTemplate /></div>
+            <form action={save}><TextArea name="body" /></form>
+            <div><ClearWording /></div>
           </section>
         );
       }
-      function DeleteTemplate() {
-        return <form action={remove}><button type="submit">Delete</button></form>;
+      function ClearWording() {
+        return <form action={clear}><button type="submit">Clear</button></form>;
       }`;
     expect(nestedForms(fine, "fine.tsx")).toEqual([]);
   });
 
   /** The scan read something. A file it could not parse would pass silently. */
   it("actually found the components it is scanning", () => {
-    const components = readComponents(readFileSync(CONTROLS, "utf8"), "reply-controls.tsx");
-    expect(components.size).toBeGreaterThanOrEqual(6);
-    for (const name of ["ChannelWordings", "ReplyTemplateCard", "ConfirmRow", "MakeAutomatic"]) {
+    const components = readComponents(readFileSync(CONTROLS, "utf8"), "playbook-controls.tsx");
+    expect(components.size).toBeGreaterThanOrEqual(4);
+    for (const name of ["PlaybookCard", "SwitchControl", "WordingBox", "ClearWording"]) {
       expect(components.has(name), `${name} was not found`).toBe(true);
     }
     // And the thing the guard is about is genuinely there to get wrong.
-    expect(rendersFormTransitively("ConfirmRow", components)).toBe(true);
-    expect(rendersFormTransitively("DeleteTemplate", components)).toBe(true);
+    expect(rendersFormTransitively("ClearWording", components)).toBe(true);
+    expect(rendersFormTransitively("WordingBox", components)).toBe(true);
+    expect(rendersFormTransitively("SwitchControl", components)).toBe(true);
   });
 });
 
 /**
- * ⚠️ FOUND BY WALKING, AFTER EVERY TEST IN THIS FILE PASSED.
+ * ⚠️ FOUND BY WALKING THE REPLIES SCREEN, AFTER EVERY TEST PASSED (2026-09-01).
  *
- * Four of the five server actions returned a carefully written success message
- * and **none of those four could ever reach a screen.** Promoting, turning off
- * and deleting all change what the card renders, so `revalidatePath` refreshes
- * the data and the component holding the action state unmounts — taking the
- * message with it. Adding rendered its message only in the collapsed branch,
- * which the open form was keeping shut, so pressing "Add this reply" emptied
- * both boxes and said nothing at all.
- *
- * Typecheck, lint and the whole suite were perfectly happy with copy nobody
- * could read. This is the guard that would have said so.
+ * Four of its five server actions returned a carefully written success message
+ * and **none of those four could ever reach a screen** — each changed what the
+ * card rendered, `revalidatePath` refreshed the data, and the component holding
+ * the action state unmounted, taking the message with it. This is the guard
+ * that would have said so, kept for the three actions here.
  */
 describe("no action promises a message the screen cannot show", () => {
   /** Exported actions whose success path returns a message to render. */
@@ -253,8 +243,7 @@ describe("no action promises a message the screen cannot show", () => {
       const nextExport = source.indexOf("\nexport ", start + 1);
       const body = source.slice(start, nextExport === -1 ? undefined : nextExport);
       // No `s` flag: `[^}]` already matches newlines, and the flag needs an
-      // es2018 target the web app's tsconfig does not set — caught by
-      // `typecheck`, which esbuild had happily run straight past.
+      // es2018 target the web app's tsconfig does not set.
       if (/return\s*\{[^}]*success:/.test(body)) found.push(name);
     }
     return found.sort();
@@ -311,23 +300,18 @@ describe("no action promises a message the screen cannot show", () => {
   });
 });
 
-describe("the replies screen is reachable and on the kit", () => {
-  it("is in the lead product's navigation", () => {
+describe("the automations screen is reachable and on the kit", () => {
+  it("is in the lead product's navigation, under a word a plumber says", () => {
     const items = PRODUCT_NAV.lead_follow_up ?? [];
-    const replies = items.find((item) => item.label === "Replies");
-    expect(replies).toBeDefined();
-    expect(replies!.href).toBe(moduleHref("lead_follow_up", "replies"));
+    const item = items.find((entry) => entry.label === "Automations");
+    expect(item).toBeDefined();
+    expect(item!.href).toBe(moduleHref("lead_follow_up", "automations"));
     // Built from the catalogue, so renaming the product cannot strand the link.
-    expect(replies!.href).toContain(MODULE_CATALOGUE.lead_follow_up.slug);
+    expect(item!.href).toContain(MODULE_CATALOGUE.lead_follow_up.slug);
+    // The old label is gone, not doubled.
+    expect(items.find((entry) => entry.label === "Replies")).toBeUndefined();
   });
 
-  /**
-   * ⚠️ THE SAME RULE THE SETTINGS SCAN ENFORCES, APPLIED BEFORE THE DRIFT
-   * RATHER THAN AFTER IT. Fourteen screens retype the page shell and fifteen
-   * retype the title block; this one is new, so there is no excuse for it to
-   * become the sixteenth. `settings-consistency.spec.tsx` was written after the
-   * copies existed and could only report them.
-   */
   it("uses the kit rather than retyping the frame", () => {
     const source = stripComments(readFileSync(PAGE, "utf8"));
     expect(source).toContain("PageShell");
@@ -339,40 +323,34 @@ describe("the replies screen is reachable and on the kit", () => {
   });
 
   it("builds its links rather than writing them out", () => {
-    const source = stripComments(readFileSync(PAGE, "utf8"));
-    expect(source).not.toContain('"/app/lead-follow-up');
+    for (const file of [PAGE, CONTROLS, ACTIONS]) {
+      expect(stripComments(readFileSync(file, "utf8"))).not.toContain('"/app/lead-follow-up');
+    }
   });
 });
 
-describe("the screen says what Eva can and cannot do, and both halves are checked", () => {
+describe("the screen says what Eva does, and each claim is checked", () => {
   /**
-   * 🚨 THIS GUARD USED TO POINT THE WRONG WAY, AND THE SCREEN WENT FALSE ON
-   * PRODUCTION BECAUSE OF IT.
-   *
-   * It asserted that the words "being built" were PRESENT, reasoning that "when
-   * the reply ships, this test is what will fail". It does not: asserting a
-   * sentence exists fires when somebody DELETES it, never when the sentence
-   * stops being true. Slice 3.1c-3 shipped the automatic reply, nobody touched
-   * this screen, all 2,090 tests stayed green, and the page told customers Eva
-   * could not send while she was sending.
-   *
-   * ⚠️ THE FIX IS TO ASSERT THE CLAIM, NOT THE WORDS. Each half of the sentence
-   * is now checked against what is actually built, so the test fails when
-   * reality moves rather than when the prose does.
+   * 🚨 THE REPLIES SCREEN'S GUARD USED TO POINT THE WRONG WAY, AND THE SCREEN
+   * WENT FALSE ON PRODUCTION BECAUSE OF IT. Asserting a sentence EXISTS fires
+   * when somebody deletes it, never when it stops being true. Each half of the
+   * notice is checked against what is built.
    */
-  it("says Eva sends the wording marked automatic, because she does", () => {
+  it("says Eva sends the instant reply on her own and the out-of-hours reply when closed, because she does", () => {
     const source = stripComments(readFileSync(PAGE, "utf8"));
-    expect(source).toMatch(/Eva sends the wording marked automatic/);
-    // The old claims, both now false. Their return is a regression.
-    expect(source).not.toMatch(/sending these replies is the next thing being built/);
+    expect(source).toMatch(/Eva sends the instant reply the moment an enquiry arrives/);
+    expect(source).toMatch(/When you are closed, the\s+out-of-hours reply goes instead/);
+    expect(source).toMatch(/Nothing else sends until you switch it on/);
+    // The old claims. Their return is a regression.
+    expect(source).not.toMatch(/marked automatic/);
     expect(source).not.toMatch(/next thing being built/);
+    expect(source).not.toMatch(/kept for when Eva can choose/i);
   });
 
   /**
-   * ⚠️ SEND-BY-HAND IS DROPPED (ruling 89), SO NO SENTENCE MAY PROMISE IT.
-   * Four did, for four days on production, about a screen that was never
-   * built (3.1c-4). If it is ever built — inside 3.5 — this is the test that
-   * fails, and the fix is to write the true sentence, not to delete the guard.
+   * ⚠️ SEND-BY-HAND IS DROPPED (ruling 89) AND STAYS DROPPED (ruling 93). If
+   * it is ever built, this is the test that fails, and the fix is to write the
+   * true sentence, not to delete the guard.
    */
   it("promises no send-by-hand, because none exists", () => {
     for (const file of [PAGE, CONTROLS, ACTIONS]) {
@@ -381,59 +359,43 @@ describe("the screen says what Eva can and cannot do, and both halves are checke
   });
 
   /**
-   * ⚠️ AND ONLY FOR A CHANNEL THAT CAN SEND. Until ruling 89 the proxy for
-   * "can send" was "has wordings", and every channel has wordings from first
-   * sight — so an email-only customer was warned about WhatsApp silence they
-   * could do nothing about on this screen.
+   * ⚠️ AND WARNS ONLY FOR A CHANNEL THAT CAN SEND — ruling 89's rule, kept:
+   * every channel has boxes from first sight, so "nobody hears back" is only
+   * true and fixable here for a channel that is connected.
    */
-  it("warns when no automatic reply is switched on, for a channel that is connected", () => {
+  it("warns when the instant reply is on but a connected channel's box is empty", () => {
     const source = stripComments(readFileSync(PAGE, "utf8"));
-    expect(source).toContain("automaticTemplateIds[channel] === null");
-    expect(source).toContain("sendsFrom[channel] !== null");
+    expect(source).toContain("silentChannels(data.playbooks, data.sendsFrom)");
     expect(source).toContain("nobody hears back");
+    expect(source).toContain("instantReplyOff(data.playbooks)");
+  });
+
+  it("draws a box per channel on every card, so a second channel cannot vanish into one list", () => {
+    const source = stripComments(readFileSync(CONTROLS, "utf8"));
+    expect(source).toContain("REPLY_CHANNELS.map(");
+    expect(source).toContain("REPLY_CHANNEL_LABELS[channel]");
   });
 });
 
 /**
- * 🚨 THE TRIPWIRE FOR THE NEXT CHANNEL (slice 3.2b).
- *
- * Everything on this screen is written for one channel today, and reads
- * correctly BECAUSE there is one: the list shows no channel headings, and the
- * warning names a medium the customer only has one of. The moment
- * `REPLY_CHANNELS` gains a second value that stops being true, and none of it
- * fails on its own — a flat list of eight wordings from two mediums looks
- * exactly like a working screen.
- *
- * ⚠️ THIS TEST EXISTS TO FAIL, AND WHEN IT DOES THE FIX IS NOT TO CHANGE THE
- * NUMBER. Walk the screen with two channels connected, check the grouping and
- * the per-channel warnings actually read correctly, THEN update this. The
- * alternative — building the two-channel UI now — is machinery for a state that
- * cannot occur, which is ruling 57's objection one level down.
- *
- * It fired once, on 2026-09-05 (slice 3.4a), and the screen was walked before
- * the list below grew: the founder opened it on localhost with email and
- * WhatsApp seeded — two groups under their headings, a pill per channel, a
- * different hint under each wording box, the footer naming where each
- * channel's replies leave from. Messenger and Instagram will fire it again.
+ * 🚨 TWO TRIPWIRES. Adding a channel, or adding a card, is a deliberate act
+ * with a walk — not a key appearing on a screen that promises what nothing yet
+ * does. When either fires, the fix is not to change the list: walk the screen
+ * with the new channel connected or the new card running, THEN update it.
  */
-describe("adding a channel is a deliberate act, not a silent one", () => {
+describe("adding a channel or a card is a deliberate act, not a silent one", () => {
   it("fails when REPLY_CHANNELS grows, so the screen is re-walked", () => {
     expect(
       REPLY_CHANNELS,
-      "a channel was added — walk the Replies screen with all of them connected before updating this",
+      "a channel was added — walk the Automations screen with all of them connected before updating this",
     ).toEqual(["email", "whatsapp"]);
   });
 
-  /**
-   * ⚠️ AND THE SCREEN MUST ALREADY BE ABLE TO TELL THEM APART. The grouping code
-   * is written and unexercised; this is what stops somebody deleting it as dead
-   * while it is the only thing standing between the second channel and one
-   * undifferentiated list.
-   */
-  it("draws a labelled panel per channel, whether or not the channel holds a wording", () => {
-    const source = stripComments(readFileSync(PAGE, "utf8"));
-    expect(source).toContain("REPLY_CHANNELS.map(");
-    expect(source).toContain("REPLY_CHANNEL_LABELS[channel]");
+  it("fails when a card is built, so the screen is re-walked with it running", () => {
+    expect(
+      LEAD_PLAYBOOKS_BUILT,
+      "a card was built — walk the Automations screen with it switched on before updating this",
+    ).toEqual(["instant_reply", "after_hours"]);
   });
 });
 

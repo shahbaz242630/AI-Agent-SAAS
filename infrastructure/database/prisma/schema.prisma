@@ -48,6 +48,7 @@ model Organisation {
   inboundForwardingRequests InboundForwardingRequest[]
   leadReplyTemplates LeadReplyTemplate[]
   leadReplyDecisions LeadReplyDecision[]
+  leadPlaybooks    LeadPlaybook[]
   channelConnections ChannelConnection[]
   inboundChannelMessages InboundChannelMessage[]
   people          Person[]
@@ -1192,11 +1193,17 @@ model LeadReplyTemplate {
   /// (`bodyText`), so offering rich text would promise formatting the send
   /// path does not carry.
   body           String
-  /// ⚠️ EXACTLY ONE AUTOMATIC TEMPLATE PER ORGANISATION **PER CHANNEL**
-  /// (ruling 55, widened by ruling 63) — the only thing Eva ever sends on her
-  /// own on that medium. The rest are saved wordings a human picks from the
-  /// enquiry screen.
-  isAutomatic    Boolean      @default(false) @map("is_automatic")
+  /// Which card this is the words of (slice 3.5a, migration 0045, ruling 93):
+  /// `instant_reply` is the wording Eva sends the moment an enquiry arrives
+  /// (what `is_automatic` used to mark), `after_hours` the one she sends
+  /// instead when the enquiry arrives outside opening hours. NULL is a
+  /// wording bound to no behaviour — kept, read by nothing, invisible to the
+  /// screen. One live wording per organisation per channel per playbook
+  /// (`lead_reply_templates_live_playbook_key`, in the migration).
+  ///
+  /// ⚠️ `is_automatic` WAS DROPPED BY 0045, NOT KEPT BESIDE THIS. Two columns
+  /// saying one thing is how a screen comes to lie.
+  playbookKey    String?      @map("playbook_key")
   createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt      DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
   createdBy      String?      @map("created_by") @db.Uuid
@@ -1219,6 +1226,36 @@ model LeadReplyTemplate {
   decisions      LeadReplyDecision[]
 
   @@map("lead_reply_templates")
+}
+
+/// The switch on one thing Eva does on her own (slice 3.5a, migration 0045,
+/// ruling 93; blueprint §3.6 — "on/off, a wording box per channel, one or two
+/// numbers, and nothing else"). The lead product's third owned table.
+///
+/// ⚠️ THE KEY IS THE LIST OF CARDS AND THE DATABASE HOLDS IT: `instant_reply`,
+/// `after_hours`, `no_reply_nudge`, `quote_chase`, `owner_alert` (the CHECK in
+/// the migration). Only the first two do anything in 3.5a; the others arrive
+/// with the slices that run them, and the numbers a card needs (`delay_hours`,
+/// `max_touches`) arrive with the card that reads them.
+///
+/// ⚠️ `enabled` DEFAULTS TO FALSE, AND A MISSING ROW MEANS OFF. The reply path
+/// reads the instant reply's row and stays silent — with a recorded reason —
+/// when it is absent or off. Nothing new ever sends by surprise.
+model LeadPlaybook {
+  id             String       @id @default(uuid()) @db.Uuid
+  organisationId String       @map("organisation_id") @db.Uuid
+  key            String
+  enabled        Boolean      @default(false)
+  createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy      String?      @map("created_by") @db.Uuid
+  deletedAt      DateTime?    @map("deleted_at") @db.Timestamptz(6)
+  organisation   Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+
+  @@index([organisationId])
+  /// One live switch per organisation per key: `lead_playbooks_live_key_key`,
+  /// a partial unique in the migration (Prisma cannot express `WHERE`).
+  @@map("lead_playbooks")
 }
 
 /// What Eva decided about one enquiry, and what she sent (slice 3.1c-3,

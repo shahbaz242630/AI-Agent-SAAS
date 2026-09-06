@@ -108,7 +108,7 @@ describe("Eva answers an enquiry", () => {
      * a path no customer ever takes.
      */
     await request(app.getHttpServer())
-      .get(`/organisations/${org.id}/lead-reply-templates`)
+      .get(`/organisations/${org.id}/lead-playbooks`)
       .set("Authorization", `Bearer ${token}`)
       .expect(200);
 
@@ -455,7 +455,7 @@ describe("Eva answers an enquiry", () => {
           .expect(200)
       ).body.address as string;
       await request(app.getHttpServer())
-        .get(`/organisations/${unequipped.id}/lead-reply-templates`)
+        .get(`/organisations/${unequipped.id}/lead-playbooks`)
         .set("Authorization", `Bearer ${token}`)
         .expect(200);
     });
@@ -483,6 +483,136 @@ describe("Eva answers an enquiry", () => {
       expect(decision!.verdict).toBe("reply");
       expect(decision!.status).toBe("not_sent");
       expect(decision!.failureReason).toContain("no mailbox");
+    });
+  });
+
+  /**
+   * 🔑 THE SWITCHES (slice 3.5a, ruling 93). The instant reply is a card with
+   * an on/off; the out-of-hours reply is a second card whose wording goes
+   * INSTEAD when the enquiry arrives while the business is closed — still
+   * within seconds, never deferred. The clock is the organisation's own.
+   */
+  describe("the switches (3.5a)", () => {
+    let ownerToken: string;
+    const ALL_CLOSED = {
+      mon: null,
+      tue: null,
+      wed: null,
+      thu: null,
+      fri: null,
+      sat: null,
+      sun: null,
+    };
+    /** Open every minute of every day — bar the last, which no test runs in. */
+    const ALWAYS_OPEN = Object.fromEntries(
+      ["mon", "tue", "wed", "thu", "fri", "sat", "sun"].map((day) => [
+        day,
+        { open: "00:00", close: "23:59" },
+      ]),
+    );
+
+    const flip = (key: string, enabled: boolean) =>
+      request(app.getHttpServer())
+        .patch(`/organisations/${org.id}/lead-playbooks/${key}`)
+        .set("Authorization", `Bearer ${ownerToken}`)
+        .send({ enabled })
+        .expect(200);
+    const setClock = (body: object) =>
+      request(app.getHttpServer())
+        .patch(`/organisations/${org.id}/settings`)
+        .set("Authorization", `Bearer ${ownerToken}`)
+        .send(body)
+        .expect(200);
+
+    beforeAll(async () => {
+      const member = org.members.find((m) => m.roleKey === "owner") ?? org.members[0]!;
+      ownerToken = await signToken({ sub: member.authUserId, email: member.email });
+    });
+
+    afterAll(async () => {
+      // Leave the organisation as the other tests expect it.
+      await flip("after_hours", false);
+      await flip("instant_reply", true);
+      await setClock({ businessHours: null });
+    });
+
+    it("stays silent, and says why, when the instant reply is switched off", async () => {
+      await flip("instant_reply", false);
+      await post(enquiry()).expect(200);
+      expect(sent).toHaveLength(0);
+
+      const lead = await leadFrom(sender);
+      expect(lead, "the enquiry is still filed").toBeTruthy();
+      const decision = await decisionFor(lead!.id);
+      expect(decision).toMatchObject({
+        verdict: "hold",
+        signal: "playbook_off",
+        status: "not_sent",
+        channel: "email",
+      });
+      expect(decision!.reason).toContain("not switched on");
+      await flip("instant_reply", true);
+    });
+
+    it("sends the out-of-hours wording, within seconds, when the business is closed", async () => {
+      await setClock({ timezone: "Europe/London", businessHours: ALL_CLOSED });
+      await flip("after_hours", true);
+      await post(enquiry()).expect(200);
+
+      expect(sent).toHaveLength(1);
+      expect(sent[0]!.bodyText).toContain("outside our working hours");
+      const decision = await decisionFor((await leadFrom(sender))!.id);
+      expect(decision!.status).toBe("sent");
+      const wording = await owner.leadReplyTemplate.findUniqueOrThrow({
+        where: { id: decision!.templateId! },
+      });
+      expect(wording.playbookKey).toBe("after_hours");
+    });
+
+    it("sends the instant wording when the business is open, card on or not", async () => {
+      await setClock({ businessHours: ALWAYS_OPEN });
+      await post(enquiry()).expect(200);
+      expect(sent).toHaveLength(1);
+      expect(sent[0]!.bodyText).toContain("your enquiry has come through and we have it");
+    });
+
+    it("falls back to the instant wording when the out-of-hours box is empty on this channel", async () => {
+      await setClock({ businessHours: ALL_CLOSED });
+      await request(app.getHttpServer())
+        .delete(`/organisations/${org.id}/lead-playbooks/after_hours/wordings/email`)
+        .set("Authorization", `Bearer ${ownerToken}`)
+        .expect(204);
+      await post(enquiry()).expect(200);
+      expect(sent).toHaveLength(1);
+      expect(sent[0]!.bodyText).toContain("your enquiry has come through and we have it");
+      expect(sent[0]!.bodyText).not.toContain("outside our working hours");
+    });
+
+    it("sends the instant wording when the hours are cleared, even with the card still on", async () => {
+      await setClock({ businessHours: null });
+      await post(enquiry()).expect(200);
+      expect(sent).toHaveLength(1);
+      expect(sent[0]!.bodyText).toContain("your enquiry has come through and we have it");
+    });
+
+    it("stays silent, and says which box is empty, when the instant wording is cleared", async () => {
+      await request(app.getHttpServer())
+        .delete(`/organisations/${org.id}/lead-playbooks/instant_reply/wordings/email`)
+        .set("Authorization", `Bearer ${ownerToken}`)
+        .expect(204);
+      await post(enquiry()).expect(200);
+      expect(sent).toHaveLength(0);
+      const decision = await decisionFor((await leadFrom(sender))!.id);
+      expect(decision).toMatchObject({ verdict: "reply", status: "not_sent" });
+      expect(decision!.failureReason).toContain("no Email wording is set for the instant reply");
+      // Put it back for whatever runs after.
+      await request(app.getHttpServer())
+        .put(`/organisations/${org.id}/lead-playbooks/instant_reply/wordings/email`)
+        .set("Authorization", `Bearer ${ownerToken}`)
+        .send({
+          body: "Thanks for getting in touch — your enquiry has come through and we have it.",
+        })
+        .expect(200);
     });
   });
 

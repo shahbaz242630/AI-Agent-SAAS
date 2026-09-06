@@ -39,6 +39,8 @@ export type WebPermissionKey =
   // would come. The API has accepted `reminders:write` since slice 1.5; until
   // 1.8 no screen called it.
   | "reminders:write"
+  // Slice 3.5a — the Opening hours screen (the timezone and the hours).
+  | "settings:manage"
   /**
    * Slice 3.1a — the enquiry book.
    *
@@ -148,6 +150,7 @@ export type WriteAction =
   | "confirm-import"
   | "cancel-import"
   | "change-settings"
+  | "change-clock"
   | "change-reminder-timing"
   // Slice 3.1a — the enquiry book.
   | "stop-contacting"
@@ -185,6 +188,10 @@ const REFUSED: Record<WriteAction, string> = {
   "confirm-import": "Your role can't import invoices. Ask an owner or administrator.",
   "cancel-import": "Your role can't discard an upload. Ask an owner or administrator.",
   "change-settings": "Your role can't change invoice settings. Ask an owner or administrator.",
+  // Slice 3.5a — the timezone and the opening hours are `settings:manage`,
+  // a different key from the currency's, so a different sentence.
+  "change-clock":
+    "Your role can't change the timezone or opening hours. Ask an owner or administrator.",
   // Deliberately NOT folded into `change-settings`: "invoice settings" is the
   // currency default and changes nothing that exists, whereas this reschedules
   // every invoice already being chased. Telling someone the wrong one is the

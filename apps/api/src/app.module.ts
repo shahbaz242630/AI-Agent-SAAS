@@ -13,7 +13,7 @@ import { SuppressionModule } from "./platform/suppression/suppression.module.js"
 import { ImportsModule } from "./products/invoice-follow-up/imports/imports.module.js";
 import { InvoiceDocumentsModule } from "./products/invoice-follow-up/invoice-documents/invoice-documents.module.js";
 import { InvoicesModule } from "./products/invoice-follow-up/invoices/invoices.module.js";
-import { LeadReplyTemplatesModule } from "./products/lead-follow-up/templates/lead-reply-templates.module.js";
+import { LeadPlaybooksModule } from "./products/lead-follow-up/playbooks/lead-playbooks.module.js";
 import { LeadReplyModule } from "./products/lead-follow-up/reply/lead-reply.module.js";
 import { NewLeadHandlersModule } from "./products/new-lead-handlers.module.js";
 import { MailboxesModule } from "./capabilities/mailbox/mailboxes.module.js";
@@ -49,7 +49,7 @@ import { sentryErrorReporter } from "./common/monitoring/sentry.js";
     MessagingModule,
     EntitlementsModule,
     LeadsModule,
-    LeadReplyTemplatesModule,
+    LeadPlaybooksModule,
     LeadReplyModule,
     /**
      * ⚠️ WIRES THE MAILBOX CAPABILITY'S NEW-LEAD PORT TO THE PRODUCTS THAT

@@ -15,6 +15,7 @@ import {
   REPLY_CHANNEL_LABELS,
   REPLY_CHANNELS,
   replyChannelForLeadSource,
+  type LeadReplyStatusDto,
   type ReplyChannel,
 } from "@eva/types";
 import { describeMoment } from "@/lib/today";
@@ -279,16 +280,27 @@ export function timelineEmptyLine(who: string): string {
 export function answeredLine(
   lead: { firstRespondedAt: string | null; source: string },
   timezone: string,
+  reply: LeadReplyStatusDto | null = null,
 ): string {
-  if (lead.firstRespondedAt) return describeMoment(lead.firstRespondedAt, timezone);
+  if (lead.firstRespondedAt) {
+    const when = describeMoment(lead.firstRespondedAt, timezone);
+    // Which card's words went, when it was not the ordinary one (3.5a).
+    return reply?.decided && reply.wording?.playbookKey === "after_hours"
+      ? `${when}, with the out-of-hours reply.`
+      : when;
+  }
   /**
    * ⚠️ NO CLAIM ABOUT WHAT EVA CANNOT DO. Until 3.4a this said "Eva cannot
    * reply on WhatsApp until a later piece is built", which was true for one
    * day and false from the next deploy — the same defect as the sentence it
-   * replaced. Eva answers on both channels now; "Not yet." is the whole truth
-   * for either, and the reason lives on the decision, not here.
+   * replaced. "Not yet." is the whole truth on its own; since 3.5a the
+   * DECISION's reason follows it when there is one (ruling 90's second
+   * leftover) — a sentence the api wrote at the moment it decided, never a
+   * guess made here about what Eva can or cannot do.
    */
-  return "Not yet.";
+  if (!reply?.decided) return "Not yet.";
+  if (reply.status === "pending") return "Not yet — Eva is sending.";
+  return reply.reason ? `Not yet — ${reply.reason}.` : "Not yet.";
 }
 
 // ---------------------------------------------------------------------

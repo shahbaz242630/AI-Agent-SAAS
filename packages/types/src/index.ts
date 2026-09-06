@@ -68,6 +68,16 @@ export const PERMISSION_KEYS = [
   "modules:read",
   "modules:manage",
   /**
+   * Slice 3.5a. The organisation's own clock: its timezone and opening hours.
+   * `core`, because both products read them — the invoice reminders decide
+   * what "today" is by the timezone, and the out-of-hours reply decides
+   * "closed" by the hours. Owner and administrator (the administrator filter
+   * below inherits it); the currency stays on `invoices:write`, as before.
+   * The agent's call, flagged in the 3.5a PR: `organisations.service.ts` said
+   * the second non-invoice setting was the moment to name this key.
+   */
+  "settings:manage",
+  /**
    * Slice 3.1a. The lead product finally owns permissions of its own — until
    * now it granted nothing at all, so buying it gave a customer no new access
    * to anything.
@@ -281,6 +291,7 @@ export const PERMISSION_MODULES: Record<
   "permissions:manage": "core",
   "modules:read": "core",
   "modules:manage": "core",
+  "settings:manage": "core",
   "invoices:read": ["email_credit_controller"],
   "invoices:write": ["email_credit_controller"],
   "imports:read": ["email_credit_controller"],
@@ -1388,72 +1399,148 @@ export function isSessionIdle(lastSeenAt: Date | null | undefined, now: Date): b
 // --- Slice 3.1c-1: the words Eva replies with ---
 
 /**
- * One reply template as the API exposes it.
+ * The things Eva does on her own for Lead Follow-up — one card each on the
+ * Automations screen (slice 3.5a, ruling 93; blueprint §3.6, ruling 71).
  *
- * ⚠️ `isAutomatic` IS THE ONLY FIELD WITH TEETH. It marks the single wording
- * Eva sends unattended (ruling 55); the others are saved wordings a human picks
- * from the enquiry screen. Exactly one row per organisation may carry it, and
- * that is enforced by a partial unique index rather than by this type.
+ * 🔑 THE LIST IS MIGRATION 0045's CHECK, VERBATIM, on both `lead_playbooks.key`
+ * and `lead_reply_templates.playbook_key`. Adding a card is a migration.
+ * Only the cards in `LEAD_PLAYBOOKS_BUILT` are shown and run; the others are
+ * admitted by the database so the slice that runs them needs no migration to
+ * say the one word the table exists for.
  */
-export interface LeadReplyTemplateDto {
+export const LEAD_PLAYBOOK_KEYS = [
+  "instant_reply",
+  "after_hours",
+  "no_reply_nudge",
+  "quote_chase",
+  "owner_alert",
+] as const;
+
+export type LeadPlaybookKey = (typeof LEAD_PLAYBOOK_KEYS)[number];
+
+export function isLeadPlaybookKey(value: string): value is LeadPlaybookKey {
+  return (LEAD_PLAYBOOK_KEYS as readonly string[]).includes(value);
+}
+
+/**
+ * The cards that exist as behaviour today, in the order the screen shows them.
+ *
+ * ⚠️ A TRIPWIRE, LIKE `REPLY_CHANNELS`. 3.5c adds the nudge, 3.5d the quote
+ * chase and the owner alert; each arrival is a deliberate act with a walk, not
+ * a key appearing on a screen that promises what nothing yet does.
+ */
+export const LEAD_PLAYBOOKS_BUILT = ["instant_reply", "after_hours"] as const;
+
+export type LeadPlaybookBuiltKey = (typeof LEAD_PLAYBOOKS_BUILT)[number];
+
+/** What a customer sees a card called, and the one line saying when it fires. */
+export const LEAD_PLAYBOOK_LABELS: Record<LeadPlaybookKey, { name: string; when: string }> = {
+  instant_reply: {
+    name: "Instant reply",
+    when: "The moment an enquiry arrives, Eva sends this.",
+  },
+  after_hours: {
+    name: "Out-of-hours reply",
+    when: "When an enquiry arrives outside your opening hours, Eva sends this instead.",
+  },
+  no_reply_nudge: {
+    name: "No-reply nudge",
+    when: "If they have not replied after Eva's first answer, Eva follows up.",
+  },
+  quote_chase: {
+    name: "Quote chase",
+    when: "After you mark an enquiry as quoted, Eva follows up if they go quiet.",
+  },
+  owner_alert: {
+    name: "Owner alert",
+    when: "When an enquiry arrives, Eva tells you.",
+  },
+};
+
+/** One card's wording on one channel, as the API exposes it. */
+export interface LeadPlaybookWordingDto {
   id: string;
-  /**
-   * Which medium this wording is for (slice 3.2b). ⚠️ **Set once, at creation,
-   * and never changeable** — a wording is written FOR a medium, so moving one
-   * would make it wrong rather than merely misfiled. `UpdateLeadReplyTemplateInput`
-   * omits the field entirely for that reason.
-   */
   channel: ReplyChannel;
-  name: string;
   body: string;
-  isAutomatic: boolean;
   /** ISO 8601. Shown as "last edited" so a customer can tell theirs from ours. */
   updatedAt: string;
 }
 
 /**
- * GET .../lead-reply-templates.
+ * One card: its switch and its wording per channel.
  *
- * ⚠️ `automaticTemplateIds` IS DERIVED, AND ITS NULLS ARE LOAD-BEARING. A
- * customer can turn the automatic reply off entirely, and the screen has to say
- * so plainly — "Eva will not reply on her own" is a state somebody chose, not
- * an error. The sender must be able to DETECT it rather than guess, which is
- * why it is a field here and not something the caller works out by scanning.
- *
- * ⚠️ IT BECAME A MAP IN SLICE 3.2b, AND A SINGLE ID WOULD NOW BE A BUG. Ruling
- * 63 makes the automatic reply per CHANNEL. One id could only ever describe one
- * of them, so a customer with email answering and WhatsApp silent would look
- * identical to one with both answering — on the screen whose whole job is
- * saying which.
- *
- * Every channel in `REPLY_CHANNELS` is always present, so "no automatic reply"
- * and "no such channel" stay different shapes.
+ * ⚠️ EVERY CHANNEL IS ALWAYS PRESENT, AND A NULL IS LOAD-BEARING. A card with
+ * no wording on a channel means Eva is silent on that channel for that
+ * behaviour — a state a customer can choose by clearing the box — and it has
+ * to stay a different shape from "no such channel".
  */
-export interface LeadReplyTemplatesDto {
-  templates: LeadReplyTemplateDto[];
-  automaticTemplateIds: Record<ReplyChannel, string | null>;
-  /**
-   * Where each channel's replies leave from (ruling 89): the connected
-   * mailbox's address, the connected WhatsApp number's display name, or
-   * `null` when nothing is connected for the product on that channel — the
-   * state the screen has to be honest about, because wordings seed for every
-   * channel on first sight whether or not the channel can send. `{ from: null }`
-   * is connected-but-unnamed, a different thing from not connected.
-   */
-  sendsFrom: Record<ReplyChannel, { from: string | null } | null>;
+export interface LeadPlaybookDto {
+  key: LeadPlaybookKey;
+  enabled: boolean;
+  wordings: Record<ReplyChannel, LeadPlaybookWordingDto | null>;
 }
 
 /**
- * How many templates one organisation may keep **per channel**.
+ * GET .../lead-playbooks — the Automations screen in one read.
  *
- * ⚠️ A LIMIT, NOT A TARGET. The founder's model is "2–3 the customer edits" and
- * three ship by default; the cap exists so a list stays something a person
- * picks from at the moment they are answering an enquiry. Ten is well past
- * anything asked for and still short of a filing system.
- *
- * ⚠️ PER CHANNEL SINCE SLICE 3.2b. Counted across channels, a customer's email
- * wordings would eat the budget for their WhatsApp ones — so connecting a
- * second channel could refuse the first wording written for it, citing a limit
- * the customer would have to visit another screen to understand.
+ * `sendsFrom` is where each channel's replies leave from (ruling 89): the
+ * connected mailbox's address, the connected WhatsApp number's display name,
+ * or `null` when nothing is connected for the product on that channel.
+ * `{ from: null }` is connected-but-unnamed, a different thing from not
+ * connected. `openingHoursSet` is whether the organisation has opening hours
+ * at all — the out-of-hours card cannot be switched on without them, and the
+ * screen says so rather than letting the switch fail.
  */
-export const MAX_LEAD_REPLY_TEMPLATES = 10;
+export interface LeadPlaybooksDto {
+  playbooks: LeadPlaybookDto[];
+  sendsFrom: Record<ReplyChannel, { from: string | null } | null>;
+  openingHoursSet: boolean;
+}
+
+/**
+ * GET .../lead-reply-decisions/for-lead/:leadId — what happened to one
+ * enquiry's reply, for the "Answered" line on the enquiry page (ruling 90's
+ * second leftover, delivered in 3.5a).
+ *
+ * `decided: false` is an enquiry Eva has not yet looked at (or one filed by
+ * hand, which never reaches the reply path). Otherwise `status` is the
+ * decision row's, `reason` is the customer-grade sentence for a reply that
+ * did not go (the hold, the refusal, or the failure), and `wording` names the
+ * card whose words went when one did.
+ */
+export type LeadReplyStatusDto =
+  | { decided: false }
+  | {
+      decided: true;
+      status: "pending" | "sent" | "failed" | "deferred" | "not_sent";
+      reason: string | null;
+      sentAt: string | null;
+      wording: { playbookKey: LeadPlaybookKey | null; channel: ReplyChannel } | null;
+    };
+
+/**
+ * Opening hours, as `organisation_settings.business_hours` holds them since
+ * 3.5a: one range per weekday in the organisation's own timezone, or `null`
+ * for a closed day. `"HH:MM"`, 24-hour, `open` strictly before `close` —
+ * validated in `@eva/validation`, never trusted from the column.
+ */
+export const WEEKDAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"] as const;
+
+export type Weekday = (typeof WEEKDAYS)[number];
+
+export const WEEKDAY_LABELS: Record<Weekday, string> = {
+  mon: "Monday",
+  tue: "Tuesday",
+  wed: "Wednesday",
+  thu: "Thursday",
+  fri: "Friday",
+  sat: "Saturday",
+  sun: "Sunday",
+};
+
+export interface OpeningRange {
+  open: string;
+  close: string;
+}
+
+export type BusinessHours = Record<Weekday, OpeningRange | null>;

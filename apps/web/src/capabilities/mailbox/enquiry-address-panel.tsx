@@ -24,8 +24,8 @@ import { PrimaryAction } from "@/components/ui";
 export function EnquiryAddressPanel({
   address,
   /**
-   * Where "what Eva replies" goes. Optional so the panel reads correctly with
-   * or without the link.
+   * Where "what Eva does on her own" goes — the Automations screen since
+   * 3.5a. Optional so the panel reads correctly with or without the link.
    */
   repliesHref,
 }: {
@@ -90,16 +90,18 @@ export function EnquiryAddressPanel({
        *
        * "The wording you have marked as automatic" is conditional by
        * construction — a customer who has switched the automatic reply off has
-       * marked none, and the Replies screen says so in red.
+       * marked none, and the Automations screen says so in red. Since 3.5a the
+       * sentence says "your instant reply" — the card's name, which is what a
+       * customer who has switched it off will go looking for.
        */}
       <p className="text-[12.5px] text-muted-foreground">
         Eva records every enquiry that arrives here, with the proof of who sent it and when, and
-        answers it with the wording you have marked as automatic
+        answers it with your instant reply
         {repliesHref ? (
           <>
             {" — "}
             <a href={repliesHref} className="font-medium text-link hover:underline">
-              what Eva replies
+              what Eva does on her own
             </a>
           </>
         ) : null}

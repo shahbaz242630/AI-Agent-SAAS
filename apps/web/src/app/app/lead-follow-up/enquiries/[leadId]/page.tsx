@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
-import { moduleHref, moduleName } from "@eva/types";
+import { moduleHref, moduleName, type LeadReplyStatusDto } from "@eva/types";
 import { ApiError, apiFetch } from "@/lib/api";
 import { fetchOrganisations } from "@/lib/organisations";
 import { can } from "@/lib/permissions";
@@ -172,6 +172,25 @@ export default async function EnquiryDetailPage({
     else throw error;
   }
 
+  /**
+   * What happened to Eva's reply (3.5a; ruling 90's second leftover). Asked
+   * of the PRODUCT — the decision is its table, and the platform's lead
+   * endpoint may not read it. A failure here costs one clause of one line,
+   * so it is never allowed to take the enquiry down with it.
+   */
+  let reply: LeadReplyStatusDto | null = null;
+  try {
+    reply = (await (
+      await apiFetch(
+        `/organisations/${organisation.id}/lead-reply-decisions/for-lead/${leadId}`,
+        accessToken,
+      )
+    ).json()) as LeadReplyStatusDto;
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 401) redirect("/sign-in");
+    else if (!(error instanceof ApiError)) throw error;
+  }
+
   return (
     <Shell>
       <section className="flex w-full flex-col gap-2">
@@ -221,7 +240,7 @@ export default async function EnquiryDetailPage({
             {lead.enquiry ?? "Nothing was written down."}
           </p>
         </div>
-        <Field label="Answered" value={answeredLine(lead, timezone)} />
+        <Field label="Answered" value={answeredLine(lead, timezone, reply)} />
       </section>
 
       {/**

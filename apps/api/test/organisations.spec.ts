@@ -534,3 +534,126 @@ describe("Organisations: default invoice currency (task 13)", () => {
     expect(stored.defaultCurrency).toBe("GBP");
   });
 });
+
+/**
+ * The organisation's own clock: its timezone and opening hours (slice 3.5a).
+ *
+ * ⚠️ `settings:manage`, NOT `invoices:write`. The currency is an invoice-domain
+ * default; the clock is read by both products — the reminders decide what
+ * "today" is by the timezone, the out-of-hours reply decides "closed" by the
+ * hours — so it is a `core` key held by the owner and the administrator.
+ */
+describe("Organisations: the timezone and the opening hours (3.5a)", () => {
+  let app: INestApplication;
+  let owner: EvaPrismaClient;
+  let org: FixtureOrg;
+  const tokens = new Map<string, string>();
+
+  const NINE_TO_FIVE = {
+    mon: { open: "09:00", close: "17:00" },
+    tue: { open: "09:00", close: "17:00" },
+    wed: { open: "09:00", close: "17:00" },
+    thu: { open: "09:00", close: "17:00" },
+    fri: { open: "09:00", close: "17:00" },
+    sat: null,
+    sun: null,
+  };
+
+  const patch = (body: object, roleKey = "owner") =>
+    request(app.getHttpServer())
+      .patch(`/organisations/${org.id}/settings`)
+      .set("Authorization", `Bearer ${tokens.get(roleKey)}`)
+      .send(body);
+
+  const mine = async () => {
+    const response = await request(app.getHttpServer())
+      .get("/organisations")
+      .set("Authorization", `Bearer ${tokens.get("owner")}`)
+      .expect(200);
+    return response.body.find((row: { id: string }) => row.id === org.id);
+  };
+
+  beforeAll(async () => {
+    owner = createOwnerClient();
+    await seedTestDatabase(owner);
+    app = await createTestApp();
+    org = await createOrgWithMembers(owner, "orgclock", ["owner", "administrator", "sales"]);
+    for (const member of org.members) {
+      tokens.set(member.roleKey, await signToken({ sub: member.authUserId, email: member.email }));
+    }
+  });
+
+  afterAll(async () => {
+    await app.close();
+    await owner.$disconnect();
+  });
+
+  it("starts in London with no opening hours, and says so on the summary", async () => {
+    expect(await mine()).toMatchObject({ timezone: "Europe/London", businessHours: null });
+  });
+
+  it("stores a timezone and opening hours, and echoes them on the summary", async () => {
+    const updated = await patch({ timezone: "Asia/Dubai", businessHours: NINE_TO_FIVE }).expect(
+      200,
+    );
+    expect(updated.body).toMatchObject({ timezone: "Asia/Dubai", businessHours: NINE_TO_FIVE });
+    expect(await mine()).toMatchObject({ timezone: "Asia/Dubai", businessHours: NINE_TO_FIVE });
+  });
+
+  it("lets an administrator change the clock, and refuses sales", async () => {
+    await patch({ timezone: "Europe/Dublin" }, "administrator").expect(200);
+    await patch({ timezone: "Europe/Paris" }, "sales").expect(403);
+    await patch({ businessHours: null }, "sales").expect(403);
+    expect((await mine()).timezone).toBe("Europe/Dublin");
+  });
+
+  it("refuses a zone the runtime cannot resolve, and hours that do not add up", async () => {
+    await patch({ timezone: "Mars/Olympus_Mons" }).expect(400);
+    await patch({ timezone: "" }).expect(400);
+    // Closing before opening.
+    await patch({
+      businessHours: { ...NINE_TO_FIVE, mon: { open: "17:00", close: "09:00" } },
+    }).expect(400);
+    // Not a clock time.
+    await patch({ businessHours: { ...NINE_TO_FIVE, mon: { open: "9am", close: "5pm" } } }).expect(
+      400,
+    );
+    // A missing day is refused, never read as closed.
+    const { sun: _sun, ...sixDays } = NINE_TO_FIVE;
+    await patch({ businessHours: sixDays }).expect(400);
+    // Nothing at all.
+    await patch({}).expect(400);
+    expect((await mine()).businessHours).toEqual(NINE_TO_FIVE);
+  });
+
+  it("clears the opening hours with an explicit null", async () => {
+    await patch({ businessHours: null }).expect(200);
+    expect((await mine()).businessHours).toBeNull();
+    const stored = await owner.organisationSettings.findUniqueOrThrow({
+      where: { organisationId: org.id },
+    });
+    expect(stored.businessHours).toBeNull();
+  });
+
+  it("audits each field on its own, old and new", async () => {
+    await patch({ timezone: "Europe/London", businessHours: NINE_TO_FIVE }).expect(200);
+    const entries = await owner.auditLog.findMany({
+      where: { organisationId: org.id, action: "organisation.settings_updated" },
+      orderBy: { createdAt: "desc" },
+      take: 2,
+    });
+    const fields = entries.map((e) => (e.metadata as { field: string }).field).sort();
+    expect(fields).toEqual(["business_hours", "timezone"]);
+    const hours = entries.find((e) => (e.metadata as { field: string }).field === "business_hours");
+    expect(hours!.metadata).toMatchObject({ from: null, to: NINE_TO_FIVE });
+    const zone = entries.find((e) => (e.metadata as { field: string }).field === "timezone");
+    expect(zone!.metadata).toMatchObject({ from: "Europe/Dublin", to: "Europe/London" });
+  });
+
+  it("still guards the currency by invoices:write, whoever else may set the clock", async () => {
+    // An administrator holds both keys; sales holds neither here.
+    await patch({ defaultCurrency: "AED", timezone: "Europe/London" }, "administrator").expect(200);
+    await patch({ defaultCurrency: "USD" }, "sales").expect(403);
+    expect((await mine()).defaultCurrency).toBe("AED");
+  });
+});
