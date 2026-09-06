@@ -46,7 +46,18 @@ export function OpeningHoursForm({
 
       <label className="flex max-w-sm flex-col gap-1 text-sm">
         Timezone
-        <select name="timezone" defaultValue={timezone} className={FIELD}>
+        {/*
+         * ⚠️ KEYED BY THE STORED ZONE, AND THAT IS A FIX FOR A DEFECT SEEN BY
+         * EYE (2026-09-06). React 19 resets the form when the action returns;
+         * a `<select>` honours `defaultValue` only at mount, so after a save
+         * the box snapped back to the OLD zone while the database — and the
+         * success line beside it — said the new one. The day rows were fine,
+         * because inputs re-read a changed default; a select does not. The
+         * key remounts the select when the refreshed page brings the new
+         * zone, so what is shown is what is stored. The step-controls
+         * precedent remounts the whole form for the same reason.
+         */}
+        <select key={timezone} name="timezone" defaultValue={timezone} className={FIELD}>
           {ZONES.map((zone) => (
             <option key={zone} value={zone}>
               {zone}
