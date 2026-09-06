@@ -126,6 +126,25 @@ describe("the sidebar, rendered", () => {
   });
 
   /**
+   * ⚠️ THE LINE UNDER THE LOGO IS GONE, NOT REWORDED (ruling 92, 2026-09-06).
+   * "AI credit control" sat under the logo on every signed-in screen from the
+   * one-product days and went stale the day the second product arrived; any
+   * replacement would go stale the same way. Asserted on the SHAPE — what
+   * follows the logo link — not only on the absence of the old words, which a
+   * reworded tagline would satisfy.
+   */
+  it("puts nothing under the logo", () => {
+    const html = render("/app");
+    // Located by the word, not the tag — attribute order is React's business.
+    const logoStart = html.indexOf(">eva<");
+    expect(logoStart).toBeGreaterThan(-1);
+    const afterLogo = html.indexOf("</a>", logoStart) + "</a>".length;
+    // Whatever follows the logo is the organisation's chip, not a line of words.
+    expect(html.slice(afterLogo, afterLogo + 2)).not.toBe("<p");
+    expect(html).not.toContain("AI credit control");
+  });
+
+  /**
    * ⚠️ THE BUG THIS SHAPE INVITES, AND THE ONE SLICE 1.9 ALREADY FIXED ONCE.
    * Every path in the product begins `/app`, so a plain `startsWith` marks Home
    * as the current section on every screen — a nav that is always "here" tells
