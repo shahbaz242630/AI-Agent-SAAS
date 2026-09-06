@@ -1,5 +1,5 @@
 import { Inject, Injectable } from "@nestjs/common";
-import { replyChannelForLeadSource, type ReplyChannel } from "@eva/types";
+import { REPLY_CHANNEL_LABELS, replyChannelForLeadSource, type ReplyChannel } from "@eva/types";
 // eslint-disable-next-line @typescript-eslint/consistent-type-imports
 import { PinoLogger } from "nestjs-pino";
 // eslint-disable-next-line @typescript-eslint/consistent-type-imports
@@ -24,6 +24,7 @@ import {
 // eslint-disable-next-line @typescript-eslint/consistent-type-imports
 import { WhatsAppNumbersService } from "../../../capabilities/messaging/whatsapp-numbers.service.js";
 import type { SendingNumberResolution } from "../../../capabilities/messaging/whatsapp-numbers.service.js";
+import { openingState, parseBusinessHours } from "../../../platform/organisations/opening-hours.js";
 import { phoneFromWaId } from "../../../platform/people/handles.js";
 import type { TenantTx } from "../../../platform/permissions/permissions.js";
 import { recordOutboundMessage } from "../../../platform/people/spine.js";
@@ -276,6 +277,38 @@ export class LeadReplyService {
         return { kind: "done", outcome: { status: "not_sent", verdict: "hold" } };
       }
 
+      /**
+       * 🔑 THE SWITCH (slice 3.5a, ruling 93). The instant reply is a card
+       * with an on/off, and off means silence with a reason on the record —
+       * the enquiry is still filed. A card that was never seeded (an
+       * organisation that never opened the Automations screen) is off too:
+       * a missing row is not a silent default, it is "nothing was ever
+       * switched on", and the sentence says so.
+       *
+       * ⚠️ ASKED AFTER THE PERSON'S OWN REQUEST AND BEFORE THE CLASSIFICATION.
+       * A do-not-contact is the truer reason for silence than a switch; a
+       * switch is a truer reason than "this looked like spam" — the record
+       * should name the first thing that stopped the reply.
+       */
+      const switches = await readSwitches(tx);
+      if (!switches.get("instant_reply")) {
+        await tx.leadReplyDecision.create({
+          data: {
+            organisationId,
+            leadId,
+            channel,
+            verdict: "hold",
+            // "Not switched on" covers both a switch pressed off and a card
+            // never seeded — the truth for an organisation that never opened
+            // the screen is not "off" but "never on".
+            reason: "the instant reply is not switched on, so nothing was sent",
+            signal: "playbook_off",
+            status: "not_sent",
+          },
+        });
+        return { kind: "done", outcome: { status: "not_sent", verdict: "hold" } };
+      }
+
       const decision = this.decisions.decide(decisionInputFor(channel, lead));
 
       /** A refusal or a hold: record it and stop. Nothing went wrong. */
@@ -295,30 +328,19 @@ export class LeadReplyService {
       }
 
       /**
-       * ⚠️ THE AUTOMATIC TEMPLATE IS NOT SEEDED HERE. `ensureDefaultTemplates`
-       * runs on the templates endpoint, which is a customer opening a screen —
-       * a person, with a permission, in a request that is allowed to write. A
+       * ⚠️ THE WORDINGS ARE NOT SEEDED HERE. `ensureDefaultPlaybooks` runs on
+       * the playbooks endpoint, which is a customer opening a screen — a
+       * person, with a permission, in a request that is allowed to write. A
        * webhook creating a customer's default wording as a side effect of a
        * stranger sending mail is a write nobody asked for, and it would seed
        * them for an organisation that never opened the product.
        *
-       * So no automatic template means no reply, said plainly. The screen
-       * already warns about exactly this state in red.
+       * So an empty box means no reply on that channel, said plainly.
        */
-      /**
-       * ⚠️ SCOPED TO THE CHANNEL (slice 3.2b). Unscoped, an enquiry on one
-       * medium would be answered with the wording written for another — the
-       * email default tells the reader to "reply to this email", which is
-       * nonsense sent over WhatsApp, and it would go out unread in the
-       * customer's name.
-       */
-      const template = await tx.leadReplyTemplate.findFirst({
-        where: { channel, isAutomatic: true, deletedAt: null },
-        select: { id: true, body: true },
-      });
+      const template = await chooseWording(tx, organisationId, channel, switches, new Date());
       if (!template) {
         return await this.recordUnsendable(tx, organisationId, leadId, channel, decision, {
-          reason: "no automatic reply is switched on, so nothing was sent",
+          reason: `no ${REPLY_CHANNEL_LABELS[channel]} wording is set for the instant reply, so nothing was sent`,
         });
       }
 
@@ -670,6 +692,66 @@ export class LeadReplyService {
       return fn(rawTx as unknown as TenantTx);
     });
   }
+}
+
+/** Which cards are on, by key. A key with no live row is off. */
+async function readSwitches(tx: TenantTx): Promise<Map<string, boolean>> {
+  const rows = await tx.leadPlaybook.findMany({
+    where: { deletedAt: null },
+    select: { key: true, enabled: true },
+  });
+  return new Map(rows.map((row) => [row.key, row.enabled]));
+}
+
+/**
+ * The words that go, on this channel, right now (slice 3.5a).
+ *
+ * 🔑 OUT OF HOURS IS A DIFFERENT WORDING FOR THE SAME INSTANT REPLY, NOT A
+ * DEFERRED ONE (ruling 93). A person who wrote in is answered within seconds
+ * either way; what changes when the business is closed is what the answer
+ * says. Deferring is for messages the business starts (the nudges, 3.5c),
+ * and blueprint §2.5 says replies inside a conversation the person started
+ * are conversational and never held.
+ *
+ * ⚠️ SCOPED TO THE CHANNEL (slice 3.2b). Unscoped, an enquiry on one medium
+ * would be answered with the wording written for another — the email default
+ * tells the reader to "reply to this email", which is nonsense over WhatsApp,
+ * and it would go out unread in the customer's name.
+ *
+ * ⚠️ THE OUT-OF-HOURS BOX BEING EMPTY ON THIS CHANNEL FALLS BACK TO THE
+ * INSTANT WORDING, NOT TO SILENCE. The card is on and the business is closed;
+ * the customer wrote no words for this channel; the instant reply is still
+ * true. Silence would be a worse reading of "I left one box empty".
+ */
+async function chooseWording(
+  tx: TenantTx,
+  organisationId: string,
+  channel: ReplyChannel,
+  switches: Map<string, boolean>,
+  now: Date,
+): Promise<{ id: string; body: string } | null> {
+  const wording = (playbookKey: string) =>
+    tx.leadReplyTemplate.findFirst({
+      where: { channel, playbookKey, deletedAt: null },
+      select: { id: true, body: true },
+    });
+
+  if (switches.get("after_hours")) {
+    const settings = await tx.organisationSettings.findUnique({
+      where: { organisationId },
+      select: { timezone: true, businessHours: true },
+    });
+    const state = openingState(
+      parseBusinessHours(settings?.businessHours),
+      settings?.timezone ?? "Europe/London",
+      now,
+    );
+    if (state === "closed") {
+      const afterHours = await wording("after_hours");
+      if (afterHours) return afterHours;
+    }
+  }
+  return await wording("instant_reply");
 }
 
 /**

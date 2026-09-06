@@ -5,14 +5,15 @@ import {
   Injectable,
   NotFoundException,
 } from "@nestjs/common";
-import { withTenant, withUser } from "@eva/database";
+import { Prisma, withTenant, withUser } from "@eva/database";
 import {
   DEFAULT_ROLE_PERMISSIONS,
   ORGANISATION_ROLES,
+  type BusinessHours,
   type OrganisationRole,
   type PermissionKey,
 } from "@eva/types";
-import type { PutRolePermissionsRequest } from "@eva/validation";
+import type { PutRolePermissionsRequest, UpdateOrganisationSettingsRequest } from "@eva/validation";
 // eslint-disable-next-line @typescript-eslint/consistent-type-imports
 import { PrismaService } from "../../common/database/prisma.service.js";
 // eslint-disable-next-line @typescript-eslint/consistent-type-imports
@@ -20,6 +21,7 @@ import { UsersService } from "../users/users.service.js";
 import { effectivePermissions, requirePermission } from "../permissions/permissions.js";
 import { writeAuditLog } from "../audit/audit-log.js";
 import type { AuthUser } from "../authentication/current-auth-user.decorator.js";
+import { parseBusinessHours } from "./opening-hours.js";
 
 export interface OrganisationSummary {
   id: string;
@@ -78,6 +80,14 @@ export interface OrganisationSummary {
    * about when "today" is.
    */
   timezone: string;
+  /**
+   * Opening hours, one range per weekday or `null` for a closed day, or
+   * `null` altogether when the organisation has never set any (slice 3.5a).
+   * Published for the same reason the timezone is: the Opening hours screen
+   * and the out-of-hours card both need it, and neither should wait on a
+   * second round trip. Parsed through the schema, never the raw column.
+   */
+  businessHours: BusinessHours | null;
 }
 
 export interface MemberSummary {
@@ -164,6 +174,7 @@ export class OrganisationsService {
               // Same fail-soft rule as the currency, and the same default the
               // rest of the API uses when a settings row is missing.
               timezone: settings?.timezone ?? "Europe/London",
+              businessHours: parseBusinessHours(settings?.businessHours),
             };
           },
         ),
@@ -232,6 +243,7 @@ export class OrganisationsService {
         // organisation start on".
         defaultCurrency: settings.defaultCurrency,
         timezone: settings.timezone,
+        businessHours: parseBusinessHours(settings.businessHours),
       };
     });
   }
@@ -253,35 +265,95 @@ export class OrganisationsService {
    * pre-selects a dropdown option. No invoice is re-read, re-priced or refused
    * because of it, and none ever may be.
    */
+  /**
+   * ⚠️ WIDENED IN 3.5a TO THE TIMEZONE AND THE OPENING HOURS, AND THAT IS THE
+   * MOMENT THE NOTE ABOVE NAMED. They are guarded by `settings:manage` — a
+   * `core` key held by the owner and the administrator — because both
+   * products read them: the invoice reminders decide what "today" is by the
+   * timezone, and the out-of-hours reply decides "closed" by the hours.
+   * The currency keeps `invoices:write`. A body carrying both kinds needs
+   * both permissions; each field is audited on its own, so the trail says
+   * which clock changed and from what.
+   */
   async updateSettings(
     authUser: AuthUser,
     organisationId: string,
-    input: { defaultCurrency: string },
+    input: UpdateOrganisationSettingsRequest,
   ): Promise<OrganisationSummary> {
     const user = await this.usersService.resolveOrProvision(authUser);
     return withTenant(this.prisma.db, { organisationId, userId: user.id }, async (tx) => {
-      const membership = await requirePermission(tx, organisationId, user.id, "invoices:write");
+      const changesCurrency = input.defaultCurrency !== undefined;
+      const changesClock = input.timezone !== undefined || input.businessHours !== undefined;
+      let membership = changesCurrency
+        ? await requirePermission(tx, organisationId, user.id, "invoices:write")
+        : null;
+      if (changesClock) {
+        membership = await requirePermission(tx, organisationId, user.id, "settings:manage");
+      }
+      if (!membership) throw new BadRequestException("Nothing to change");
 
       const before = await tx.organisationSettings.findUnique({ where: { organisationId } });
       const settings = await tx.organisationSettings.update({
         where: { organisationId },
-        data: { defaultCurrency: input.defaultCurrency },
-      });
-
-      await writeAuditLog(tx, {
-        organisationId,
-        actorUserId: user.id,
-        action: "organisation.settings_updated",
-        entityType: "organisation_settings",
-        entityId: settings.id,
-        // The old and new codes are the whole story and neither is personal
-        // data — a currency code says nothing about a person (BRD 14).
-        metadata: {
-          field: "default_currency",
-          from: before?.defaultCurrency ?? null,
-          to: settings.defaultCurrency,
+        data: {
+          ...(input.defaultCurrency !== undefined
+            ? { defaultCurrency: input.defaultCurrency }
+            : {}),
+          ...(input.timezone !== undefined ? { timezone: input.timezone } : {}),
+          /**
+           * ⚠️ `null` IS "NO OPENING HOURS", WRITTEN AS SQL NULL. Prisma's
+           * `DbNull` is what makes the column NULL rather than the JSON
+           * value `null`; the schema treats both as "unset", but the column
+           * should say what it means.
+           */
+          ...(input.businessHours !== undefined
+            ? { businessHours: input.businessHours ?? Prisma.DbNull }
+            : {}),
         },
       });
+
+      if (changesCurrency) {
+        await writeAuditLog(tx, {
+          organisationId,
+          actorUserId: user.id,
+          action: "organisation.settings_updated",
+          entityType: "organisation_settings",
+          entityId: settings.id,
+          // The old and new codes are the whole story and neither is personal
+          // data — a currency code says nothing about a person (BRD 14).
+          metadata: {
+            field: "default_currency",
+            from: before?.defaultCurrency ?? null,
+            to: settings.defaultCurrency,
+          },
+        });
+      }
+      if (input.timezone !== undefined) {
+        await writeAuditLog(tx, {
+          organisationId,
+          actorUserId: user.id,
+          action: "organisation.settings_updated",
+          entityType: "organisation_settings",
+          entityId: settings.id,
+          metadata: { field: "timezone", from: before?.timezone ?? null, to: settings.timezone },
+        });
+      }
+      if (input.businessHours !== undefined) {
+        await writeAuditLog(tx, {
+          organisationId,
+          actorUserId: user.id,
+          action: "organisation.settings_updated",
+          entityType: "organisation_settings",
+          entityId: settings.id,
+          // The whole shape, before and after: seven days is short, and
+          // "which day changed" is the question the trail answers.
+          metadata: {
+            field: "business_hours",
+            from: parseBusinessHours(before?.businessHours),
+            to: parseBusinessHours(settings.businessHours),
+          } as Prisma.InputJsonObject,
+        });
+      }
 
       const organisation = await tx.organisation.findUniqueOrThrow({
         where: { id: organisationId },
@@ -293,6 +365,7 @@ export class OrganisationsService {
         permissions: await effectivePermissions(tx, organisationId, membership.role.key),
         defaultCurrency: settings.defaultCurrency,
         timezone: settings.timezone,
+        businessHours: parseBusinessHours(settings.businessHours),
       };
     });
   }

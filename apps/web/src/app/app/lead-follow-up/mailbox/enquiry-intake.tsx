@@ -44,7 +44,7 @@ import {
  * world. A customer with neither is told to connect first.
  */
 
-const REPLIES = moduleHref("lead_follow_up", "replies");
+const REPLIES = moduleHref("lead_follow_up", "automations");
 
 export async function EnquiryIntake({
   organisationId,

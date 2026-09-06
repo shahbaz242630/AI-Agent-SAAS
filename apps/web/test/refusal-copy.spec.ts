@@ -36,6 +36,7 @@ const ACTIONS: Record<WriteAction, true> = {
   "confirm-import": true,
   "cancel-import": true,
   "change-settings": true,
+  "change-clock": true,
   "change-reminder-timing": true,
   "stop-contacting": true,
   "correct-suppression": true,

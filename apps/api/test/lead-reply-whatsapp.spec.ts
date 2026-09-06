@@ -106,7 +106,7 @@ describe("Eva answers a WhatsApp enquiry", () => {
       email: org.members[0]!.email,
     });
     await request(app.getHttpServer())
-      .get(`/organisations/${org.id}/lead-reply-templates`)
+      .get(`/organisations/${org.id}/lead-playbooks`)
       .set("Authorization", `Bearer ${token}`)
       .expect(200);
   });

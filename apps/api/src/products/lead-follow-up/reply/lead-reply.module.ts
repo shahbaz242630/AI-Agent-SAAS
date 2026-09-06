@@ -1,7 +1,9 @@
 import { Module } from "@nestjs/common";
 import { MailboxesModule } from "../../../capabilities/mailbox/mailboxes.module.js";
 import { MessagingModule } from "../../../capabilities/messaging/messaging.module.js";
+import { UsersModule } from "../../../platform/users/users.module.js";
 import { ReplyDecisionModule } from "../decision/reply-decision.module.js";
+import { LeadReplyStatusController } from "./lead-reply-status.controller.js";
 import { LeadReplyService } from "./lead-reply.service.js";
 import { ReplyToNewLeadHandler } from "./reply-to-new-lead.handler.js";
 
@@ -20,7 +22,9 @@ import { ReplyToNewLeadHandler } from "./reply-to-new-lead.handler.js";
  * lives here rather than inside either capability where the send code is.
  */
 @Module({
-  imports: [MailboxesModule, MessagingModule, ReplyDecisionModule],
+  imports: [MailboxesModule, MessagingModule, ReplyDecisionModule, UsersModule],
+  /** The enquiry page's "why Eva did not reply" (3.5a) — the product answers from its own table. */
+  controllers: [LeadReplyStatusController],
   providers: [LeadReplyService, ReplyToNewLeadHandler],
   /**
    * ⚠️ THE HANDLER IS EXPORTED SO `app.module.ts` CAN HAND IT TO THE

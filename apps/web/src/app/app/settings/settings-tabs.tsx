@@ -1,13 +1,15 @@
 import Link from "next/link";
 
 /**
- * The four settings screens, as one row of pills (2026-08-09 design handoff).
+ * The five settings screens, as one row of pills (2026-08-09 design handoff).
  *
- * ⚠️ THE SIDEBAR HAS ONE "SETTINGS" LINK AND THERE ARE FOUR SCREENS BEHIND IT.
+ * ⚠️ THE SIDEBAR HAS ONE "SETTINGS" LINK AND THERE ARE FIVE SCREENS BEHIND IT.
  * Before this, the only way to reach Products was to already know the URL —
  * the same maze the app shell was built to end, surviving one level down.
  *
- * ⚠️ IT WAS FIVE UNTIL 2026-09-01, AND MAILBOX IS THE ONE THAT LEFT. A mailbox
+ * ⚠️ IT WAS FIVE UNTIL 2026-09-01, FOUR UNTIL 2026-09-06, AND FIVE AGAIN
+ * SINCE: Mailbox left, Opening hours arrived (slice 3.5a — the timezone and
+ * the hours the out-of-hours reply needs, on a screen at last). A mailbox
  * belongs to ONE product now (ruling 36), so a single organisation-wide mailbox
  * screen could only ever show one product's mailboxes as though they were
  * everybody's. Setup moved inside each product — `/app/invoice-chasing/mailbox`
@@ -54,6 +56,11 @@ export const SETTINGS_TABS = [
   { key: "invoices", href: "/app/settings/invoices", label: "Currency" },
   { key: "modules", href: "/app/settings/modules", label: "Products" },
   { key: "do-not-contact", href: "/app/settings/do-not-contact", label: "Do not contact" },
+  /**
+   * The organisation's clock (slice 3.5a): its timezone and opening hours.
+   * Both products read them, so it is a settings screen and not a lead one.
+   */
+  { key: "opening-hours", href: "/app/settings/opening-hours", label: "Opening hours" },
 ] as const;
 
 export type SettingsTabKey = (typeof SETTINGS_TABS)[number]["key"];

@@ -100,10 +100,16 @@ export const PRODUCT_NAV: Partial<Record<ModuleKey, readonly NavItem[]>> = {
      * the mailbox because that is the order somebody sets the product up in:
      * see what came in, decide what goes back, check where it goes back from.
      */
+    /**
+     * "Replies" became "Automations" in 3.5a (ruling 93): the screen is no
+     * longer a list of wordings but the cards for what Eva does on her own,
+     * each with a switch. "Playbook" is the blueprint's word and the code's;
+     * a plumber does not say it.
+     */
     {
-      href: moduleHref("lead_follow_up", "replies"),
-      label: "Replies",
-      description: "What Eva writes back",
+      href: moduleHref("lead_follow_up", "automations"),
+      label: "Automations",
+      description: "What Eva does on her own",
     },
     {
       href: moduleHref("lead_follow_up", "mailbox"),

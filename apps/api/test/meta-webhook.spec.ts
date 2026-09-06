@@ -513,9 +513,11 @@ describe("Meta webhook: a WhatsApp message is written down", () => {
      * registered at the composition root and must be reached from THIS door
      * too — the `@Global()` lesson: a port that silently has no listeners
      * looks exactly like one that does. Since 3.4a it knows the channel is
-     * WhatsApp and would reply; this organisation has never opened the
-     * Replies screen, so it has no WhatsApp wording, and the decision says
-     * so. The reply itself is proved in `lead-reply-whatsapp.spec.ts`.
+     * WhatsApp and would reply; since 3.5a the instant reply is a card with a
+     * switch, and this organisation has never opened the Automations screen,
+     * so it has no switch at all — held as "not switched on" (a missing row
+     * is never a silent default). The reply itself is proved in
+     * `lead-reply-whatsapp.spec.ts`.
      */
     it("hands the enquiry to the products, which record why nothing was sent", async () => {
       const from = freshNumber();
@@ -528,12 +530,12 @@ describe("Meta webhook: a WhatsApp message is written down", () => {
       });
       expect(decision, "the reply handler must have run through the Nest wiring").not.toBeNull();
       expect(decision).toMatchObject({
-        verdict: "reply",
+        verdict: "hold",
         channel: "whatsapp",
-        signal: "no-refusal",
+        signal: "playbook_off",
         status: "not_sent",
       });
-      expect(decision!.failureReason).toContain("no automatic reply");
+      expect(decision!.reason).toContain("not switched on");
     });
 
     /**

@@ -100,6 +100,7 @@ describe("Schema conventions (BRD 10)", () => {
       "invoice_documents",
       "invoices",
       "lead_evidence",
+      "lead_playbooks",
       "lead_reply_decisions",
       "lead_reply_templates",
       "leads",
@@ -163,6 +164,8 @@ describe("Schema conventions (BRD 10)", () => {
     "conversations",
     "messages",
     "activities",
+    // Slice 3.5a (migration 0045): the switch per behaviour.
+    "lead_playbooks",
   ])("tenant-owned table %s has a non-nullable organisation_id", async (table) => {
     const cols = await columnsOf(table);
     const orgColumn = cols.find((c) => c.column_name === "organisation_id");
@@ -205,6 +208,8 @@ describe("Schema conventions (BRD 10)", () => {
     "person_identities",
     "pipeline_stages",
     "conversations",
+    // Slice 3.5a: a switch is pressed by somebody, and pressed again.
+    "lead_playbooks",
   ])("mutable table %s carries created_at/updated_at/created_by", async (table) => {
     const names = (await columnsOf(table)).map((c) => c.column_name);
     for (const col of ["created_at", "updated_at", "created_by"]) {
@@ -221,6 +226,7 @@ describe("Schema conventions (BRD 10)", () => {
     "reminder_sequences",
     "reminder_steps",
     "lead_reply_templates",
+    "lead_playbooks",
     /**
      * ⚠️ THE WORST OF THE THREE GAPS. `users`, `organisations`,
      * `organisation_settings`, `organisation_memberships` and `email_accounts`
@@ -1115,6 +1121,76 @@ describe("Schema conventions (BRD 10)", () => {
       expect(definition).toContain("'whatsapp'");
       expect(definition).not.toContain("'messenger'");
       expect(definition).toMatch(/IS NULL/);
+    });
+  });
+
+  /**
+   * Migration 0045 (slice 3.5a, ruling 93): a wording belongs to a card, and
+   * a card has a switch. `is_automatic` is gone — two columns saying one thing
+   * is how a screen comes to lie — and `LEAD_PLAYBOOK_KEYS` in `@eva/types` is
+   * the CHECK's twin.
+   */
+  describe("a wording belongs to a playbook (migration 0045)", () => {
+    const NAME_PREFIX = "0045-check-";
+    const wording = (channel: string, playbookKey: string | null, suffix: string) =>
+      prisma.$executeRawUnsafe(
+        `INSERT INTO lead_reply_templates (id, organisation_id, channel, name, body, playbook_key, updated_at)
+         VALUES ('${randomUUID()}', '${DEMO_ORGANISATION_ID}', '${channel}', '${NAME_PREFIX}${suffix}', 'A wording.', ${
+           playbookKey === null ? "NULL" : `'${playbookKey}'`
+         }, now())`,
+      );
+    const playbook = (key: string) =>
+      prisma.$executeRawUnsafe(
+        `INSERT INTO lead_playbooks (id, organisation_id, key, updated_at)
+         VALUES ('${randomUUID()}', '${DEMO_ORGANISATION_ID}', '${key}', now())`,
+      );
+
+    afterAll(async () => {
+      await prisma.$executeRaw`DELETE FROM lead_reply_templates WHERE name LIKE ${`${NAME_PREFIX}%`}`;
+      await prisma.$executeRaw`DELETE FROM lead_playbooks WHERE organisation_id = ${DEMO_ORGANISATION_ID}::uuid AND key IN ('quote_chase', 'owner_alert')`;
+    });
+
+    it("has dropped is_automatic and its index", async () => {
+      const names = (await columnsOf("lead_reply_templates")).map((c) => c.column_name);
+      expect(names).not.toContain("is_automatic");
+      expect(names).toContain("playbook_key");
+      const indexes = await prisma.$queryRaw<{ indexname: string }[]>`
+        SELECT indexname FROM pg_indexes WHERE tablename = 'lead_reply_templates'`;
+      expect(indexes.map((i) => i.indexname)).not.toContain(
+        "lead_reply_templates_single_automatic_key",
+      );
+      expect(indexes.map((i) => i.indexname)).toContain("lead_reply_templates_live_playbook_key");
+    });
+
+    it("admits the five cards and a wording bound to none (positive control)", async () => {
+      await expect(wording("email", "instant_reply", "instant")).resolves.toBe(1);
+      await expect(wording("email", null, "unbound")).resolves.toBe(1);
+      await expect(playbook("quote_chase")).resolves.toBe(1);
+    });
+
+    /** The case that must fail: the next card is a migration, not a string. */
+    it("refuses a card that does not exist", async () => {
+      await expect(wording("email", "review_ask", "review")).rejects.toThrow(
+        /lead_reply_templates_playbook_key_check/,
+      );
+      await expect(playbook("review_ask")).rejects.toThrow(/lead_playbooks_key_check/);
+    });
+
+    it("holds one live wording per card per channel, and one live switch per card", async () => {
+      await expect(wording("email", "instant_reply", "instant-twin")).rejects.toThrow(
+        /lead_reply_templates_live_playbook_key/,
+      );
+      // The same card on the OTHER channel is fine: a card has a box per channel.
+      await expect(wording("whatsapp", "instant_reply", "instant-whatsapp")).resolves.toBe(1);
+      await expect(playbook("quote_chase")).rejects.toThrow(/lead_playbooks_live_key_key/);
+      await expect(playbook("owner_alert")).resolves.toBe(1);
+    });
+
+    it("keeps the switch off unless somebody turns it on", async () => {
+      const rows = await prisma.$queryRaw<{ enabled: boolean }[]>`
+        SELECT enabled FROM lead_playbooks
+        WHERE organisation_id = ${DEMO_ORGANISATION_ID}::uuid AND key = 'owner_alert'`;
+      expect(rows).toEqual([{ enabled: false }]);
     });
   });
 

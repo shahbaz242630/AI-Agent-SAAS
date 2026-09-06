@@ -35,17 +35,21 @@ describe("the enquiry address panel", () => {
 
   it("says what Eva does with an enquiry, and where to see the wording", () => {
     const html = renderToStaticMarkup(
-      <EnquiryAddressPanel address={ADDRESS} repliesHref="/app/lead-follow-up/replies" />,
+      <EnquiryAddressPanel address={ADDRESS} repliesHref="/app/lead-follow-up/automations" />,
     );
-    expect(html).toContain("answers it with the wording you have marked as automatic");
-    expect(html).toContain('href="/app/lead-follow-up/replies"');
+    // The card's name since 3.5a — what a customer who switched it off will look for.
+    expect(html).toContain("answers it with your instant reply");
+    expect(html).toContain('href="/app/lead-follow-up/automations"');
+    expect(html).toContain("what Eva does on her own");
     expect(html).toContain(ADDRESS);
+    // The old sentence named a flag that no longer exists.
+    expect(html).not.toContain("marked as automatic");
   });
 
-  it("reads correctly with no replies link at all", () => {
+  it("reads correctly with no automations link at all", () => {
     const html = renderToStaticMarkup(<EnquiryAddressPanel address={ADDRESS} />);
-    expect(html).toContain("marked as automatic.");
-    expect(html).not.toContain("what Eva replies");
+    expect(html).toContain("your instant reply.");
+    expect(html).not.toContain("what Eva does on her own");
   });
 
   /**

@@ -271,7 +271,9 @@ export const NAV_ICONS: Readonly<Record<string, (props: IconProps) => React.JSX.
   /* Slice 3.1c-1, added WITH the screen for the reason above — a missing key
      renders nothing at all, so the row just sits unillustrated and nobody
      notices. `navigation.spec.ts` is what catches it, and it did. */
-  [moduleHref("lead_follow_up", "replies")]: RepliesIcon,
+  /* 3.5a: the route moved from "replies" to "automations"; the icon key is the
+     href, so it moves with it — a stale key renders nothing and nobody notices. */
+  [moduleHref("lead_follow_up", "automations")]: RepliesIcon,
   [moduleHref("lead_follow_up", "mailbox")]: MailboxIcon,
   "/app/clients": ClientsIcon,
   "/app/settings/reminders": SettingsIcon,

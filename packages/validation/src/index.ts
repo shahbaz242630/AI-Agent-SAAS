@@ -11,6 +11,9 @@ import {
   REPLY_CHANNELS,
   type HealthResponse,
   type ReadinessResponse,
+  LEAD_PLAYBOOKS_BUILT,
+  WEEKDAYS,
+  type Weekday,
 } from "@eva/types";
 
 /**
@@ -149,12 +152,83 @@ export type PutRolePermissionsRequest = z.infer<typeof putRolePermissionsRequest
  * accepted and means something else. The web uppercases what a human types
  * before it gets here, which is where that belongs.
  */
-export const updateOrganisationSettingsRequestSchema = z.object({
-  defaultCurrency: z
-    .string()
-    .trim()
-    .regex(/^[A-Z]{3}$/, "defaultCurrency must be a 3-letter uppercase ISO 4217 code"),
-});
+/** `"HH:MM"`, 24-hour, so the two ends of a day compare as strings. */
+const clockTime = z
+  .string()
+  .regex(/^([01]\d|2[0-3]):[0-5]\d$/, "a time is HH:MM, 24-hour, like 08:00 or 17:30");
+
+/**
+ * One day's opening range, or `null` for a closed day (slice 3.5a).
+ *
+ * ⚠️ `open` STRICTLY BEFORE `close`, ON THE SAME DAY. An overnight range
+ * ("18:00 to 02:00") is refused rather than interpreted: no trade this product
+ * is for opens across midnight, and a rule that read it as "the next morning"
+ * would silently make a typo into a business that never closes.
+ */
+const openingRangeSchema = z
+  .object({ open: clockTime, close: clockTime })
+  .refine((range) => range.open < range.close, {
+    message: "a day closes after it opens",
+  })
+  .nullable();
+
+/**
+ * Opening hours, one entry per weekday, every weekday present (slice 3.5a).
+ *
+ * ⚠️ EVERY DAY IS REQUIRED, AND A MISSING DAY IS A 400 RATHER THAN "CLOSED".
+ * A form that lost a day (a renamed field, a partial save) would otherwise
+ * make Eva treat that day as closed and send the out-of-hours wording to
+ * everybody who enquired on it. The column is JSON and this schema is what
+ * makes it a shape — nothing reads the column without it (`openingState`).
+ */
+export const businessHoursSchema = z.object(
+  Object.fromEntries(WEEKDAYS.map((day) => [day, openingRangeSchema])) as Record<
+    Weekday,
+    typeof openingRangeSchema
+  >,
+);
+
+export type BusinessHoursInput = z.infer<typeof businessHoursSchema>;
+
+/**
+ * `Intl.supportedValuesOf("timeZone")` is the list the api and the web both
+ * have, and it is the one `openingState` and the invoice reminders use to
+ * find "today" — so a zone the runtime cannot resolve is refused here, never
+ * stored to throw later inside a webhook.
+ */
+const SUPPORTED_TIME_ZONES = new Set<string>(Intl.supportedValuesOf("timeZone"));
+
+export const timeZoneSchema = z
+  .string()
+  .trim()
+  .refine((zone) => SUPPORTED_TIME_ZONES.has(zone) || zone === "UTC", {
+    message: "timezone must be an IANA zone name, like Europe/London or Asia/Dubai",
+  });
+
+/**
+ * PATCH /organisations/:id/settings — every field optional, at least one
+ * present (slice 3.5a widened it from `{ defaultCurrency }`). The controller's
+ * own note says why PATCH: a PUT would invite a caller to send a partial body
+ * and silently blank the rest. `businessHours: null` is a deliberate "no
+ * opening hours", different from leaving the field out.
+ */
+export const updateOrganisationSettingsRequestSchema = z
+  .object({
+    defaultCurrency: z
+      .string()
+      .trim()
+      .regex(/^[A-Z]{3}$/, "defaultCurrency must be a 3-letter uppercase ISO 4217 code")
+      .optional(),
+    timezone: timeZoneSchema.optional(),
+    businessHours: businessHoursSchema.nullable().optional(),
+  })
+  .refine(
+    (body) =>
+      body.defaultCurrency !== undefined ||
+      body.timezone !== undefined ||
+      body.businessHours !== undefined,
+    { message: "at least one of defaultCurrency, timezone or businessHours is required" },
+  );
 
 export type UpdateOrganisationSettingsRequest = z.infer<
   typeof updateOrganisationSettingsRequestSchema
@@ -1055,8 +1129,6 @@ export type CorrectSuppressionRequest = z.infer<typeof correctSuppressionRequest
  * that skipped this schema would get a constraint violation rather than an
  * invisible row.
  */
-const templateName = z.string().trim().min(1).max(80);
-
 /**
  * The wording itself.
  *
@@ -1068,61 +1140,43 @@ const templateName = z.string().trim().min(1).max(80);
 const templateBody = z.string().trim().min(1).max(4000);
 
 /**
- * POST .../lead-reply-templates — add a wording of the customer's own.
+ * PATCH .../lead-playbooks/:key — the switch on one card (slice 3.5a).
  *
- * ⚠️ `isAutomatic` DEFAULTS TO FALSE, WHICH IS THE SAFE DIRECTION. Creating a
- * template must never quietly become "and this is now what Eva sends to
- * everybody"; promoting one is a separate, deliberate act.
+ * ⚠️ ONLY THE SWITCH. The numbers a later card needs (`delayHours`,
+ * `maxTouches`) join this object with the slice that reads them; a field the
+ * api accepted and stored for nothing would be a promise on the screen.
  */
-export const createLeadReplyTemplateSchema = z.object({
-  /**
-   * ⚠️ REQUIRED, WITH NO DEFAULT, AND THAT IS DELIBERATE (slice 3.2b). Defaulting
-   * to `email` would mean a caller that forgot the field silently files a
-   * WhatsApp wording under email — where it would then be a candidate for Eva
-   * to send to an email enquirer, telling them to "reply to this email" about a
-   * conversation that happened on WhatsApp. A 400 is the cheap version of that
-   * mistake.
-   */
-  channel: z.enum(REPLY_CHANNELS),
-  name: templateName,
-  body: templateBody,
-  isAutomatic: z.boolean().optional().default(false),
+export const updateLeadPlaybookSchema = z.object({
+  enabled: z.boolean(),
 });
 
-export type CreateLeadReplyTemplateInput = z.infer<typeof createLeadReplyTemplateSchema>;
+export type UpdateLeadPlaybookInput = z.infer<typeof updateLeadPlaybookSchema>;
 
 /**
- * PATCH .../lead-reply-templates/:templateId — rewrite one.
+ * PUT .../lead-playbooks/:key/wordings/:channel — the words in one card's box
+ * on one channel (slice 3.5a).
  *
- * Every field optional, at least one required: the same shape as
- * `updateReminderStepSchema`, so an empty body is a 400 rather than a silent
- * no-op that returns 200 and changes nothing.
- *
- * ⚠️ SETTING `isAutomatic: true` DEMOTES WHICHEVER TEMPLATE HELD IT — **on that
- * template's own channel only** (slice 3.2b). That is the service's job, not
- * this schema's, but it is worth knowing here, because "make this the automatic
- * one" and "unset the other one" are the same request and there is no separate
- * endpoint for the second half.
- *
- * 🔑 AND THERE IS NO `channel` FIELD, ON PURPOSE. A wording is written FOR a
- * medium — the email default's "replying to this email is the quickest way to
- * reach us" is nonsense on WhatsApp — so moving one between channels would make
- * it silently wrong rather than merely misfiled. Delete and rewrite is the
- * honest path. Omitting the field here is what makes that unavailable rather
- * than merely discouraged.
+ * 🔑 THE CARD AND THE CHANNEL ARE IN THE PATH, NOT THE BODY, AND THERE IS NO
+ * `name`. A wording is written FOR a medium — the email default's "replying to
+ * this email is the quickest way to reach us" is nonsense on WhatsApp — so it
+ * is addressed by where it goes, and it cannot be moved. Its name is the
+ * card's, which the customer does not write.
  */
-export const updateLeadReplyTemplateSchema = z
-  .object({
-    name: templateName.optional(),
-    body: templateBody.optional(),
-    isAutomatic: z.boolean().optional(),
-  })
-  .refine(
-    (body) => body.name !== undefined || body.body !== undefined || body.isAutomatic !== undefined,
-    { message: "at least one of name, body or isAutomatic is required" },
-  );
+export const saveLeadPlaybookWordingSchema = z.object({
+  body: templateBody,
+});
 
-export type UpdateLeadReplyTemplateInput = z.infer<typeof updateLeadReplyTemplateSchema>;
+export type SaveLeadPlaybookWordingInput = z.infer<typeof saveLeadPlaybookWordingSchema>;
+
+/** The channel in a playbook wording's path, refused rather than guessed. */
+export const replyChannelParamSchema = z.enum(REPLY_CHANNELS);
+
+/**
+ * The card in a playbook path. ⚠️ ONLY THE CARDS THAT EXIST AS BEHAVIOUR
+ * (`LEAD_PLAYBOOKS_BUILT`), not every key the database admits: a switch on a
+ * card nothing runs would be a promise the screen cannot keep.
+ */
+export const leadPlaybookKeyParamSchema = z.enum(LEAD_PLAYBOOKS_BUILT);
 
 /**
  * The enquiry book's filters, search and paging (ruling 81, 2026-09-05).

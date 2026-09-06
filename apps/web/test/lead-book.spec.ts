@@ -338,4 +338,63 @@ describe("whether the enquiry was answered", () => {
       expect(answeredLine({ firstRespondedAt: null, source }, TZ)).not.toMatch(/cannot|until/i);
     }
   });
+
+  /**
+   * 🔑 THE REASON COMES FROM THE DECISION, NEVER FROM HERE (3.5a; ruling 90's
+   * second leftover). The api wrote the sentence at the moment it decided;
+   * this line repeats it after "Not yet" and adds nothing of its own.
+   */
+  it("adds the decision's reason when there is one, and says nothing more than the api did", () => {
+    const unanswered = { firstRespondedAt: null, source: "whatsapp_enquiry" };
+    expect(
+      answeredLine(unanswered, TZ, {
+        decided: true,
+        status: "not_sent",
+        reason: "this person asked not to be contacted, so nothing was sent",
+        sentAt: null,
+        wording: null,
+      }),
+    ).toBe("Not yet — this person asked not to be contacted, so nothing was sent.");
+    expect(
+      answeredLine(unanswered, TZ, {
+        decided: true,
+        status: "pending",
+        reason: null,
+        sentAt: null,
+        wording: null,
+      }),
+    ).toBe("Not yet — Eva is sending.");
+    expect(answeredLine(unanswered, TZ, { decided: false })).toBe("Not yet.");
+    expect(
+      answeredLine(unanswered, TZ, {
+        decided: true,
+        status: "not_sent",
+        reason: null,
+        sentAt: null,
+        wording: null,
+      }),
+    ).toBe("Not yet.");
+  });
+
+  it("names the out-of-hours reply when that is what went", () => {
+    const answered = { firstRespondedAt: "2026-09-04T11:30:00.000Z", source: "email_enquiry" };
+    expect(
+      answeredLine(answered, TZ, {
+        decided: true,
+        status: "sent",
+        reason: null,
+        sentAt: answered.firstRespondedAt,
+        wording: { playbookKey: "after_hours", channel: "email" },
+      }),
+    ).toBe(`${describeMoment(answered.firstRespondedAt, TZ)}, with the out-of-hours reply.`);
+    expect(
+      answeredLine(answered, TZ, {
+        decided: true,
+        status: "sent",
+        reason: null,
+        sentAt: answered.firstRespondedAt,
+        wording: { playbookKey: "instant_reply", channel: "email" },
+      }),
+    ).toBe(describeMoment(answered.firstRespondedAt, TZ));
+  });
 });

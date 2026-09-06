@@ -37,11 +37,12 @@ import type { ProductManifest } from "../../platform/registry/product-manifest.j
 export const LEAD_FOLLOW_UP: ProductManifest = {
   key: "lead_follow_up",
   /**
-   * ⚠️ BOTH ARE ABOUT THE REPLY, WHICH IS THE WHOLE OF WHAT THIS PRODUCT
-   * OWNS. `leadReplyTemplate` is the words a customer may send;
-   * `leadReplyDecision` is what happened to one enquiry — the verdict, and the
-   * message if there was one. The LEAD itself stays platform (ruling 56), so
-   * Lead Follow-up by Call and the CRM can still read the enquiry book.
+   * ⚠️ ALL THREE ARE ABOUT THE REPLY, WHICH IS THE WHOLE OF WHAT THIS PRODUCT
+   * OWNS. `leadPlaybook` is the switch on each thing Eva does on her own
+   * (3.5a); `leadReplyTemplate` is the words a card sends; `leadReplyDecision`
+   * is what happened to one enquiry — the verdict, and the message if there
+   * was one. The LEAD itself stays platform (ruling 56), so Lead Follow-up by
+   * Call and the CRM can still read the enquiry book.
    */
-  tables: ["leadReplyTemplate", "leadReplyDecision"],
+  tables: ["leadPlaybook", "leadReplyTemplate", "leadReplyDecision"],
 };
