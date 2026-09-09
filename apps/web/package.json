@@ -14,7 +14,7 @@
     "@eva/configuration": "workspace:*",
     "@eva/design-system": "workspace:*",
     "@eva/types": "workspace:*",
-    "@sentry/nextjs": "^10.69.0",
+    "@sentry/nextjs": "^10.73.0",
     "@supabase/ssr": "^0.12.4",
     "@supabase/supabase-js": "^2.111.0",
     "next": "16.2.12",
@@ -32,6 +32,6 @@
     "eslint-config-next": "16.2.12",
     "tailwindcss": "^4",
     "typescript": "^6",
-    "vitest": "^4.1.10"
+    "vitest": "^4.1.11"
   }
 }
