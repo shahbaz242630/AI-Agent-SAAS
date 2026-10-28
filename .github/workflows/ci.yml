@@ -123,7 +123,7 @@ jobs:
         run: pnpm audit --audit-level=high
 
       - name: Workflow security lint (zizmor)
-        uses: zizmorcore/zizmor-action@6fc4b006235f201fdab3722e17240ab420d580e5 # v0.6.1
+        uses: zizmorcore/zizmor-action@85b2b9fb8e3325e7a23d7d0a9d7ba5ae0f999e3e # v0.7.1
 
   dependency-review:
     name: Dependency review
