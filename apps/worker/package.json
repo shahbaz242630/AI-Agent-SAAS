@@ -15,7 +15,7 @@
     "@eva/configuration": "workspace:*",
     "@sentry/node": "^10.69.0",
     "@trigger.dev/sdk": "4.5.9",
-    "zod": "^4.0.0"
+    "zod": "^4.6.6"
   },
   "devDependencies": {
     "@eva/testing": "workspace:*",
